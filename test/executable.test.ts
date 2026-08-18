@@ -88,4 +88,20 @@ describe('Doctor probes', () => {
     expect(JSON.stringify(report)).not.toContain('private@example.com')
     expect(JSON.stringify(report)).not.toContain('secret')
   })
+
+  it('bounds hostile authentication fields without leaking credentials', async () => {
+    const runtime = {
+      resolveExecutable: async () => '/claude',
+      spawn: () => handle(JSON.stringify({
+        loggedIn: true,
+        authMethod: 'sk-ant-abcdefghijklmnop',
+        apiProvider: 'Authorization: Bearer bearer-value',
+        subscriptionType: 'a'.repeat(5_000),
+      })),
+    }
+    const report = await probeClaudeAuthentication(runtime, '/claude', '/workspace')
+    expect(JSON.stringify(report)).not.toContain('sk-ant-abcdefghijklmnop')
+    expect(JSON.stringify(report)).not.toContain('bearer-value')
+    expect((report.subscription ?? '').length).toBeLessThanOrEqual(100)
+  })
 })

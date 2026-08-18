@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { redactText } from './events.ts'
 
 const VERSION_PATTERN = /(?:Claude Code\s+)?v?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/i
 const MAX_PROBE_STDOUT = 64 * 1024
@@ -153,9 +154,9 @@ export async function probeClaudeAuthentication(
     const report: ClaudeDoctorReport['authentication'] = {
       status: value.loggedIn === true ? 'signed-in' : value.loggedIn === false ? 'signed-out' : 'unknown',
     }
-    if (typeof value.authMethod === 'string') report.method = value.authMethod.slice(0, 100)
-    if (typeof value.apiProvider === 'string') report.provider = value.apiProvider.slice(0, 100)
-    if (typeof value.subscriptionType === 'string') report.subscription = value.subscriptionType.slice(0, 100)
+    if (typeof value.authMethod === 'string') report.method = redactText(value.authMethod, 100)
+    if (typeof value.apiProvider === 'string') report.provider = redactText(value.apiProvider, 100)
+    if (typeof value.subscriptionType === 'string') report.subscription = redactText(value.subscriptionType, 100)
     return report
   } catch {
     return { status: 'unknown', message: 'Claude authentication status was not valid JSON' }

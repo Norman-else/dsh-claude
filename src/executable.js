@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { redactText } from "./events.js";
 const VERSION_PATTERN = /(?:Claude Code\s+)?v?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/i;
 const MAX_PROBE_STDOUT = 64 * 1024;
 const MAX_PROBE_STDERR = 8 * 1024;
@@ -90,11 +91,11 @@ export async function probeClaudeAuthentication(runtime, executable, cwd, signal
             status: value.loggedIn === true ? 'signed-in' : value.loggedIn === false ? 'signed-out' : 'unknown',
         };
         if (typeof value.authMethod === 'string')
-            report.method = value.authMethod.slice(0, 100);
+            report.method = redactText(value.authMethod, 100);
         if (typeof value.apiProvider === 'string')
-            report.provider = value.apiProvider.slice(0, 100);
+            report.provider = redactText(value.apiProvider, 100);
         if (typeof value.subscriptionType === 'string')
-            report.subscription = value.subscriptionType.slice(0, 100);
+            report.subscription = redactText(value.subscriptionType, 100);
         return report;
     }
     catch {
