@@ -87,6 +87,19 @@ describe('Claude SDK message normalization', () => {
     }])
   })
 
+  it('treats aborted_streaming terminal reasons as non-error', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      terminal_reason: 'aborted_streaming',
+      session_id: 'session-1',
+      result: 'partial',
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }))).toMatchObject([{ kind: 'result', success: true, terminalReason: 'aborted_streaming' }])
+  })
+
   it('preserves unknown message types as bounded-normalization inputs', () => {
     expect(normalizeSdkMessage(sdk({ type: 'future_message', value: 1 }))).toEqual([{
       kind: 'unknown',

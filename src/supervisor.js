@@ -336,6 +336,11 @@ export class ClaudeSupervisor {
                 if (message.parentToolUseId !== undefined)
                     return;
                 if (!active.sawTextDelta) {
+                    // Complete assistant text is the fallback when no partial text delta
+                    // streamed. Mark text-delta seen so that additional complete
+                    // assistant records sharing the same message.id (one per completed
+                    // content block) do not duplicate the text.
+                    active.sawTextDelta = true;
                     active.text += message.text;
                     active.output.push({ type: 'text-delta', text: message.text });
                 }
