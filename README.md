@@ -82,7 +82,7 @@ This is a permission-policy bridge, not kernel-level workspace confinement. DSH 
 - The Claude session id is persisted as a plugin-owned DSH session event.
 - After normal eviction or DSH restart, the next prompt resumes that Claude session.
 - A crash after visible Claude/tool activity is reported as **outcome unknown**. The plugin never automatically replays that prompt because its side effects may already have happened.
-- Cancelling a DSH turn interrupts Claude; plugin unload and agent disposal terminate the owned process tree.
+- Cancelling a DSH turn interrupts Claude and tears down that session's process entry (bounded interrupt, then close/abort/terminate/join); the next prompt re-establishes the process from the persisted Claude session id. Plugin unload and agent disposal also terminate the owned process tree.
 - DSH outer model retries are disabled for this provider.
 
 ## Doctor
