@@ -211,7 +211,9 @@ type ClaudeActivityEvent = {
     outputTokens?: number
     cacheReadTokens?: number
     cacheCreationTokens?: number
-    costUsd?: number
+    /** SDK `total_cost_usd` is cumulative across streaming-input turns; retain
+     *  the latest value rather than summing across results. */
+    cumulativeCostUsd?: number
   }
 }
 ```

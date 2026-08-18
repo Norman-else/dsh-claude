@@ -66,7 +66,10 @@ function sdkUserMessage(prompt, uuid) {
 function usageSummary(usage) {
     const input = usage.inputTokens ?? 0;
     const output = usage.outputTokens ?? 0;
-    return `${input} input / ${output} output tokens`;
+    const cost = usage.cumulativeCostUsd === undefined
+        ? ''
+        : ` · $${usage.cumulativeCostUsd.toFixed(4)} cumulative`;
+    return `${input} input / ${output} output tokens${cost}`;
 }
 function errorSummary(error) {
     return error instanceof Error ? error.message : String(error);

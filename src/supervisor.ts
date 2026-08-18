@@ -168,7 +168,10 @@ function sdkUserMessage(prompt: string, uuid: ReturnType<typeof randomUUID>): SD
 function usageSummary(usage: ClaudeUsage): string {
   const input = usage.inputTokens ?? 0
   const output = usage.outputTokens ?? 0
-  return `${input} input / ${output} output tokens`
+  const cost = usage.cumulativeCostUsd === undefined
+    ? ''
+    : ` · $${usage.cumulativeCostUsd.toFixed(4)} cumulative`
+  return `${input} input / ${output} output tokens${cost}`
 }
 
 function errorSummary(error: unknown): string {
