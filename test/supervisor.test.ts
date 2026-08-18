@@ -139,6 +139,26 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('surfaces the terminal reason for an is_error failure result', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    transport.queries[0]!.push(init())
+    transport.queries[0]!.push({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      terminal_reason: 'api_error',
+      session_id: 'claude-session-1',
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 0 },
+    } as SDKMessage)
+    await expect(collect(output)).rejects.toThrow(/api_error/)
+    expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle', claudeSessionId: 'claude-session-1' })
+    await runtime.dispose()
+  })
+
   it('reuses one streaming query for multiple turns', async () => {
     const transport = factory()
     const owner = fakeAgent()

@@ -438,7 +438,8 @@ export class ClaudeSupervisor {
             active.output.push({ type: 'usage', usage: result.usage });
         }
         if (!result.success) {
-            const message = result.errors?.join('\n') || 'Claude Code failed the turn';
+            const message = result.errors?.join('\n')
+                ?? (result.terminalReason !== undefined ? `Claude Code failed the turn (${result.terminalReason})` : 'Claude Code failed the turn');
             await appendClaudeActivity(active.agent, active.cursor, {
                 kind: 'error',
                 phase: 'failed',
