@@ -184,6 +184,8 @@ interface ClaudeSessionBoundEvent {
 
 `claude-code/activity`:
 
+Each DSH turn maps to exactly one Claude turn: the adapter performs one `runTurn` per DSH step, Claude owns its internal tool loop, and auxiliary DSH model calls (compaction, session title) are rejected at the adapter boundary. The `ordinal` therefore restarts at zero per DSH step, and because a turn has exactly one Claude-emitting step, ordinal zero occurs exactly once per turn — the turn-keyed client projection has no multi-step collision.
+
 ```ts
 type ClaudeActivityEvent = {
   turn: number

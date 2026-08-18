@@ -1,1 +1,0 @@
-{"version":3,"file":"preset-route.d.ts","sourceRoot":"","sources":["preset-route.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,OAAO,EAAE,MAAM,qBAAqB,CAAA;AAIlD,eAAO,MAAM,IAAI,6BAA6B,CAAA;AAE9C,MAAM,WAAW,MAAM;IACrB,KAAK,CAAC,EAAE,MAAM,CAAA;CACf;AAED,wBAAgB,KAAK,CAAC,GAAG,EAAE,OAAO,EAAE,MAAM,GAAE,MAAW,GAAG,IAAI,CAS7D"}

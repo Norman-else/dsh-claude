@@ -5,3 +5,9 @@ coverage/
 dist-pack/
 *.tgz
 .DS_Store
+
+# Never commit tsc emit artifacts beside source (typecheck runs with noEmit).
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map
