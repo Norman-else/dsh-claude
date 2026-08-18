@@ -50,3 +50,14 @@
 - 62 Vitest regressions; pnpm typecheck/build/pack; safe CLI Doctor; live SDK handshake; profile composition valid; review documents recorded
 - Blocked on: current DSH Host predates profile link and requires Host restart before existing 56454 URL can expose the new route/client
 - Next step: Restart existing DSH Host and run live acceptance matrix (native coexistence, Claude turn, permission, cancel, resume, orphan check)
+
+## Checkpoint Update
+
+- Current todo: Complete live acceptance after Host restart
+- Active slice: Plan Task 10 (only Host restart + live matrix remain)
+- Completed todos:
+- All review blockers and protocol findings resolved: result is_error classification, repeated init tolerance, assistant-text dedup, abort terminal-reason classification, terminal-reason diagnostics, signalAborted TS2367, embedded string credential redaction, cancel teardown with still_queued + bounded interrupt, admission-gate serialization, disconnect/append cleanup, init timeout, protocol-error termination, Doctor same-origin + privacy + missing-executable, exact executable spawn pin, extended env scrub, client ModuleLoader bundle format, preset-route model passthrough, disposal await
+- Evidence refs:
+- 66 Vitest regressions; pnpm typecheck/build/pack; safe CLI Doctor; live SDK handshake; profile composition valid; review documents recorded; four commits a4f5aa9..941128f
+- Blocked on: current DSH Host predates profile link and requires Host restart before existing 56454 URL can expose the new route/client
+- Next step: Restart existing DSH Host and run live acceptance matrix (native coexistence, Claude turn, permission, cancel, resume, orphan check)
