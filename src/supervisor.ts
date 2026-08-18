@@ -536,7 +536,7 @@ export class ClaudeSupervisor {
       active.signal.removeEventListener('abort', active.abortListener)
     }
     if (active.aborted) {
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'status',
         phase: 'failed',
         title: 'Claude Code turn cancelled',
@@ -548,7 +548,7 @@ export class ClaudeSupervisor {
       return
     }
     if (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined || result.usage.cumulativeCostUsd !== undefined) {
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'usage',
         phase: 'completed',
         title: 'Claude usage',
@@ -560,7 +560,7 @@ export class ClaudeSupervisor {
     const unmatchedDenials = (result.permissionDenials ?? [])
       .filter(denial => !active.deniedToolUseIds.has(denial.toolUseId))
     if (unmatchedDenials.length > 0) {
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'permission',
         phase: 'denied',
         title: 'Claude Code auto-denied tool calls',
@@ -570,7 +570,7 @@ export class ClaudeSupervisor {
     if (!result.success) {
       const message = result.errors?.join('\n')
         ?? (result.terminalReason !== undefined ? `Claude Code failed the turn (${result.terminalReason})` : 'Claude Code failed the turn')
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'error',
         phase: 'failed',
         title: 'Claude Code turn failed',
@@ -583,7 +583,7 @@ export class ClaudeSupervisor {
         active.text = result.text
         active.output.push({ type: 'text-delta', text: result.text })
       }
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'status',
         phase: 'completed',
         title: 'Claude Code turn completed',
@@ -595,6 +595,12 @@ export class ClaudeSupervisor {
     entry.state = 'idle'
     entry.lastUsedAt = Date.now()
     this.#armIdleTimer(entry)
+  }
+
+  /** Persist a durable activity without letting a storage failure unsettle the
+   *  in-memory turn or leak process ownership. Audit failure is best-effort. */
+  async #appendSafely(active: ActiveTurn, activity: Parameters<typeof appendClaudeActivity>[2]): Promise<void> {
+    await appendClaudeActivity(active.agent, active.cursor, activity).catch(() => undefined)
   }
 
   async #interrupt(entry: SupervisorEntry): Promise<void> {
@@ -639,14 +645,14 @@ export class ClaudeSupervisor {
       const failure = unknown
         ? new ClaudeOutcomeUnknownError(stderr === undefined || stderr.length === 0 ? undefined : `Claude Code exited after activity; outcome unknown. ${stderr}`)
         : new Error(stderr === undefined || stderr.length === 0 ? errorSummary(error) : stderr)
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendSafely(active, {
         kind: 'error',
         phase: 'failed',
         title: unknown ? 'Claude Code outcome unknown' : 'Claude Code disconnected',
         summary: failure.message,
         isError: true,
         detail: error,
-      }).catch(() => undefined)
+      })
       active.output.fail(failure)
       entry.active = undefined
     } else {

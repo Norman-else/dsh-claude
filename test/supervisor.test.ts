@@ -44,17 +44,23 @@ function fakeAgent(id = 'dsh-session-1', cwd = '/workspace', onAppend?: (type: s
     { type: 'turn/start', data: { turn: 1 }, seq: 0, time: 1 },
     { type: 'step/start', data: { turn: 1, step: 1 }, seq: 1, time: 2 },
   ]
+  let appendError: unknown
   const session = {
     header: { cwd },
     get events() { return events },
     append: async (type: string, data: unknown) => {
       onAppend?.(type, data)
+      if (appendError !== undefined) throw appendError
       const event = { type, data, seq: events.length, time: Date.now() }
       events.push(event)
       return event
     },
   }
-  const agent = { id, session } as unknown as Agent
+  const agent = {
+    id,
+    session,
+    failAppend: (error: unknown) => { appendError = error },
+  } as unknown as Agent & { failAppend(error: unknown): void }
   return { agent, events }
 }
 
@@ -188,6 +194,26 @@ describe('Claude supervisor', () => {
       type: 'usage',
       usage: { inputTokens: 6, outputTokens: 3, cumulativeCostUsd: 0.03 },
     })
+    await runtime.dispose()
+  })
+
+  it('settles a completed turn even when durable activity append fails', async () => {
+    const transport = factory()
+    let failAfterStart = false
+    const owner = fakeAgent('dsh-session-1', '/workspace', (_type, data) => {
+      if (failAfterStart && (data as { phase?: string }).phase === 'completed') {
+        throw new Error('storage unavailable')
+      }
+    })
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('hel'))
+    failAfterStart = true
+    query.push(result('hel'))
+    await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'hel' })
+    expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle', claudeSessionId: 'claude-session-1' })
     await runtime.dispose()
   })
 
