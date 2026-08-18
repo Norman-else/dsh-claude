@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "affectedLayers": [
+    "Host adapter, subprocess, approval, session events, Agent Preset, Web client"
+  ],
+  "owners": [
+    "dsh-claude-code plugin"
+  ],
+  "invariants": [
+    "Claude owns internal tools; DSH owns UI/audit/process lifecycle; native presets remain unchanged"
+  ],
+  "compatBoundary": "DSH 0.1.0-rc.5 public APIs only; no core edits",
+  "nonGoals": [
+    "Cross-platform verification, DSH-managed Claude auth, attachments, npm publish"
+  ]
+}

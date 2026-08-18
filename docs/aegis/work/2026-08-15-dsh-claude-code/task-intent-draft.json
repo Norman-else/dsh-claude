@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "requestedOutcome": "Build and locally verify the approved DSH Claude Code CLI main-session plugin",
+  "goal": "Build and locally verify the approved DSH Claude Code CLI main-session plugin",
+  "successEvidence": [
+    "Automated checks and linked-profile smoke prove native coexistence, Claude streaming, approval, cancellation, resume, and no orphan process"
+  ],
+  "stopCondition": "Stop on unavailable public seam, unsafe credential forwarding, protocol incompatibility, or failed verification requiring redesign",
+  "nonGoals": [
+    "Cross-platform verification, DSH-managed Claude auth, attachments, npm publish"
+  ],
+  "scope": "New out-of-tree DSH bundle, preset, Host runtime, Client UI, tests, docs, and local link install",
+  "changeKinds": [
+    "feature, architecture, durable events, permissions, client extension"
+  ],
+  "riskHints": [
+    "high: external agent protocol, long-lived processes, permissions, durable session mapping"
+  ]
+}

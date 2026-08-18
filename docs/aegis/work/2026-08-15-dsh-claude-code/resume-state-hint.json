@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-08-15-dsh-claude-code",
+  "lastCheckpointRef": "docs/aegis/work/2026-08-15-dsh-claude-code/todo-checkpoint-draft.json",
+  "resumeInstruction": "Read parent spec/plan/checkpoint; run pnpm typecheck and pnpm test; continue at src/adapter.ts",
+  "knownPartialWork": [
+    "Tasks 2-5: durable events, redaction, executable Doctor, managed process adapter, permission bridge, SDK message normalization, and long-lived supervisor"
+  ],
+  "mustReadBeforeContinuing": [
+    "docs/aegis/work/2026-08-15-dsh-claude-code/10-intent.md",
+    "docs/aegis/work/2026-08-15-dsh-claude-code/20-checkpoint.md",
+    "docs/aegis/work/2026-08-15-dsh-claude-code/todo-checkpoint-draft.json"
+  ],
+  "unsafeToAssume": [
+    "Live SDK multi-turn behavior and DSH linked-profile registration remain unverified"
+  ]
+}

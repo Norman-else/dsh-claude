@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-08-15-dsh-claude-code",
+  "taskIntentRef": "docs/aegis/work/2026-08-15-dsh-claude-code/task-intent-draft.json",
+  "baselineRefs": [
+    "docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md"
+  ],
+  "scopeStatus": "not-yet-verified",
+  "compatStatus": "not-yet-verified",
+  "retirementStatus": "not-yet-verified",
+  "newRiskSignals": [
+    "high: external agent protocol, long-lived processes, permissions, durable session mapping"
+  ],
+  "decision": "needs-baseline-readback"
+}

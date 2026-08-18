@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "taskId": "2026-08-15-dsh-claude-code",
+  "currentTodo": "Implement DSH adapter, route, and managed preset",
+  "completedTodos": [
+    "Tasks 2-5: durable events, redaction, executable Doctor, managed process adapter, permission bridge, SDK message normalization, and long-lived supervisor"
+  ],
+  "activeSlice": "Plan Tasks 6-7",
+  "evidenceRefs": [
+    "31 Vitest regressions; pnpm typecheck"
+  ],
+  "blockedOn": null,
+  "nextStep": "Implement StreamChunk adapter, host activation, and managed Agent Preset install",
+  "updatedAt": "2026-08-15"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "aegis.schema.v0",
+  "candidateDocs": [
+    "docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md"
+  ],
+  "whyRelevant": "Approved product and runtime boundary",
+  "missingAuthority": []
+}

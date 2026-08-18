@@ -1,0 +1,43 @@
+export const zh = {
+  nav: 'Claude Code',
+  title: 'Claude Code CLI',
+  description: 'DSH 使用本机 Claude Code CLI，并保留其 Agent Loop、工具、CLAUDE.md、Skills、Hooks 与 MCP 配置。',
+  activity: 'Claude Code 活动',
+  detail: '查看已脱敏详情',
+  doctor: '运行诊断',
+  refreshing: '诊断中…',
+  executable: '可执行文件',
+  version: '版本',
+  authentication: '登录状态',
+  handshake: '协议握手',
+  processes: '活动进程',
+  limits: '进程限制',
+  missing: '未找到',
+  unknown: '未知',
+  error: '诊断失败',
+  security: '权限边界',
+  securityBody: 'Claude 工具权限通过 DSH 审批界面决定；当前版本不宣称对 ~/.claude 与工作区之外路径提供内核级写入隔离。',
+} as const
+
+export const en = {
+  nav: 'Claude Code',
+  title: 'Claude Code CLI',
+  description: 'DSH uses the local Claude Code CLI and preserves its agent loop, tools, CLAUDE.md, Skills, Hooks, and MCP configuration.',
+  activity: 'Claude Code activity',
+  detail: 'Show redacted detail',
+  doctor: 'Run Doctor',
+  refreshing: 'Running Doctor…',
+  executable: 'Executable',
+  version: 'Version',
+  authentication: 'Authentication',
+  handshake: 'Protocol handshake',
+  processes: 'Live processes',
+  limits: 'Process limits',
+  missing: 'Not found',
+  unknown: 'Unknown',
+  error: 'Doctor failed',
+  security: 'Permission boundary',
+  securityBody: 'Claude tool permissions are decided through the DSH approval UI. This version does not claim kernel-level write isolation for ~/.claude or paths outside the workspace.',
+} as const
+
+export type ClaudeCodeSettingsKey = keyof typeof en

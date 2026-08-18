@@ -1,0 +1,5 @@
+# dsh-claude-code host bundle. The plugin registers the local Claude Code bridge
+# and installs the small managed Agent Preset into the DSH user preset root.
+- insert:
+    - id: llm-claude-code-cli
+      name: dsh-claude-code

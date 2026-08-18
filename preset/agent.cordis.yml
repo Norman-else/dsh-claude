@@ -1,0 +1,4 @@
+# Managed by dsh-claude-code. Claude Code owns the inner agent loop and tools;
+# this preset contributes only the request-route override.
+- id: claude-code-route
+  name: dsh-claude-code/preset-route
