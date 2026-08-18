@@ -61,3 +61,21 @@
 - 66 Vitest regressions; pnpm typecheck/build/pack; safe CLI Doctor; live SDK handshake; profile composition valid; review documents recorded; four commits a4f5aa9..941128f
 - Blocked on: current DSH Host predates profile link and requires Host restart before existing 56454 URL can expose the new route/client
 - Next step: Restart existing DSH Host and run live acceptance matrix (native coexistence, Claude turn, permission, cancel, resume, orphan check)
+
+## TaskStartSnapshot — 2026-08-18 history replay repair
+
+- Symptom: Claude finishes in about 8 seconds and DSH writes `assistant/message`, `step/end`, and `turn/end`, but the live Web view remains on `Deep diving`; after restart, history load fails on `claude-code/activity` as an unknown required event.
+- Reproduction: create a linked-profile Claude session, complete a turn, restart/open the session; Host rc.5 rejects the custom event even though the linked checkout's rc.6 copy registered it.
+- Root cause: the linked plugin imports the mutable event vocabulary from its checkout-local `@deepseek-ai/dsh-session` rc.6 instance, while the running App reads logs with a distinct Host rc.5 module instance.
+- Change necessity: no configuration or refresh can make two module singletons share vocabulary. Decision: code-change.
+- Fix boundary: resolve and mutate the running Host entrypoint's public `@deepseek-ai/dsh-session` export and add module-identity regression coverage. Keep published rc.6 packages for compilation because rc.5 is not available from npm; do not patch the installed DSH checkout.
+- Verification target: existing corrupted sessions become readable after Host restart; a new Claude turn completes live and remains readable after a second restart; `PATH=/opt/homebrew/bin:$PATH pnpm check` passes.
+
+## Checkpoint Update — 2026-08-18 history replay repair
+
+- Completed: Host-relative vocabulary resolution is isolated in `src/event-vocabulary.ts`; client-safe event code no longer imports the checkout-local runtime singleton; the architecture baseline records the module-identity requirement.
+- Direct evidence: after rebuilding and restarting DSH, formerly rejected session `session-74684850-1109-4521-9022-271815d37955` loaded 84 events including 30 Claude activities, 3 assistant messages, and 3 turn ends. A new `Hi` turn persisted its assistant reply and turn end.
+- Regression evidence: `PATH=/opt/homebrew/bin:$PATH pnpm check` passed with 87 tests; the installed-Host integration test resolves and mutates `/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh-session/lib/index.js` rather than the linked checkout copy.
+- Separate remaining issue: the DSH Web store can retain `running:true` after completion even though `session.list` reports false and the Host WebSocket emits a fresh `host/session-status` true-to-false edge. This behavior is owned by DSH client runtime; the plugin has no public write API for `Session.handleRunning`, so no duplicate status owner or private-API workaround was added.
+- Workspace integrity: proof bundle generation succeeded, but workspace check remains red on three pre-existing unindexed evidence files (`2026-08-15-verification.md`, `runtime-correctness-review.md`, `security-lifecycle-review.md`); transient helper outputs were removed rather than retaining an invalid bundle.
+- Next step: report the DSH client live-status defect upstream or fix it in DSH core; use page refresh as the bounded recovery path meanwhile.

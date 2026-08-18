@@ -169,7 +169,7 @@ Claude internal tool calls are not emitted as DSH `tool-call` chunks.
 
 ### 3.5 Durable plugin events
 
-Register runtime event vocabulary in `KNOWN_SESSION_EVENT_TYPES`.
+Register runtime event vocabulary in the running Host entrypoint's `KNOWN_SESSION_EVENT_TYPES` singleton. A linked checkout may carry its own DSH development packages; mutating that checkout-local module is insufficient because Host persistence validates logs with its own module instance.
 
 `claude-code/session-bound`:
 

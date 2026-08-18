@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { CLAUDE_CODE_PROVIDER } from './constants.ts'
-import { installClaudeEventVocabulary } from './events.ts'
+import { installClaudeEventVocabulary } from './event-vocabulary.ts'
 import { resolveClaudeExecutable } from './executable.ts'
 import { ClaudeSupervisor } from './supervisor.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
@@ -32,7 +32,7 @@ export const Config: z<Config> = z.object({
 })
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  installClaudeEventVocabulary()
+  await installClaudeEventVocabulary()
   await ensureManagedPreset()
   const supervisorConfig = {
     executablePath: '',

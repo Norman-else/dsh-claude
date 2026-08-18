@@ -1,4 +1,4 @@
-import { KNOWN_SESSION_EVENT_TYPES, type SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   CLAUDE_ACTIVITY_EVENT,
@@ -75,14 +75,6 @@ const PREFIXED_TOKEN = /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|ghp_|github_pat_)[A-
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu
 const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/giu
 const URL_SECRET_PARAM = /([?&](?:password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)=)[^&#\s]+/giu
-
-export function installClaudeEventVocabulary(): void {
-  if (!(KNOWN_SESSION_EVENT_TYPES instanceof Set)) {
-    throw new Error('dsh-claude-code: this Harness build does not expose an extensible session event vocabulary')
-  }
-  KNOWN_SESSION_EVENT_TYPES.add(CLAUDE_SESSION_BOUND_EVENT)
-  KNOWN_SESSION_EVENT_TYPES.add(CLAUDE_ACTIVITY_EVENT)
-}
 
 export function boundText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value

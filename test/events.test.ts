@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   boundText,
@@ -6,6 +8,11 @@ import {
   redactValue,
   safeDetail,
 } from '../src/events.ts'
+import {
+  installClaudeEventVocabulary,
+  registerClaudeEventVocabulary,
+  resolveHostSessionModulePath,
+} from '../src/event-vocabulary.ts'
 
 const event = (type: string, data: unknown) => ({
   id: crypto.randomUUID(),
@@ -88,6 +95,54 @@ describe('event normalization', () => {
 
   it('preserves short text', () => {
     expect(boundText('hello', 10)).toBe('hello')
+  })
+})
+
+const installedHostEntrypoint = '/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js'
+
+describe('host event vocabulary installation', () => {
+  it('registers both plugin event types on the supplied runtime singleton', () => {
+    const vocabulary = new Set<string>(['turn/start'])
+    registerClaudeEventVocabulary({ KNOWN_SESSION_EVENT_TYPES: vocabulary })
+    expect(vocabulary).toEqual(new Set([
+      'turn/start',
+      'claude-code/session-bound',
+      'claude-code/activity',
+    ]))
+  })
+
+  it('resolves the session module relative to the running Host entrypoint', () => {
+    let observedSpecifier = ''
+    let observedParent = ''
+    const resolved = resolveHostSessionModulePath(
+      installedHostEntrypoint,
+      (specifier, parent) => {
+        observedSpecifier = specifier
+        observedParent = String(parent)
+        return '/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh-session/lib/index.js'
+      },
+    )
+    expect(observedSpecifier).toBe('@deepseek-ai/dsh-session')
+    expect(observedParent).toBe('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js')
+    expect(resolved).toContain('/Resources/host/node_modules/@deepseek-ai/dsh-session/lib/index.js')
+  })
+
+  it.runIf(existsSync(installedHostEntrypoint))('mutates the installed Host module instance instead of the linked checkout copy', async () => {
+    const hostSessionPath = resolveHostSessionModulePath(installedHostEntrypoint)
+    const hostSession = await import(pathToFileURL(hostSessionPath).href) as {
+      KNOWN_SESSION_EVENT_TYPES: Set<string>
+    }
+    const initiallyKnown = hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/activity')
+    try {
+      await installClaudeEventVocabulary(installedHostEntrypoint)
+      expect(hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/activity')).toBe(true)
+      expect(hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/session-bound')).toBe(true)
+    } finally {
+      if (!initiallyKnown) {
+        hostSession.KNOWN_SESSION_EVENT_TYPES.delete('claude-code/activity')
+        hostSession.KNOWN_SESSION_EVENT_TYPES.delete('claude-code/session-bound')
+      }
+    }
   })
 })
 
