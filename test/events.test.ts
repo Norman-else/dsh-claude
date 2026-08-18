@@ -27,6 +27,16 @@ describe('event normalization', () => {
     })
   })
 
+  it('redacts whole environment maps keyed as env/environment', () => {
+    expect(redactValue({
+      env: { PATH: '/usr/bin', GOOGLE_APPLICATION_CREDENTIALS: '/secrets/sa.json', PLAIN: 'kept-string' },
+      environment: { DATABASE_URL: 'postgres://u:p@h/db' },
+    })).toEqual({
+      env: '[REDACTED]',
+      environment: '[REDACTED]',
+    })
+  })
+
   it('redacts credentials embedded inside command and URL strings', () => {
     const detail = safeDetail({
       command: 'TOKEN=plain curl -H "Authorization: Bearer bearer-value" https://user:pass@example.test/?api_key=query-value',

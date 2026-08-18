@@ -61,7 +61,7 @@ declare module '@deepseek-ai/dsh-session/types' {
   }
 }
 
-const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key)(?:$|[_-])/i
+const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key|env|environ|environment)(?:$|[_-])/i
 const MAX_SUMMARY_CHARS = 1_000
 const MAX_DETAIL_CHARS = 4_000
 const MAX_DEPTH = 6

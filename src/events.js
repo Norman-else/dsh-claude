@@ -1,6 +1,6 @@
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session';
 import { CLAUDE_ACTIVITY_EVENT, CLAUDE_SESSION_BOUND_EVENT, SDK_VERSION, } from "./constants.js";
-const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key)(?:$|[_-])/i;
+const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key|env|environ|environment)(?:$|[_-])/i;
 const MAX_SUMMARY_CHARS = 1_000;
 const MAX_DETAIL_CHARS = 4_000;
 const MAX_DEPTH = 6;
