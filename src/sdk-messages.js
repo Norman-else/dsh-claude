@@ -163,6 +163,12 @@ function normalizeSystem(message) {
     if (subtype?.startsWith('hook_') === true || subtype === 'plugin_install') {
         return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }];
     }
+    if (subtype !== undefined) {
+        // Preserve unknown system lifecycle evidence (background tasks, resets,
+        // worker/mirror lifecycle) as a bounded activity instead of silently
+        // dropping it; the activity layer redacts and bounds the detail.
+        return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }];
+    }
     return [];
 }
 const RESULT_ERROR_SUBTYPES = new Set([
@@ -200,16 +206,21 @@ export function normalizeSdkMessage(message) {
         if (sessionId === undefined || (value.subtype !== 'success' && !RESULT_ERROR_SUBTYPES.has(String(value.subtype)))) {
             return [{ kind: 'protocol-error', title: 'Malformed Claude result message', detail: value }];
         }
-        const success = value.subtype === 'success';
+        // A result is a success only when it is not flagged as an error. Local
+        // 2.1.233 emits subtype:"success" with is_error:true for API/auth failures
+        // (e.g. terminal_reason:"api_error"), so subtype alone is not authoritative.
+        const success = value.subtype === 'success' && value.is_error !== true;
         const errors = Array.isArray(value.errors)
             ? value.errors.filter((item) => typeof item === 'string')
             : undefined;
+        const terminalReason = string(value.terminal_reason);
         const userMessageUuid = string(value.user_message_uuid);
         return [{
                 kind: 'result',
                 success,
                 ...(success && typeof value.result === 'string' ? { text: value.result } : {}),
                 ...(errors === undefined ? {} : { errors }),
+                ...(terminalReason === undefined ? {} : { terminalReason }),
                 usage: resultUsage(value),
                 sessionId,
                 ...(userMessageUuid === undefined ? {} : { userMessageUuid }),

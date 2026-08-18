@@ -68,6 +68,25 @@ describe('Claude SDK message normalization', () => {
     }])
   })
 
+  it('classifies an is_error success-subtype result as failure', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      terminal_reason: 'api_error',
+      session_id: 'session-1',
+      result: 'ignored',
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }))).toEqual([{
+      kind: 'result',
+      success: false,
+      terminalReason: 'api_error',
+      usage: { inputTokens: 1, outputTokens: 1, cumulativeCostUsd: 0 },
+      sessionId: 'session-1',
+    }])
+  })
+
   it('preserves unknown message types as bounded-normalization inputs', () => {
     expect(normalizeSdkMessage(sdk({ type: 'future_message', value: 1 }))).toEqual([{
       kind: 'unknown',

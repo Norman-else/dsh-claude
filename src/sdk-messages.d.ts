@@ -59,6 +59,7 @@ export type NormalizedSdkMessage = {
     usage: ClaudeUsage;
     sessionId: string;
     userMessageUuid?: string;
+    terminalReason?: string;
 } | {
     kind: 'protocol-error';
     title: string;

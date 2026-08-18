@@ -390,9 +390,10 @@ export class ClaudeSupervisor {
 
   async #handleMessage(entry: SupervisorEntry, message: NormalizedSdkMessage): Promise<void> {
     if (message.kind === 'init') {
-      if (entry.initialized) {
-        throw new ClaudeProtocolError('Claude Code sent a duplicate initialization message')
-      }
+      // Claude Code can re-emit system/init across turns in long-lived
+      // streaming-input mode (e.g. the auth-error path). Treat it idempotently:
+      // refresh the session id/version and negotiated state, and only reject a
+      // genuine identity/cwd mismatch.
       if (entry.expectedResume !== undefined && message.sessionId !== entry.expectedResume) {
         throw new ClaudeProtocolError(`Claude Code resumed unexpected session ${message.sessionId}; expected ${entry.expectedResume}`)
       }

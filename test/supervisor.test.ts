@@ -124,6 +124,21 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('tolerates a repeated system/init across turns', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('hi'))
+    query.push(init()) // re-emitted by 2.1.233 in long-lived mode
+    query.push(result('hi'))
+    await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'hi' })
+    expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle', claudeSessionId: 'claude-session-1' })
+    await runtime.dispose()
+  })
+
   it('reuses one streaming query for multiple turns', async () => {
     const transport = factory()
     const owner = fakeAgent()
