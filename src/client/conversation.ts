@@ -35,7 +35,7 @@ function ordered(items: readonly ClaudeActivityEvent[]): ClaudeActivityEvent[] {
 }
 
 export const claudeActivityDefinition: ConversationNodeDefinition<ClaudeActivityState> = {
-  kind: 'claude-code-activity',
+  kind: 'claudeCode',
   match(event: SessionEvent) {
     if (event.type !== CLAUDE_ACTIVITY_EVENT) return null
     const value = event.data as ClaudeActivityEvent

@@ -243,9 +243,9 @@ The DSH public model-call contract does not carry a session sandbox-mode signal 
 
 Register a `ConversationNodeDefinition` that:
 
-- starts on `turn/start`
-- consumes `claude-code/activity` events for the matching turn
-- publishes turn data under `claudeCode`
+- starts on the matching turn's ordinal-zero `claude-code/activity`
+- consumes later `claude-code/activity` events for that turn
+- declares Definition kind `claudeCode` and publishes turn data under the same owned key, as required by the client runtime contract
 - emits no independent chat node
 
 Register a `conversation.chat.turnTail` chain entry whose selector claims only turns with Claude activity. The component renders an ordered collapsible activity list beneath the closing assistant message.

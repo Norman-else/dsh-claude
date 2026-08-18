@@ -49,6 +49,7 @@ describe('Claude conversation projection', () => {
     expect(updated.activities).toEqual([first, second])
     const data = claudeActivityDefinition.buildLocationData?.({ state: updated } as never, 'turn')
     expect(data).toMatchObject({ kind: 'turn', turn: 1, key: 'claudeCode' })
+    expect(data?.key).toBe(claudeActivityDefinition.kind)
   })
 
   it('renders a compact native turn-tail activity rail', () => {
