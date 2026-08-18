@@ -58,6 +58,8 @@ export function createPermissionBridge(approval, activeContext) {
                 signal: options.signal,
             });
             const result = mapApprovalOutcome(outcome, input, options.toolUseID);
+            if (result.behavior === 'deny')
+                active.recordDenial?.(options.toolUseID);
             await appendClaudeActivity(active.agent, active.cursor, {
                 kind: 'permission',
                 phase: outcome === 'allowed-once' ? 'completed' : 'denied',

@@ -100,6 +100,27 @@ describe('Claude SDK message normalization', () => {
     }))).toMatchObject([{ kind: 'result', success: true, terminalReason: 'aborted_streaming' }])
   })
 
+  it('normalizes result permission denials for dedup', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'session-1',
+      result: 'done',
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      permission_denials: [
+        { tool_name: 'Bash', tool_use_id: 'tool-1', tool_input: { command: 'x' } },
+        { tool_name: 'Edit', tool_use_id: 'tool-2', tool_input: {} },
+      ],
+    }))).toMatchObject([{
+      kind: 'result',
+      permissionDenials: [
+        { toolName: 'Bash', toolUseId: 'tool-1' },
+        { toolName: 'Edit', toolUseId: 'tool-2' },
+      ],
+    }])
+  })
+
   it('preserves unknown message types as bounded-normalization inputs', () => {
     expect(normalizeSdkMessage(sdk({ type: 'future_message', value: 1 }))).toEqual([{
       kind: 'unknown',

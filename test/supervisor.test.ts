@@ -159,6 +159,38 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('reports the latest cumulative cost without summing across turns', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(result('one'))
+    await collect(first)
+
+    owner.events.push(
+      { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
+      { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
+    )
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two' })
+    query.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'claude-session-1',
+      result: 'two',
+      total_cost_usd: 0.03,
+      usage: { input_tokens: 6, output_tokens: 3 },
+    } as SDKMessage)
+    const secondEvents = await collect(second)
+    // The SDK total_cost_usd is the running total; we must report 0.03, not 0.01 + 0.03.
+    expect(secondEvents).toContainEqual({
+      type: 'usage',
+      usage: { inputTokens: 6, outputTokens: 3, cumulativeCostUsd: 0.03 },
+    })
+    await runtime.dispose()
+  })
+
   it('reuses one streaming query for multiple turns', async () => {
     const transport = factory()
     const owner = fakeAgent()

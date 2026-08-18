@@ -60,6 +60,10 @@ export type NormalizedSdkMessage = {
     sessionId: string;
     userMessageUuid?: string;
     terminalReason?: string;
+    permissionDenials?: readonly {
+        toolName: string;
+        toolUseId: string;
+    }[];
 } | {
     kind: 'protocol-error';
     title: string;

@@ -12,7 +12,7 @@ export type NormalizedSdkMessage =
   | { kind: 'status'; title: string; summary?: string; detail?: unknown }
   | { kind: 'warning'; title: string; summary?: string; detail?: unknown }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
-  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; terminalReason?: string }
+  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
   | { kind: 'protocol-error'; title: string; detail: unknown }
   | { kind: 'unknown'; title: string; detail: unknown }
 
@@ -220,12 +220,25 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       : undefined
     const terminalReason = string(value.terminal_reason)
     const userMessageUuid = string(value.user_message_uuid)
+    const permissionDenials = Array.isArray(value.permission_denials)
+      ? value.permission_denials
+          .map(item => record(item))
+          .filter((item): item is Record<string, unknown> => item !== undefined)
+          .map(item => {
+            const toolName = string(item.tool_name)
+            const toolUseId = string(item.tool_use_id)
+            return toolName === undefined || toolUseId === undefined ? undefined : { toolName, toolUseId }
+          })
+          .filter((item): item is { toolName: string; toolUseId: string } => item !== undefined)
+          .slice(0, 40)
+      : undefined
     return [{
       kind: 'result',
       success,
       ...(success && typeof value.result === 'string' ? { text: value.result } : {}),
       ...(errors === undefined ? {} : { errors }),
       ...(terminalReason === undefined ? {} : { terminalReason }),
+      ...(permissionDenials === undefined || permissionDenials.length === 0 ? {} : { permissionDenials }),
       usage: resultUsage(value),
       sessionId,
       ...(userMessageUuid === undefined ? {} : { userMessageUuid }),

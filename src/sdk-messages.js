@@ -215,12 +215,25 @@ export function normalizeSdkMessage(message) {
             : undefined;
         const terminalReason = string(value.terminal_reason);
         const userMessageUuid = string(value.user_message_uuid);
+        const permissionDenials = Array.isArray(value.permission_denials)
+            ? value.permission_denials
+                .map(item => record(item))
+                .filter((item) => item !== undefined)
+                .map(item => {
+                const toolName = string(item.tool_name);
+                const toolUseId = string(item.tool_use_id);
+                return toolName === undefined || toolUseId === undefined ? undefined : { toolName, toolUseId };
+            })
+                .filter((item) => item !== undefined)
+                .slice(0, 40)
+            : undefined;
         return [{
                 kind: 'result',
                 success,
                 ...(success && typeof value.result === 'string' ? { text: value.result } : {}),
                 ...(errors === undefined ? {} : { errors }),
                 ...(terminalReason === undefined ? {} : { terminalReason }),
+                ...(permissionDenials === undefined || permissionDenials.length === 0 ? {} : { permissionDenials }),
                 usage: resultUsage(value),
                 sessionId,
                 ...(userMessageUuid === undefined ? {} : { userMessageUuid }),

@@ -106,6 +106,7 @@ interface ActiveTurn {
   text: string
   thinking: string
   aborted: boolean
+  deniedToolUseIds: Set<string>
   signal?: AbortSignal
   abortListener?: () => void
 }
@@ -258,6 +259,7 @@ export class ClaudeSupervisor {
       text: '',
       thinking: '',
       aborted: false,
+      deniedToolUseIds: new Set(),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
     entry.active = active
@@ -352,6 +354,7 @@ export class ClaudeSupervisor {
         agent: active.agent,
         cursor: active.cursor,
         markActivity: () => { active.sawActivity = true },
+        recordDenial: toolUseId => { active.deniedToolUseIds.add(toolUseId) },
       }
     })
     const options: ClaudeOptions = {
@@ -553,6 +556,16 @@ export class ClaudeSupervisor {
         usage: result.usage,
       })
       active.output.push({ type: 'usage', usage: result.usage })
+    }
+    const unmatchedDenials = (result.permissionDenials ?? [])
+      .filter(denial => !active.deniedToolUseIds.has(denial.toolUseId))
+    if (unmatchedDenials.length > 0) {
+      await appendClaudeActivity(active.agent, active.cursor, {
+        kind: 'permission',
+        phase: 'denied',
+        title: 'Claude Code auto-denied tool calls',
+        summary: unmatchedDenials.map(denial => denial.toolName).join(', '),
+      })
     }
     if (!result.success) {
       const message = result.errors?.join('\n')
