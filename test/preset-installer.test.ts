@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile, mkdir, readdir, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -61,5 +61,17 @@ describe('managed Agent Preset installation', () => {
     await ensureManagedPreset(paths)
     await writeFile(join(paths.targetDir, 'agent.cordis.yml'), '# user edit\n')
     await expect(removeManagedPreset(paths)).rejects.toBeInstanceOf(ManagedPresetConflictError)
+  })
+
+  it('refuses a symlinked target directory', async () => {
+    const paths = await fixture()
+    const realDir = join(paths.targetDir, '..', 'real-preset-dir')
+    await mkdir(realDir, { recursive: true })
+    const symlinkTarget = paths.targetDir
+    const symlinkSource = join(paths.targetDir, '..', 'claude-code-cli-link')
+    await symlink(realDir, symlinkSource)
+    await expect(ensureManagedPreset({ ...paths, targetDir: symlinkSource })).rejects.toBeInstanceOf(ManagedPresetConflictError)
+    // And the real dir must not have been written through the link.
+    await expect(readdir(realDir)).resolves.toEqual([])
   })
 })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, readFile, readdir, rm, rmdir, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, readFile, readdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -60,6 +60,7 @@ async function atomicWrite(path: string, content: string): Promise<boolean> {
 }
 
 export async function ensureManagedPreset(paths = defaultManagedPresetPaths()): Promise<'installed' | 'unchanged'> {
+  await assertSafeTargetDirectory(paths.targetDir)
   const expected = await Promise.all(MANAGED_PRESET_FILES.map(async file => ({
     file,
     content: await readFile(join(paths.sourceDir, file), 'utf8'),
@@ -75,7 +76,22 @@ export async function ensureManagedPreset(paths = defaultManagedPresetPaths()): 
   return changed ? 'installed' : 'unchanged'
 }
 
+/** Reject a target directory that is a symlink (or occupies the path as a file)
+ *  so the managed preset never writes through an attacker-controlled link. */
+async function assertSafeTargetDirectory(targetDir: string): Promise<void> {
+  try {
+    const stat = await lstat(targetDir)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new ManagedPresetConflictError(targetDir)
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+}
+
 export async function removeManagedPreset(paths = defaultManagedPresetPaths()): Promise<'removed' | 'absent'> {
+  await assertSafeTargetDirectory(paths.targetDir)
   let removed = false
   for (const file of MANAGED_PRESET_FILES) {
     const source = await readFile(join(paths.sourceDir, file), 'utf8')

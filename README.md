@@ -129,7 +129,7 @@ pnpm build
 pnpm pack --pack-destination ./dist-pack
 ```
 
-The project uses fixture/state-machine tests and a minimal live smoke. The Agent SDK is pinned to `0.3.233`; runtime execution is forced to the resolved local Claude executable through `pathToClaudeCodeExecutable`.
+The project uses fixture/state-machine tests and a minimal SDK-level handshake probe (a tool-disabled, one-turn `query()` against the resolved local executable). Full DSH-linked live acceptance (native coexistence, Claude turn, permission allow/deny, cancel, resume, orphan-process check) is run after the Host restart per `INSTALL.md`. The Agent SDK is pinned to `0.3.233`; runtime execution is forced to the resolved local Claude executable through `pathToClaudeCodeExecutable`.
 
 ## Uninstall
 

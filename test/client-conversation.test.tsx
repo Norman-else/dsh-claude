@@ -61,4 +61,12 @@ describe('Claude conversation projection', () => {
     expect(html).toContain('README.md')
     expect(html).not.toContain('tool-call-delta')
   })
+
+  it('renders nothing for a native turn with no Claude activity', () => {
+    const t = (key: string) => key
+    const html = renderToStaticMarkup(
+      <ClaudeActivity matched={{ turn: 1, activities: [] }} t={t as never} />,
+    )
+    expect(html).toBe('')
+  })
 })
