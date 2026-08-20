@@ -33,7 +33,7 @@ export interface ManagedPresetPaths {
 export function defaultManagedPresetPaths(dshHome?: string): ManagedPresetPaths {
   const packageRoot = fileURLToPath(new URL('../', import.meta.url))
   return {
-    sourceDir: join(packageRoot, 'preset'),
+    sourceDir: join(packageRoot, 'legacy-preset'),
     targetDir: dshHome === undefined
       ? dshHomePath('.agent-presets', CLAUDE_CODE_PRESET_ID)
       : join(dshHome, '.agent-presets', CLAUDE_CODE_PRESET_ID),

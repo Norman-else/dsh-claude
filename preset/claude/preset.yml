@@ -1,0 +1,4 @@
+# Shipped by dsh-claude. Copy this system preset under a new id to customize it.
+name: Claude
+description: Use the local Claude Code as the complete agent runtime inside DSH.
+order: 10

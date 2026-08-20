@@ -181,7 +181,7 @@ Missing tests: second-file conflicts, rollback, prior managed version upgrade/re
 
 ### I10. Preset routing discards selected model aliases
 
-The route spreads upstream configuration and then always overwrites the model at `src/preset-route.ts:12-16`. The packaged preset supplies no route configuration at `preset/agent.cordis.yml:3-4`.
+The route spreads upstream configuration and then always overwrites the model at `src/preset-route.ts:12-16`. The packaged preset supplies no route configuration at `preset/claude/agent.cordis.yml:4-5`.
 
 Therefore upstream selection of `sonnet`, `opus`, or `haiku` becomes `default`, contradicting `README.md:10,52` and the authority's model-alias contract.
 

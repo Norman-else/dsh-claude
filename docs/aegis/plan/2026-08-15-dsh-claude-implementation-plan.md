@@ -97,14 +97,14 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 - `src/permission.ts` — DSH approval bridge and policy mapping.
 - `src/adapter.ts` — DSH LLM adapter and StreamChunk mapping.
 - `src/preset-route.ts` — preset-scoped `agent/request` route override.
-- `src/preset-installer.ts` — idempotent managed preset install/remove.
+- `src/preset-installer.ts` — legacy managed preset install/remove using templates retained under `legacy-preset/`.
 - `src/doctor-routes.ts` — package-private Web endpoints.
 - `src/bin.ts` — `doctor`, `install-preset`, `remove-preset` CLI.
 
 ### Preset
 
-- `preset/agent.cordis.yml` — minimal preset composition containing `dsh-claude/preset-route`.
-- `preset/preset.yml` — display metadata.
+- `preset/claude/agent.cordis.yml` — minimal preset composition containing `dsh-claude/preset-route`; the `claude` directory is the discovered preset id.
+- `preset/claude/preset.yml` — display metadata.
 
 ### Client
 
@@ -206,7 +206,7 @@ Expected evidence: adapter tests and DSH invariant/type checks pass.
 
 ### Task 7 — Ship the Agent Preset with the bundle
 
-1. Package the minimal preset composition and metadata under `preset/`.
+1. Package the minimal preset composition and metadata under `preset/claude/`, because the roster scans each child directory of a configured root as one preset id.
 2. Register that directory as a read-only system root through the bundle patch and the public `agent-presets.config.roots` contract.
 3. Resolve the package directory from the host profile so published and linked installs use the same patch.
 4. Keep the legacy installer/remover only for migration and CLI compatibility; Host activation removes an exact pre-0.1.2 managed copy and preserves any user-modified content.

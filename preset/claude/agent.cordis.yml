@@ -1,0 +1,11 @@
+# Shipped by dsh-claude. Claude Code owns the inner agent loop and tools;
+# this system preset contributes only the request-route override. DSH resolves
+# the bare package specifier from the host profile when mounting system roots.
+- id: claude-code-route
+  name: '@norman-else/dsh-claude/preset-route'
+  # Entry-local isolate realm: each session's preset mount gets its own
+  # claudeCommands service instance (keeps mountPreset's leaked-service check
+  # happy and prevents cross-session collisions). The host reads it through
+  # dsh-agent-presets' serviceForAgent().
+  isolate:
+    claudeCommands: true

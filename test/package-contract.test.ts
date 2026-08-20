@@ -1,10 +1,17 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const root = join(import.meta.dirname, '..')
 
 describe('published package contract', () => {
+  it('ships each system preset under its preset ID directory', async () => {
+    const presetRoot = join(root, 'preset')
+    expect(await readdir(presetRoot)).toEqual(['claude'])
+    await expect(readFile(join(presetRoot, 'claude', 'agent.cordis.yml'), 'utf8')).resolves.toContain("name: '@norman-else/dsh-claude/preset-route'")
+    await expect(readFile(join(presetRoot, 'claude', 'preset.yml'), 'utf8')).resolves.toContain('name: Claude')
+  })
+
   it('uses the npm package name in the DSH host and browser bundles', async () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { name: string }
     const [patch, buildConfig] = await Promise.all([
