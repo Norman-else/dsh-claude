@@ -159,6 +159,12 @@ describe('Claude Code model catalog', () => {
     ])
   })
 
+  it('labels model metadata with the provider route being queried', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const models = await adapter.listModels('claude-code-cli')
+    expect(models.every(model => model.provider === 'claude-code-cli')).toBe(true)
+  })
+
   it('publishes the explicit 1M alias capacity through the native DSH model contract', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
     await expect(adapter.resolveModel('claude', 'opus[1m]')).resolves.toMatchObject({

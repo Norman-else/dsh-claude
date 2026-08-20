@@ -108,9 +108,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return NO_RETRY_POLICY
   }
 
-  override async listModels(): Promise<readonly LlmModelInfo[]> {
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     return MODELS.map(model => ({
-      provider: CLAUDE_CODE_PROVIDER,
+      provider,
       id: model.id,
       name: model.name,
       description: model.description,
