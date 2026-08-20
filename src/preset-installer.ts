@@ -166,19 +166,19 @@ async function assertSafeTargetDirectory(targetDir: string): Promise<void> {
 export async function removeManagedPreset(paths = defaultManagedPresetPaths()): Promise<'removed' | 'absent'> {
   await assertSafeTargetDirectory(paths.targetDir)
   const expected = await managedContents(paths)
-  let removed = false
+  const managedTargets: string[] = []
   for (const { file, content, legacy, isLegacy } of expected) {
     const target = join(paths.targetDir, file)
     const current = await readIfPresent(target)
     if (current === undefined) continue
     if (current !== content && !legacy.includes(current) && !isLegacy(current)) throw new ManagedPresetConflictError(target)
-    await rm(target)
-    removed = true
+    managedTargets.push(target)
   }
+  for (const target of managedTargets) await rm(target)
   try {
     if ((await readdir(paths.targetDir)).length === 0) await rmdir(paths.targetDir)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  return removed ? 'removed' : 'absent'
+  return managedTargets.length > 0 ? 'removed' : 'absent'
 }

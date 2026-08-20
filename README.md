@@ -33,13 +33,7 @@ dsh plugin --profile web add @norman-else/dsh-claude
 
 Wait for the Web profile to rebuild, then refresh the existing DSH page. Open a new conversation and select **Claude** from the Agent Preset picker.
 
-The Host plugin automatically installs a two-file managed preset at:
-
-```text
-$DSH_HOME/.agent-presets/claude/
-```
-
-It writes only absent files. If that preset id already contains different content, activation fails rather than overwriting user work.
+The package ships the Claude preset as a read-only system preset. It does not copy files into `$DSH_HOME/.agent-presets`, so removing the package also removes the preset.
 
 ## Use
 
@@ -151,25 +145,19 @@ The project uses fixture/state-machine tests and a minimal SDK-level handshake p
 
 ## Uninstall
 
-Remove the managed preset while this package is still present:
-
-```sh
-node lib/bin.mjs remove-preset
-```
-
-Then remove the package from the Web profile:
+Remove the package from the profile where it was installed:
 
 ```sh
 dsh plugin --profile web remove @norman-else/dsh-claude
 ```
 
-The preset remover deletes only files whose contents exactly match the package-managed copies. It refuses to delete modified content.
+The preset is package-contained and disappears with the dependency. Upgrading from a version that copied a managed preset into `$DSH_HOME/.agent-presets` removes that exact legacy copy automatically while preserving user-modified content.
 
 ## Troubleshooting
 
 ### Claude preset appears broken
 
-Run `node lib/bin.mjs install-preset`. If it reports a conflict, move or rename the existing `$DSH_HOME/.agent-presets/claude` directory; the plugin will not overwrite it.
+Confirm the package remains installed in the intended profile with `dsh plugin --profile web why @norman-else/dsh-claude`, then restart that profile so its bundle patch and package-contained system preset are reloaded.
 
 ### Executable is missing
 

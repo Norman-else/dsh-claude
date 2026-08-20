@@ -1,5 +1,12 @@
-# dsh-claude host bundle. The plugin registers the local Claude Code bridge
-# and installs the small managed Agent Preset into the DSH user preset root.
+# dsh-claude host bundle. The preset stays inside this package as a system
+# preset, so removing the profile dependency removes the complete integration.
+- id: agent-presets
+  config:
+    default: standard
+    roots:
+      - path: !!js "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(ctx.baseUrl).resolve('@norman-else/dsh-claude/package.json')), 'preset')"
+        trust: system
+
 - insert:
     - id: llm-claude
       name: '@norman-else/dsh-claude'

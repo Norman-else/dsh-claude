@@ -1,9 +1,6 @@
-# Managed by dsh-claude. Claude Code owns the inner agent loop and tools;
-# this preset contributes only the request-route override.
-# Template: the installer rewrites `name` to the absolute path of the built
-# lib/preset-route.mjs, because preset subtrees cannot resolve bare package
-# specifiers for linked profiles (DSH Desktop's resolver hook only covers the
-# root include).
+# Shipped by dsh-claude. Claude Code owns the inner agent loop and tools;
+# this system preset contributes only the request-route override. DSH resolves
+# the bare package specifier from the host profile when mounting system roots.
 - id: claude-code-route
   name: '@norman-else/dsh-claude/preset-route'
   # Entry-local isolate realm: each session's preset mount gets its own

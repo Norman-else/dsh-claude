@@ -56,11 +56,15 @@ describe('managed Agent Preset installation', () => {
     await expect(removeManagedPreset(paths)).resolves.toBe('absent')
   })
 
-  it('refuses to remove a modified preset', async () => {
+  it('refuses to remove a modified preset without partially deleting it', async () => {
     const paths = await fixture()
     await ensureManagedPreset(paths)
-    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), '# user edit\n')
+    await writeFile(join(paths.targetDir, 'preset.yml'), 'name: My Customized Claude\n')
+    const managedAgent = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
+
     await expect(removeManagedPreset(paths)).rejects.toBeInstanceOf(ManagedPresetConflictError)
+    await expect(readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')).resolves.toBe(managedAgent)
+    await expect(readFile(join(paths.targetDir, 'preset.yml'), 'utf8')).resolves.toBe('name: My Customized Claude\n')
   })
 
   it('writes the route entry as an absolute built-module path', async () => {

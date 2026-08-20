@@ -67,8 +67,8 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 - No changes under the installed DSH checkout or current Navi repository.
 - Depend only on published DSH package exports and declared client entry points.
 - The installed Web profile is changed only during the final link-install smoke.
-- Automatic preset installation writes a tiny managed preset under `$DSH_HOME/.agent-presets/claude`; it never overwrites a non-managed user preset.
-- Uninstall leaves the managed preset as visibly broken unless the package CLI removes it; provide an idempotent uninstall command and document it.
+- The bundle registers its package-contained `preset/` directory as a read-only system preset root through the public `agent-presets.config.roots` contract.
+- A normal `dsh plugin --profile <name> remove @norman-else/dsh-claude` removes both the plugin and preset; activation removes only exact legacy copies created by versions before 0.1.2 and preserves modified content.
 
 ## File map
 
@@ -204,17 +204,16 @@ Expected evidence: permission tests pass and the callback never grants on unavai
 
 Expected evidence: adapter tests and DSH invariant/type checks pass.
 
-### Task 7 — Install the managed Agent Preset
+### Task 7 — Ship the Agent Preset with the bundle
 
-1. Package the minimal preset composition and metadata.
-2. Implement idempotent installation under `$DSH_HOME/.agent-presets/claude` using atomic writes.
-3. Mark generated files with an exact managed header and compare their complete packaged contents.
-4. Create only absent files with a no-clobber atomic publish; accept exact current content and refuse every mismatch. Future upgrades must explicitly enumerate exact prior managed contents before replacing them.
-5. Implement remove that deletes only exact managed files and then the empty directory.
-6. Call ensure-install during Host activation and expose CLI install/remove commands.
-7. Add tests using a temporary DSH home for install, rerun, upgrade, user edit refusal, and remove.
+1. Package the minimal preset composition and metadata under `preset/`.
+2. Register that directory as a read-only system root through the bundle patch and the public `agent-presets.config.roots` contract.
+3. Resolve the package directory from the host profile so published and linked installs use the same patch.
+4. Keep the legacy installer/remover only for migration and CLI compatibility; Host activation removes an exact pre-0.1.2 managed copy and preserves any user-modified content.
+5. Validate every legacy file before removing any file so migration cannot leave a partially deleted preset.
+6. Add tests for legacy install, upgrade, atomic user-edit refusal, and remove.
 
-Expected evidence: the DSH preset roster discovers the installed preset without changing native preset roots.
+Expected evidence: the DSH preset roster discovers the package-contained preset, and normal profile dependency removal leaves no plugin-owned preset outside the package.
 
 ### Task 8 — Implement Client sidecar projection, activity, and Doctor UI
 

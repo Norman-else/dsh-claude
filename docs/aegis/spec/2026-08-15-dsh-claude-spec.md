@@ -100,7 +100,7 @@ The bundle adds:
 
 - one host adapter route: `claude`
 - one preset-scoped route plugin that overrides `agent/request` to `{ provider: 'claude', model: <alias> }`
-- one user-visible preset: `claude`
+- one user-visible preset: `claude`, shipped inside the package and registered as a read-only system preset root so dependency removal removes the complete integration
 
 The preset contains no DSH model-facing filesystem, shell, skill, web, goal, todo, workflow, or subagent tools. Claude Code owns those capabilities. It may include only the route plugin and a minimal persona/presentation contribution needed by DSH.
 

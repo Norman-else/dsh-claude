@@ -14,17 +14,9 @@ node lib/bin.mjs doctor
 
 Stop if Doctor cannot find an authenticated local Claude Code installation. Do not request, copy, or write credentials.
 
-## 2. Install the managed Agent Preset
+## 2. Link the bundle into the current Web profile
 
-Host activation normally does this automatically. Running it explicitly is safe:
-
-```sh
-node lib/bin.mjs install-preset
-```
-
-Expected output is `installed` on first run or `unchanged` on later runs. A conflict is terminal until a human chooses what to do with the existing user preset.
-
-## 3. Link the bundle into the current Web profile
+The bundle registers its package-contained Claude preset as a system preset; no files are copied into the user preset root.
 
 ```sh
 dsh plugin --profile web add "link:$(pwd)"
@@ -32,7 +24,7 @@ dsh plugin --profile web add "link:$(pwd)"
 
 Do not start another DSH Web server. This bundle must load in the existing app at `http://127.0.0.1:56454`.
 
-## 4. Refresh and smoke test
+## 3. Refresh and smoke test
 
 1. Refresh the existing DSH Web page.
 2. Confirm **Claude** appears in the new-session Agent Preset picker.
@@ -45,14 +37,10 @@ Do not start another DSH Web server. This bundle must load in the existing app a
 
 A live prompt can consume the user's Claude subscription. Keep it minimal.
 
-## 5. Uninstall safely
-
-Run before removing the link:
+## 4. Uninstall
 
 ```sh
-cd /path/to/dsh-claude
-node lib/bin.mjs remove-preset
 dsh plugin --profile web remove @norman-else/dsh-claude
 ```
 
-The remover refuses to delete any user-modified preset file.
+The package-contained system preset disappears with the dependency. No source checkout or separate cleanup command is required.

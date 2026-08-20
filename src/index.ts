@@ -13,7 +13,7 @@ import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
 import { ClaudeSupervisor } from './supervisor.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
-import { ensureManagedPreset } from './preset-installer.ts'
+import { ManagedPresetConflictError, removeManagedPreset } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 
@@ -172,7 +172,15 @@ export function mountClaudeMetadata(
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  await ensureManagedPreset()
+  // Versions before 0.1.2 copied the packaged preset into the user preset root.
+  // The bundle now registers its package directory as a system root, so remove
+  // only an exact legacy copy during upgrade and preserve any user-modified one.
+  try {
+    await removeManagedPreset()
+  } catch (error) {
+    if (!(error instanceof ManagedPresetConflictError)) throw error
+    ctx.logger.warn(`dsh-claude: preserving user-modified legacy preset at ${error.path}`)
+  }
   const supervisorConfig = {
     executablePath: '',
     defaultModel: config.model ?? 'default',
