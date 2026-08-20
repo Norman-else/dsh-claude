@@ -1,9 +1,9 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   CLAUDE_ACTIVITY_EVENT,
+  CLAUDE_CONTEXT_USAGE_EVENT,
   CLAUDE_SESSION_BOUND_EVENT,
-  SDK_VERSION,
+  CLAUDE_TASKS_EVENT,
 } from './constants.ts'
 
 export type ClaudeActivityKind =
@@ -45,7 +45,11 @@ export interface ClaudeActivityEvent {
   ordinal: number
   kind: ClaudeActivityKind
   phase?: ClaudeActivityPhase
+  /** Claude task-board identity for lifecycle activity; never a transcript path. */
+  taskId?: string
   toolUseId?: string
+  /** Enclosing Claude tool call for subagent-nested activity. */
+  parentToolUseId?: string
   toolName?: string
   title?: string
   summary?: string
@@ -54,10 +58,40 @@ export interface ClaudeActivityEvent {
   usage?: ClaudeUsage
 }
 
+export interface ClaudeContextUsageCategory {
+  name: string
+  tokens: number
+  color: string
+  isDeferred?: boolean
+}
+
+export interface ClaudeContextUsageEvent {
+  model: string
+  totalTokens: number
+  maxTokens: number
+  percentage: number
+  categories: readonly ClaudeContextUsageCategory[]
+}
+
+export interface ClaudeContextUsageInput {
+  model: unknown
+  totalTokens: unknown
+  maxTokens: unknown
+  percentage: unknown
+  categories: readonly {
+    name?: unknown
+    tokens?: unknown
+    color?: unknown
+    isDeferred?: unknown
+  }[]
+}
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     'claude-code/session-bound': ClaudeSessionBoundEvent
     'claude-code/activity': ClaudeActivityEvent
+    'claude-code/context-usage': ClaudeContextUsageEvent
+    'claude-code/tasks': ClaudeTasksEvent
   }
 }
 
@@ -145,7 +179,9 @@ export function normalizeActivity(
     kind: activity.kind,
   }
   if (activity.phase !== undefined) normalized.phase = activity.phase
+  if (activity.taskId !== undefined) normalized.taskId = redactText(activity.taskId, 128)
   if (activity.toolUseId !== undefined) normalized.toolUseId = redactText(activity.toolUseId, 256)
+  if (activity.parentToolUseId !== undefined) normalized.parentToolUseId = redactText(activity.parentToolUseId, 256)
   if (activity.toolName !== undefined) normalized.toolName = redactText(activity.toolName, 256)
   if (activity.title !== undefined) normalized.title = redactText(activity.title, MAX_SUMMARY_CHARS)
   if (activity.summary !== undefined) {
@@ -161,33 +197,113 @@ export function normalizeActivity(
   return normalized
 }
 
-export interface ClaudeActivityCursor {
-  turn: number
-  step: number
-  nextOrdinal: number
+const MAX_CONTEXT_CATEGORIES = 24
+const FALLBACK_CONTEXT_COLOR = '#8b95a5'
+const SAFE_CONTEXT_COLOR = /^#[0-9a-f]{3,8}$/iu
+
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : 0
 }
 
-export function currentClaudeActivityCursor(events: readonly SessionEvent[]): ClaudeActivityCursor {
-  let turn = 0
-  let step = 0
-  let nextOrdinal = 0
-  for (const event of events) {
-    if (event.type === 'step/start') {
-      const data = event.data as { turn: number; step: number }
-      turn = data.turn
-      step = data.step
-      nextOrdinal = 0
-    } else if (event.type === CLAUDE_ACTIVITY_EVENT) {
-      const activity = event.data as ClaudeActivityEvent
-      if (activity.turn === turn && activity.step === step) {
-        nextOrdinal = Math.max(nextOrdinal, activity.ordinal + 1)
+export function normalizeContextUsage(input: ClaudeContextUsageInput): ClaudeContextUsageEvent {
+  return {
+    model: redactText(typeof input.model === 'string' ? input.model : 'unknown', 128),
+    totalTokens: nonNegativeInteger(input.totalTokens),
+    maxTokens: nonNegativeInteger(input.maxTokens),
+    percentage: Math.min(100, nonNegativeInteger(input.percentage)),
+    categories: input.categories.slice(0, MAX_CONTEXT_CATEGORIES).map(category => ({
+      name: redactText(typeof category.name === 'string' ? category.name : 'Unknown', 128),
+      tokens: nonNegativeInteger(category.tokens),
+      color: typeof category.color === 'string' && SAFE_CONTEXT_COLOR.test(category.color)
+        ? category.color
+        : FALLBACK_CONTEXT_COLOR,
+      ...(category.isDeferred === true ? { isDeferred: true } : {}),
+    })),
+  }
+}
+
+export function latestClaudeContextUsage(
+  events: readonly SessionEvent[],
+): ClaudeContextUsageEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === CLAUDE_CONTEXT_USAGE_EVENT) return event.data as ClaudeContextUsageEvent
+  }
+  return undefined
+}
+
+export type ClaudeTaskStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
+
+export interface ClaudeTaskUsage {
+  totalTokens?: number
+  toolUses?: number
+  durationMs?: number
+}
+
+export interface ClaudeTaskInfo {
+  taskId: string
+  description: string
+  status: ClaudeTaskStatus
+  /** DSH turn during which this task was first observed, when known. */
+  originTurn?: number
+  subagentType?: string
+  taskType?: string
+  lastToolName?: string
+  summary?: string
+  usage?: ClaudeTaskUsage
+  /** True while the task runs detached (background command/subagent). */
+  backgrounded?: boolean
+}
+
+/** Level snapshot of one session's Claude task board, REPLACE semantics. */
+export interface ClaudeTasksEvent {
+  tasks: readonly ClaudeTaskInfo[]
+}
+
+const MAX_TASKS_PER_SNAPSHOT = 50
+const MAX_TASK_TEXT_CHARS = 300
+
+const TASK_STATUSES: ReadonlySet<string> = new Set(['running', 'completed', 'failed', 'stopped', 'killed'])
+
+function normalizeTaskUsage(input: ClaudeTaskUsage | undefined): ClaudeTaskUsage | undefined {
+  if (input === undefined) return undefined
+  const usage: ClaudeTaskUsage = {}
+  if (input.totalTokens !== undefined) usage.totalTokens = nonNegativeInteger(input.totalTokens)
+  if (input.toolUses !== undefined) usage.toolUses = nonNegativeInteger(input.toolUses)
+  if (input.durationMs !== undefined) usage.durationMs = nonNegativeInteger(input.durationMs)
+  return Object.keys(usage).length === 0 ? undefined : usage
+}
+
+export function normalizeTasksEvent(tasks: readonly ClaudeTaskInfo[]): ClaudeTasksEvent {
+  return {
+    tasks: tasks.slice(0, MAX_TASKS_PER_SNAPSHOT).map(task => {
+      const usage = normalizeTaskUsage(task.usage)
+      return {
+        taskId: redactText(String(task.taskId), 128),
+        description: redactText(String(task.description), MAX_TASK_TEXT_CHARS),
+        status: TASK_STATUSES.has(task.status) ? task.status : 'running',
+        ...(task.originTurn === undefined ? {} : { originTurn: nonNegativeInteger(task.originTurn) }),
+        ...(task.subagentType === undefined ? {} : { subagentType: redactText(task.subagentType, 64) }),
+        ...(task.taskType === undefined ? {} : { taskType: redactText(task.taskType, 64) }),
+        ...(task.lastToolName === undefined ? {} : { lastToolName: redactText(task.lastToolName, 64) }),
+        ...(task.summary === undefined ? {} : { summary: redactText(task.summary, MAX_TASK_TEXT_CHARS) }),
+        ...(usage === undefined ? {} : { usage }),
+        ...(task.backgrounded === true ? { backgrounded: true } : {}),
       }
-    }
+    }),
   }
-  if (turn < 1 || step < 1) {
-    throw new Error('dsh-claude-code: Claude activity requires an open DSH step')
+}
+
+export function latestClaudeTasks(
+  events: readonly SessionEvent[],
+): ClaudeTasksEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === CLAUDE_TASKS_EVENT) return event.data as ClaudeTasksEvent
   }
-  return { turn, step, nextOrdinal }
+  return undefined
 }
 
 export type ClaudeActivityInput = Omit<
@@ -198,33 +314,26 @@ export type ClaudeActivityInput = Omit<
   detail?: unknown
 }
 
-export async function appendClaudeActivity(
-  agent: Agent,
-  cursor: ClaudeActivityCursor,
-  activity: ClaudeActivityInput,
-): Promise<ClaudeActivityEvent> {
-  const normalized = normalizeActivity({
-    ...activity,
-    turn: cursor.turn,
-    step: cursor.step,
-    ordinal: cursor.nextOrdinal++,
-  })
-  await agent.session.append(CLAUDE_ACTIVITY_EVENT, normalized)
-  return normalized
+export interface ClaudeActivityCursor {
+  turn: number
+  step: number
+  nextOrdinal: number
 }
 
-export async function appendClaudeSessionBinding(
-  agent: Agent,
-  binding: Omit<ClaudeSessionBoundEvent, 'sdkVersion'> & { sdkVersion?: string },
-): Promise<ClaudeSessionBoundEvent> {
-  const payload: ClaudeSessionBoundEvent = {
-    claudeSessionId: binding.claudeSessionId,
-    sdkVersion: binding.sdkVersion ?? SDK_VERSION,
-    cwd: binding.cwd,
+/** Derive the current DSH turn/step; activity ordinals are completed from the sidecar. */
+export function currentClaudeActivityCursor(events: readonly SessionEvent[]): ClaudeActivityCursor {
+  let turn = 0
+  let step = 0
+  for (const event of events) {
+    if (event.type !== 'step/start') continue
+    const data = event.data as { turn: number; step: number }
+    turn = data.turn
+    step = data.step
   }
-  if (binding.cliVersion !== undefined) payload.cliVersion = binding.cliVersion
-  await agent.session.append(CLAUDE_SESSION_BOUND_EVENT, payload)
-  return payload
+  if (turn < 1 || step < 1) {
+    throw new Error('dsh-claude-code: Claude activity requires an open DSH step')
+  }
+  return { turn, step, nextOrdinal: 0 }
 }
 
 export function latestClaudeSessionBinding(

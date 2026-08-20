@@ -4,12 +4,13 @@ import { createPermissionBridge, mapApprovalOutcome, permissionReason } from '..
 
 function active() {
   const events: Array<{ type: string; data: unknown }> = []
-  const agent = {
-    session: {
-      append: async (type: string, data: unknown) => { events.push({ type, data }); return {} },
-    },
-  } as unknown as Agent
-  return { agent, cursor: { turn: 1, step: 1, nextOrdinal: 0 }, events }
+  const agent = {} as Agent
+  return {
+    agent,
+    cursor: { turn: 1, step: 1, nextOrdinal: 0 },
+    events,
+    appendActivity: async (data: unknown) => { events.push({ type: 'activity', data }) },
+  }
 }
 
 const toolOptions = (signal = new AbortController().signal) => ({

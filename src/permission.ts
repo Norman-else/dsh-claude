@@ -2,9 +2,9 @@ import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sd
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import {
-  appendClaudeActivity,
   boundText,
   safeDetail,
+  type ClaudeActivityInput,
   type ClaudeActivityCursor,
 } from './events.ts'
 
@@ -15,6 +15,7 @@ export interface ActivePermissionContext {
   cursor: ClaudeActivityCursor
   markActivity?: () => void
   recordDenial?: (toolUseId: string) => void
+  appendActivity: (activity: ClaudeActivityInput) => Promise<void>
 }
 
 export type ActivePermissionContextProvider = () => ActivePermissionContext | undefined
@@ -77,7 +78,7 @@ export function createPermissionBridge(
     active.markActivity?.()
     const reason = permissionReason(toolName, input, options)
     try {
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await active.appendActivity({
         kind: 'permission',
         phase: 'started',
         toolUseId: options.toolUseID,
@@ -94,7 +95,7 @@ export function createPermissionBridge(
       })
       const result = mapApprovalOutcome(outcome, input, options.toolUseID)
       if (result.behavior === 'deny') active.recordDenial?.(options.toolUseID)
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await active.appendActivity({
         kind: 'permission',
         phase: outcome === 'allowed-once' ? 'completed' : 'denied',
         toolUseId: options.toolUseID,
@@ -108,7 +109,7 @@ export function createPermissionBridge(
         ? 'The permission request was cancelled in DeepSeek Harness.'
         : 'DeepSeek Harness could not record or answer the permission request; the action was denied.'
       try {
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await active.appendActivity({
           kind: 'permission',
           phase: 'failed',
           toolUseId: options.toolUseID,

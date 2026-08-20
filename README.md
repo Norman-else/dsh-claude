@@ -6,11 +6,11 @@ Run the local Claude Code CLI as a first-class main conversation inside DeepSeek
 
 ## What it adds
 
-- A `Claude Code CLI` Agent Preset in the normal new-session preset picker.
-- A `claude-code-cli` DSH model provider with `default`, `sonnet`, `opus`, and `haiku` aliases.
+- A `Claude Code` Agent Preset in the normal new-session preset picker.
+- A `claude-code-cli` DSH model provider with Claude Code's `default`, `opus[1m]`, `fable`, `sonnet`, and `haiku` choices.
 - Long-lived Claude processes with per-session serialization, idle eviction, cancellation, and persisted Claude session resume.
 - DSH approval prompts for Claude tool permission requests.
-- Durable, redacted activity events for thinking summaries, tool calls/results, permissions, subagents, status, usage, and errors.
+- Durable, redacted plugin-sidecar activity for thinking summaries, tool calls/results, permissions, subagents, status, usage, and errors.
 - Native turn-tail activity cards and a Settings → Claude Code Doctor panel.
 - A safe CLI for Doctor and managed preset install/remove.
 
@@ -48,8 +48,8 @@ It writes only absent files. If that preset id already contains different conten
 ## Use
 
 1. Open a new DSH conversation.
-2. Choose **Claude Code CLI** in the Agent Preset picker.
-3. Choose `Claude Code Default` unless you explicitly want the Sonnet, Opus, or Haiku alias.
+2. Choose **Claude Code** in the Agent Preset picker.
+3. Choose **Default (recommended)**, **Opus (1M context)**, **Fable**, **Sonnet**, or **Haiku**.
 4. Send a normal text prompt.
 5. Answer Claude tool permissions through the existing DSH approval UI.
 6. Expand **Claude Code activity** beneath a completed assistant turn to inspect the redacted execution trail.
@@ -69,7 +69,7 @@ Every Claude permission callback is bridged to `ctx.approval.request(...)`:
 - `allowed-once` is the only granting result.
 - reject, cancel, missing answerer, and audit failure all deny the action.
 - DSH `never` approval policy therefore fails closed.
-- the plugin never enables Claude's `bypassPermissions` mode.
+- DSH access modes map to Claude permission modes: `read-only` → `plan`, `workspace-write` → `acceptEdits`, and explicitly acknowledged `danger-full-access` → `bypassPermissions`.
 
 This is a permission-policy bridge, not kernel-level workspace confinement. DSH `0.1.0-rc.5` exposes one writable sandbox root, while full Claude compatibility also requires writable `~/.claude`. The plugin therefore does **not** claim that paths outside the workspace are technically unwritable. It still uses DSH managed subprocess ownership for explicit argv, credential-shaped environment scrubbing, cancellation, and whole-process-tree termination.
 
@@ -79,7 +79,7 @@ This is a permission-policy bridge, not kernel-level workspace confinement. DSH 
 - One active top-level turn at a time per session.
 - Default maximum: 4 live Claude processes.
 - Default idle eviction: 30 minutes.
-- The Claude session id is persisted as a plugin-owned DSH session event.
+- The Claude session id and redacted presentation metadata are persisted in a plugin-owned sidecar under `$DSH_HOME/plugins/dsh-claude-code/sessions`; new DSH logs contain no `claude-code/*` events.
 - After normal eviction or DSH restart, the next prompt resumes that Claude session.
 - A crash after visible Claude/tool activity is reported as **outcome unknown**. The plugin never automatically replays that prompt because its side effects may already have happened.
 - Cancelling a DSH turn interrupts Claude and tears down that session's process entry (bounded interrupt, then close/abort/terminate/join); the next prompt re-establishes the process from the persisted Claude session id. Plugin unload and agent disposal also terminate the owned process tree.

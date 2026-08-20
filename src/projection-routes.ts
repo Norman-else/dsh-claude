@@ -1,0 +1,53 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import { CLAUDE_PROJECTION_PATH } from './constants.ts'
+import { json, trustedRequest } from './http.ts'
+import type { ClaudeSidecarRepository } from './sidecar.ts'
+
+const MAX_SESSION_ID_CHARS = 1_024
+
+function sessionIdFromUrl(rawUrl: string | undefined): string | undefined {
+  try {
+    const pathname = new URL(rawUrl ?? '/', 'http://localhost').pathname
+    const prefix = `${CLAUDE_PROJECTION_PATH}/`
+    if (!pathname.startsWith(prefix)) return undefined
+    const encoded = pathname.slice(prefix.length)
+    if (encoded.length === 0 || encoded.includes('/')) return undefined
+    const sessionId = decodeURIComponent(encoded)
+    if (sessionId.length === 0 || sessionId.length > MAX_SESSION_ID_CHARS) return undefined
+    return sessionId
+  } catch {
+    return undefined
+  }
+}
+
+/** Register the browser-readable, credential-free sidecar projection endpoint. */
+export function registerClaudeProjectionRoute(
+  ctx: Context,
+  sidecar: ClaudeSidecarRepository,
+  ownsSession: (sessionId: string) => boolean,
+): void {
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: CLAUDE_PROJECTION_PATH,
+    handler: async (req, res) => {
+      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+      const sessionId = sessionIdFromUrl(req.url)
+      if (sessionId === undefined) return json(res, 400, { error: 'invalid session id' })
+      try {
+        const projection = await sidecar.read(sessionId)
+        return json(res, 200, {
+          schemaVersion: projection.schemaVersion,
+          revision: projection.revision,
+          owned: ownsSession(sessionId),
+          activities: projection.activities,
+          ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
+          ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
+        })
+      } catch {
+        return json(res, 500, { error: 'projection unavailable' })
+      }
+    },
+  }), 'dsh-claude-code: sidecar projection route')
+}

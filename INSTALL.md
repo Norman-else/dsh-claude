@@ -36,9 +36,9 @@ Do not start another DSH Web server. This bundle must load in the existing app a
 ## 4. Refresh and smoke test
 
 1. Refresh the existing DSH Web page.
-2. Confirm **Claude Code CLI** appears in the new-session Agent Preset picker.
+2. Confirm **Claude Code** appears in the new-session Agent Preset picker.
 3. Run one existing native preset prompt and verify it remains native.
-4. Create a Claude Code CLI session and send a read-only prompt.
+4. Create a Claude Code session and send a read-only prompt.
 5. Send one edit prompt; verify DSH displays a permission request. Exercise reject first, then allow once with a harmless temporary file.
 6. Cancel a running prompt and confirm the cancelled session owns no child `claude` process that is still executing cancelled work or left orphaned/unowned.
 7. Refresh the browser and continue the session.

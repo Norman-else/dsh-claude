@@ -63,6 +63,48 @@ describe('managed Agent Preset installation', () => {
     await expect(removeManagedPreset(paths)).rejects.toBeInstanceOf(ManagedPresetConflictError)
   })
 
+  it('writes the route entry as an absolute built-module path', async () => {
+    const paths = await fixture()
+    await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
+    const installed = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
+    expect(installed).toContain(`name: ${join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')}`)
+    expect(installed).not.toContain('name: dsh-claude-code/preset-route')
+  })
+
+  it('upgrades legacy bare-specifier content left by older installers', async () => {
+    const paths = await fixture()
+    const legacy = await readFile(join(paths.sourceDir, 'agent.cordis.yml'), 'utf8')
+    await mkdir(paths.targetDir, { recursive: true })
+    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), legacy)
+    await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
+    const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
+    expect(upgraded).toContain('lib')
+    expect(upgraded).not.toContain('name: dsh-claude-code/preset-route')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
+  })
+
+  it('upgrades legacy content even when template comments drifted', async () => {
+    const paths = await fixture()
+    await mkdir(paths.targetDir, { recursive: true })
+    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), '# older installer generation\n- id: claude-code-route\n  name: dsh-claude-code/preset-route\n')
+    await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
+    const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
+    expect(upgraded).not.toContain('name: dsh-claude-code/preset-route')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
+  })
+
+  it('removes legacy bare-specifier content without a conflict', async () => {
+    const paths = await fixture()
+    const legacy = await readFile(join(paths.sourceDir, 'agent.cordis.yml'), 'utf8')
+    await mkdir(paths.targetDir, { recursive: true })
+    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), legacy)
+    await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
+    await expect(removeManagedPreset(paths)).resolves.toBe('removed')
+    await expect(readdir(paths.targetDir)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('refuses a symlinked target directory', async () => {
     const paths = await fixture()
     const realDir = join(paths.targetDir, '..', 'real-preset-dir')

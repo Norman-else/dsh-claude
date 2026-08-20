@@ -1,5 +1,6 @@
 import {
   LlmAdapter,
+  ReasoningEffortId,
   type GenerateOptions,
   type LlmModelInfo,
   type LlmProviderInfo,
@@ -10,15 +11,32 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
-import type { ClaudeSupervisor } from './supervisor.ts'
+import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
 
 const MODELS = [
-  { id: 'default', name: 'Claude Code Default', description: 'Use the model selected by Claude Code configuration.' },
-  { id: 'sonnet', name: 'Claude Sonnet', description: 'Ask Claude Code to use the Sonnet alias.' },
-  { id: 'opus', name: 'Claude Opus', description: 'Ask Claude Code to use the Opus alias.' },
-  { id: 'haiku', name: 'Claude Haiku', description: 'Ask Claude Code to use the Haiku alias.' },
+  { id: 'default', name: 'Default (recommended)', description: 'Use Claude Code’s recommended default model.' },
+  { id: 'opus[1m]', name: 'Opus (1M context)', description: 'Use Opus with a 1M-token context window.', contextWindow: 1_000_000 },
+  { id: 'fable', name: 'Fable', description: 'Use Fable, Claude Code’s most capable coding model.' },
+  { id: 'sonnet', name: 'Sonnet', description: 'Use Sonnet for efficient routine coding work.' },
+  { id: 'haiku', name: 'Haiku', description: 'Use Haiku for fast, lightweight tasks.' },
 ] as const
+
+const THINKING_MODES = [
+  { id: 'off', name: 'Off', description: 'No extended thinking.' },
+  { id: 'low', name: 'Low', description: 'Minimal thinking, fastest responses.' },
+  { id: 'medium', name: 'Medium', description: 'Moderate thinking.' },
+  { id: 'high', name: 'High', description: 'Deep reasoning (Claude Code default).' },
+  { id: 'xhigh', name: 'Extra High', description: 'Deeper than high; unsupported models silently downgrade to high.' },
+  { id: 'max', name: 'Max', description: 'Maximum effort; unsupported models silently downgrade.' },
+  { id: 'ultracode', name: 'Ultracode', description: 'Extra-high effort plus standing dynamic-workflow orchestration; requires an xhigh-capable model.' },
+] as const
+
+export function thinkingModeFor(effort: ReasoningEffortId | undefined): ClaudeThinkingMode | undefined {
+  if (effort === undefined) return undefined
+  if (THINKING_MODES.some(mode => mode.id === (effort as string))) return effort as unknown as ClaudeThinkingMode
+  throw new Error(`dsh-claude-code: unsupported reasoning effort ${JSON.stringify(effort)}`)
+}
 
 const NO_RETRY_POLICY: ResolvedRetryPolicy = Object.freeze({
   mode: 'normal',
@@ -83,7 +101,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
-    return { id: provider, name: 'Claude Code CLI' }
+    return { id: provider, name: 'Claude Code' }
   }
 
   override providerRetryPolicy(): ResolvedRetryPolicy {
@@ -102,12 +120,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const known = MODELS.find(item => item.id === model)
+    const observedContextWindow = this.#supervisor.contextWindow(model)
+    const contextWindow = observedContextWindow ?? (known !== undefined && 'contextWindow' in known ? known.contextWindow : undefined)
     return {
       provider,
       id: model,
       name: known?.name ?? `Claude Code ${model}`,
       ...(known === undefined ? {} : { description: known.description }),
+      ...(contextWindow === undefined ? {} : { context: { contextWindow } }),
       inputModalities: ['text'],
+      reasoning: {
+        efforts: THINKING_MODES.map(mode => ({
+          id: ReasoningEffortId(mode.id),
+          name: mode.name,
+          description: mode.description,
+        })),
+      },
     }
   }
 
@@ -119,32 +147,35 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (this.#presetIdFor(agent) !== CLAUDE_CODE_PRESET_ID) {
       throw new Error(`dsh-claude-code: provider ${CLAUDE_CODE_PROVIDER} is available only to the ${CLAUDE_CODE_PRESET_ID} preset`)
     }
+    const thinkingMode = thinkingModeFor(options.reasoningEffort)
     const prompt = extractDirectUserText(options.messages)
     const events = await this.#supervisor.runTurn({
       agent,
       prompt,
       model: options.model,
+      ...(thinkingMode === undefined ? {} : { thinkingMode }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
 
-    let started = false
     let text = ''
     let pendingUsage: TokenUsage | undefined
     let completed = false
     try {
       for await (const event of events) {
         if (event.type === 'text-delta') {
-          if (!started) {
-            started = true
-            yield { type: 'block-start', index: 0, blockType: 'text' }
-          }
+          // Buffered, not live-streamed: Claude's intermediate prose and final
+          // answer settle as one block at the turn's durable position, below
+          // the step's mirrored tool cards, instead of jumping there at the end.
           text += event.text
-          yield { type: 'text-delta', index: 0, text: event.text }
         } else if (event.type === 'usage') {
           pendingUsage = tokenUsage(event.usage)
         } else {
           completed = true
-          if (started) yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+          if (text.length > 0) {
+            yield { type: 'block-start', index: 0, blockType: 'text' }
+            yield { type: 'text-delta', index: 0, text }
+            yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+          }
           if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
           yield { type: 'finish', reason: { kind: 'stop' } }
         }
@@ -152,7 +183,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         completed = true
-        if (started) yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+        if (text.length > 0) {
+          yield { type: 'block-start', index: 0, blockType: 'text' }
+          yield { type: 'text-delta', index: 0, text }
+          yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+        }
         yield {
           type: 'finish',
           reason: {

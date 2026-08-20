@@ -1,6 +1,6 @@
 # dsh-claude-code Implementation Plan
 
-Status: ready for execution
+Status: implemented; persistence and background-task presentation amended
 Date: 2026-08-15
 Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 
@@ -26,7 +26,7 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 
 - Exact SDK message variants produced by the user's CLI configuration and plugins.
 - Whether authentication status has a stable machine-readable command in CLI 2.1.233.
-- Whether background Claude subagents continue after a top-level result. v0.1 ends ownership at the result and documents background continuation as unsupported.
+- Background Claude tasks may settle after a top-level result. Claude Code retains execution ownership; the plugin observes SDK lifecycle, persists a bounded task board, and never claims per-task cancellation.
 
 ### Requirement Ready Check
 
@@ -40,10 +40,10 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 ### Ripple Signal Triage
 
 - New public package/bundle surface: yes.
-- New durable session event types: yes.
+- New durable session event types: superseded — current runtime writes a plugin-owned sidecar and no custom DSH events.
 - New security/permission boundary: yes.
 - New client projection and settings page: yes.
-- Migration: no existing persisted plugin data.
+- Migration: readable historical custom events import idempotently into the sidecar; new logs never append them.
 - Retirement: no old plugin path; future keyed AgentFactory must replace, not layer beside, the bridge.
 
 ## TDD Route
@@ -86,7 +86,9 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 
 - `src/index.ts` — Cordis plugin entry, config, adapter registration, Web routes, preset installer.
 - `src/constants.ts` — provider, event, preset, route, and default constants.
-- `src/events.ts` — durable event types, vocabulary registration, redaction/bounds, append helpers, binding fold.
+- `src/events.ts` — redaction/bounds, sidecar payload types, and decode-only historical event folds.
+- `src/sidecar.ts` — schema validation, serialized atomic persistence, resume binding, activity/context/tasks state, and legacy import.
+- `src/http.ts`, `src/projection-routes.ts` — trusted non-cacheable browser projection without resume identity.
 - `src/executable.ts` — CLI resolution, version parsing, safe Doctor.
 - `src/spawn.ts` — Agent SDK `SpawnedProcess` wrapper over DSH subprocess.
 - `src/async-queue.ts` — bounded closeable async input/output queues.
@@ -107,8 +109,10 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 ### Client
 
 - `src/client/index.tsx` — client entry and registrations.
-- `src/client/conversation.ts` — activity turn-data projection and selector.
-- `src/client/ClaudeActivity.tsx` — collapsible activity card.
+- `src/client/projection.ts` — session-scoped validated sidecar polling source.
+- `src/client/conversation-sidecar.ts` — Claude turn marker, per-step in-flow chat-node Definition, and sidecar activity fold.
+- `src/client/ClaudeActivityNode.tsx` — native-style keyed chat renderer for step-scoped activity.
+- `src/client/ClaudeActivityTail.tsx` — task-launcher-only turn-tail contribution.
 - `src/client/ClaudeCodeSettings.tsx` — Doctor panel and configuration guidance.
 - `src/client/locales.ts` — zh/en copy.
 - `src/client/styles.ts` — DSH-token-based inline styles.
@@ -123,7 +127,8 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 - `test/permission.test.ts`
 - `test/adapter.test.ts`
 - `test/preset-installer.test.ts`
-- `test/client-conversation.test.tsx`
+- `test/sidecar.test.ts`, `test/projection-routes.test.ts`
+- `test/client-projection.test.ts`, `test/client-sidecar-conversation.test.ts`
 
 ## Tasks
 
@@ -138,16 +143,18 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 
 Expected evidence: install succeeds, package compiles, `lib/` contains Host/Client/CLI/preset-route bundles.
 
-### Task 2 — Define durable events and safe normalization
+### Task 2 — Define sidecar persistence and safe normalization
 
-1. Define `claude-code/session-bound` and `claude-code/activity` TypeScript augmentations.
-2. Register both event names in `KNOWN_SESSION_EVENT_TYPES` at plugin activation.
-3. Implement bounded string/object summaries with recursive secret-key redaction.
-4. Implement append helpers that resolve the active Agent, turn, step, and ordinal once per bridge request.
-5. Implement the binding fold used to resume a prior Claude session.
-6. Add fixture-driven tests for lossless JSON, truncation, redaction, ordering, and binding fold.
+This task supersedes the original custom-event design. Runtime vocabulary registration cannot protect Desktop cold-load because persisted logs are validated before plugin activation.
 
-Expected evidence: event tests pass and no raw credential-shaped value enters a persisted fixture.
+1. Define a schema-versioned sidecar for binding, ordered activities, context usage, and tasks.
+2. Implement bounded normalization and recursive secret redaction before every durable write.
+3. Serialize writes per session and publish atomically with restrictive filesystem modes.
+4. Preserve decode-only historical event folds for idempotent legacy import.
+5. Expose only presentation fields through a trusted Host endpoint; exclude the resume binding.
+6. Add repository, route, Client polling, cleanup, redaction, and legacy-import regressions.
+
+Expected evidence: new session logs contain no `claude-code/*` events, old readable events import safely, and Desktop cold-load succeeds.
 
 ### Task 3 — Implement executable resolution, Doctor, and managed process adapter
 
@@ -166,7 +173,7 @@ Expected evidence: resolver detects `/Users/normanzuo/.local/bin/claude`; proces
 2. Create one supervisor entry per DSH session with states `starting`, `idle`, `running`, `interrupting`, `disconnected`, `outcome-unknown`, and `disposed`.
 3. Start SDK `query()` with the local executable, Claude Code system prompt preset, all local setting sources, partial messages, default permission mode, custom process spawn, and optional resume/model.
 4. Pump SDK messages exactly once and route each message to the active DSH request.
-5. Capture initialization/session id and persist the binding event.
+5. Capture initialization/session id and persist the sidecar binding.
 6. Complete one request on its matching top-level result while keeping the streaming input source alive.
 7. Support interrupt, termination fallback, idle eviction, max-process LRU eviction, resume, plugin disposal, and no-replay crash classification.
 8. Add a transport factory seam so all state-machine tests use fake SDK queries without network/model calls.
@@ -180,7 +187,7 @@ Expected evidence: state-machine tests cover multi-turn reuse, resume, idle evic
 3. Map DSH `allowed-once` to SDK allow with unchanged input.
 4. Map rejected/cancelled/unavailable to SDK deny with stable messages.
 5. Do not infer a DSH sandbox mode from prompt text; the public model-call contract has no sandbox-mode signal. Keep Claude in default permission mode and bridge every callback.
-6. Append pending and decided activity events and mark permission work as side-effect-relevant activity for crash classification.
+6. Persist pending and decided sidecar activities and mark permission work as side-effect-relevant activity for crash classification.
 7. Test every approval outcome, fail-closed audit behavior, secret redaction, and missing active-turn ownership.
 
 Expected evidence: permission tests pass and the callback never grants on unavailable/cancelled outcomes.
@@ -209,17 +216,29 @@ Expected evidence: adapter tests and DSH invariant/type checks pass.
 
 Expected evidence: the DSH preset roster discovers the installed preset without changing native preset roots.
 
-### Task 8 — Implement client activity and Doctor UI
+### Task 8 — Implement Client sidecar projection, activity, and Doctor UI
 
-1. Add client event type augmentation if required by the client runtime.
-2. Register a conversation definition that accumulates Claude activity per turn and publishes `claudeCode` turn data.
-3. Register a turn-tail selector that mounts only when the closing turn has Claude activity.
-4. Render ordered, collapsible activity rows with status, tool, bounded details, permission, error, subagent, and usage views.
+1. Register a session-scoped projection hook backed by the trusted Host endpoint.
+2. Load immediately on first subscription, poll only while mounted, validate responses, and abort on cleanup.
+3. Derive Claude turn ownership with one `turn/start` Context and Claude assistant-message updates; replay a multi-step turn in regression coverage so duplicate Context starts cannot recur.
+4. Materialize one step-scoped keyed chat node immediately before each Claude assistant message and render matching sidecar activity with native DSH disclosure, icon, status, typography, and spacing primitives. Keep the turn tail task-launcher-only.
 5. Add localized zh/en copy and accessible controls.
 6. Register a Settings section that calls same-origin Doctor endpoints and never renders secrets.
-7. Add projection/selector tests and focused component tests where the existing toolchain supports them.
+7. Add route, polling, projection/selector, and focused component tests.
 
-Expected evidence: Client typecheck/build passes; fixture snapshot demonstrates native turns render no card and Claude turns render ordered activity.
+Expected evidence: Client typecheck/build passes; real assembler regression demonstrates activity 1, assistant 1, activity 2, assistant 2 ordering, while native turns render no Claude activity node.
+
+### Task 8A — Redesign Claude background task presentation
+
+1. Retain a bounded optional origin turn on task snapshots and a redacted task id on lifecycle activities without breaking schema-version-1 sidecars.
+2. Group the DSH details panel into Running and Finished cards with duration, token, tool-use, type, last-tool, and summary metadata.
+3. Implement Finished collapse and mounted-Client-only Clear; do not mutate canonical sidecar truth.
+4. Expose only already-redacted matching sidecar activity as “View activity”; never read Claude transcript paths or resume identity.
+5. Add a matching-turn running-task launcher and keep the session-header utility as the fallback for tasks without a known origin.
+6. Do not expose per-task Stop because the public SDK and DSH contracts only support whole-turn cancellation.
+7. Add normalization, sidecar, supervisor, and pure Client-selection regressions.
+
+Expected evidence: grouped interaction tests pass, the panel and turn-tail share one details controller, and no unsupported task mutation surface exists.
 
 ### Task 9 — Documentation and package verification
 

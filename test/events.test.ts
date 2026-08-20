@@ -1,19 +1,15 @@
-import { existsSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   boundText,
+  latestClaudeContextUsage,
   latestClaudeSessionBinding,
+  latestClaudeTasks,
   normalizeActivity,
+  normalizeContextUsage,
+  normalizeTasksEvent,
   redactValue,
   safeDetail,
 } from '../src/events.ts'
-import {
-  installClaudeEventVocabulary,
-  registerClaudeEventVocabulary,
-  resolveHostSessionModulePath,
-} from '../src/event-vocabulary.ts'
-
 const event = (type: string, data: unknown) => ({
   id: crypto.randomUUID(),
   type,
@@ -96,57 +92,34 @@ describe('event normalization', () => {
   it('preserves short text', () => {
     expect(boundText('hello', 10)).toBe('hello')
   })
-})
 
-const installedHostEntrypoint = '/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js'
-
-describe('host event vocabulary installation', () => {
-  it('registers both plugin event types on the supplied runtime singleton', () => {
-    const vocabulary = new Set<string>(['turn/start'])
-    registerClaudeEventVocabulary({ KNOWN_SESSION_EVENT_TYPES: vocabulary })
-    expect(vocabulary).toEqual(new Set([
-      'turn/start',
-      'claude-code/session-bound',
-      'claude-code/activity',
-    ]))
-  })
-
-  it('resolves the session module relative to the running Host entrypoint', () => {
-    let observedSpecifier = ''
-    let observedParent = ''
-    const resolved = resolveHostSessionModulePath(
-      installedHostEntrypoint,
-      (specifier, parent) => {
-        observedSpecifier = specifier
-        observedParent = String(parent)
-        return '/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh-session/lib/index.js'
-      },
-    )
-    expect(observedSpecifier).toBe('@deepseek-ai/dsh-session')
-    expect(observedParent).toBe('file:///Applications/DeepSeek%20Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js')
-    expect(resolved).toContain('/Resources/host/node_modules/@deepseek-ai/dsh-session/lib/index.js')
-  })
-
-  it.runIf(existsSync(installedHostEntrypoint))('mutates the installed Host module instance instead of the linked checkout copy', async () => {
-    const hostSessionPath = resolveHostSessionModulePath(installedHostEntrypoint)
-    const hostSession = await import(pathToFileURL(hostSessionPath).href) as {
-      KNOWN_SESSION_EVENT_TYPES: Set<string>
-    }
-    const initiallyKnown = hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/activity')
-    try {
-      await installClaudeEventVocabulary(installedHostEntrypoint)
-      expect(hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/activity')).toBe(true)
-      expect(hostSession.KNOWN_SESSION_EVENT_TYPES.has('claude-code/session-bound')).toBe(true)
-    } finally {
-      if (!initiallyKnown) {
-        hostSession.KNOWN_SESSION_EVENT_TYPES.delete('claude-code/activity')
-        hostSession.KNOWN_SESSION_EVENT_TYPES.delete('claude-code/session-bound')
-      }
-    }
+  it('whitelists and bounds aggregate context usage fields', () => {
+    const normalized = normalizeContextUsage({
+      model: 'claude-opus',
+      totalTokens: 131_400.9,
+      maxTokens: 272_000,
+      percentage: 148,
+      categories: [
+        { name: 'System prompt', tokens: 3_400.8, color: '#94a3b8' },
+        { name: 'Tools', tokens: -4, color: 'url(javascript:alert(1))', isDeferred: true },
+      ],
+    })
+    expect(normalized).toEqual({
+      model: 'claude-opus',
+      totalTokens: 131_400,
+      maxTokens: 272_000,
+      percentage: 100,
+      categories: [
+        { name: 'System prompt', tokens: 3_400, color: '#94a3b8' },
+        { name: 'Tools', tokens: 0, color: '#8b95a5', isDeferred: true },
+      ],
+    })
+    expect(normalized).not.toHaveProperty('memoryFiles')
+    expect(normalized).not.toHaveProperty('mcpTools')
   })
 })
 
-describe('session binding fold', () => {
+describe('legacy event folds', () => {
   it('chooses the newest Claude binding only', () => {
     const first = { claudeSessionId: 'one', sdkVersion: '0.3.233', cwd: '/a' }
     const second = { claudeSessionId: 'two', sdkVersion: '0.3.233', cwd: '/b' }
@@ -159,5 +132,82 @@ describe('session binding fold', () => {
 
   it('returns undefined for an unbound session', () => {
     expect(latestClaudeSessionBinding([event('turn/start', {})])).toBeUndefined()
+  })
+
+  it('chooses the newest aggregate context sample', () => {
+    const first = { model: 'a', totalTokens: 10, maxTokens: 100, percentage: 10, categories: [] }
+    const second = { model: 'b', totalTokens: 20, maxTokens: 100, percentage: 20, categories: [] }
+    expect(latestClaudeContextUsage([
+      event('claude-code/context-usage', first),
+      event('turn/start', {}),
+      event('claude-code/context-usage', second),
+    ])).toEqual(second)
+  })
+
+  it('chooses the newest task board snapshot', () => {
+    const first = { tasks: [] }
+    const second = { tasks: [{ taskId: 't1', description: 'deploy', status: 'running' }] }
+    expect(latestClaudeTasks([
+      event('claude-code/tasks', first),
+      event('turn/start', {}),
+      event('claude-code/tasks', second),
+    ])).toEqual(second)
+  })
+})
+
+describe('task board normalization', () => {
+  it('bounds text, clamps usage, and falls back to running for unknown statuses', () => {
+    expect(normalizeTasksEvent([
+      {
+        taskId: 't1',
+        description: 'x'.repeat(500),
+        status: 'bogus' as never,
+        summary: 'y'.repeat(500),
+        originTurn: 4.9,
+        usage: { totalTokens: -5, toolUses: 3.9, durationMs: 10 },
+      },
+      {
+        taskId: 't2',
+        description: 'deploy',
+        status: 'completed',
+        subagentType: 'ci',
+        backgrounded: true,
+      },
+    ])).toEqual({
+      tasks: [
+        {
+          taskId: 't1',
+          description: boundText('x'.repeat(500), 300),
+          status: 'running',
+          originTurn: 4,
+          summary: boundText('y'.repeat(500), 300),
+          usage: { totalTokens: 0, toolUses: 3, durationMs: 10 },
+        },
+        {
+          taskId: 't2',
+          description: 'deploy',
+          status: 'completed',
+          subagentType: 'ci',
+          backgrounded: true,
+        },
+      ],
+    })
+  })
+
+  it('redacts task correlation identifiers on activities', () => {
+    expect(normalizeActivity({
+      turn: 2,
+      step: 1,
+      ordinal: 3,
+      kind: 'subagent',
+      taskId: 'task-token=raw-secret',
+    }).taskId).toBe('task-token=[REDACTED]')
+  })
+
+  it('drops empty usage records and caps the snapshot size', () => {
+    expect(normalizeTasksEvent([{ taskId: 't', description: 'd', status: 'running', usage: {} }]).tasks[0])
+      .not.toHaveProperty('usage')
+    const many = Array.from({ length: 60 }, (_, index) => ({ taskId: String(index), description: 'd', status: 'running' as const }))
+    expect(normalizeTasksEvent(many).tasks).toHaveLength(50)
   })
 })

@@ -7,6 +7,13 @@ import { CLAUDE_CODE_PRESET_ID } from './constants.ts'
 
 export const MANAGED_PRESET_FILES = ['agent.cordis.yml', 'preset.yml'] as const
 
+/** Package specifier kept in the shipped template. DSH Desktop's resolver hook
+ *  only rewrites bare specifiers issued by the root include; preset subtrees
+ *  resolve through Node's internal loader with an unrelated base and cannot
+ *  find linked packages. The installer therefore substitutes the absolute
+ *  built entry path, which the preset tree imports directly as a file URL. */
+const PRESET_ROUTE_PACKAGE_SPECIFIER = 'dsh-claude-code/preset-route'
+
 export class ManagedPresetConflictError extends Error {
   readonly path: string
 
@@ -30,6 +37,39 @@ export function defaultManagedPresetPaths(dshHome?: string): ManagedPresetPaths 
       ? dshHomePath('.agent-presets', CLAUDE_CODE_PRESET_ID)
       : join(dshHome, '.agent-presets', CLAUDE_CODE_PRESET_ID),
   }
+}
+
+interface ManagedContent {
+  file: string
+  /** Content this installer version writes. */
+  content: string
+  /** Older installer-written contents that may be silently upgraded/removed. */
+  legacy: readonly string[]
+  /** Legacy detection for contents that predate the current template. */
+  isLegacy(current: string): boolean
+}
+
+async function managedContents(paths: ManagedPresetPaths): Promise<ManagedContent[]> {
+  const routeEntry = join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')
+  return await Promise.all(MANAGED_PRESET_FILES.map(async (file): Promise<ManagedContent> => {
+    const source = await readFile(join(paths.sourceDir, file), 'utf8')
+    const nameRow = `name: ${PRESET_ROUTE_PACKAGE_SPECIFIER}`
+    if (file !== 'agent.cordis.yml' || !source.includes(nameRow)) {
+      return { file, content: source, legacy: [], isLegacy: () => false }
+    }
+    return {
+      file,
+      content: source.replace(nameRow, `name: ${routeEntry}`),
+      legacy: [source],
+      // Any earlier installer generation wrote this same entry id with the
+      // route reference in either supported form (bare package specifier or
+      // absolute built-module path); treat those as safe to upgrade regardless
+      // of comment or field drift in the template.
+      isLegacy: current =>
+        current.includes('id: claude-code-route')
+        && (current.includes(nameRow) || current.includes('lib/preset-route.mjs')),
+    }
+  }))
 }
 
 async function readIfPresent(path: string): Promise<string | undefined> {
@@ -61,16 +101,17 @@ async function atomicWrite(path: string, content: string): Promise<boolean> {
 
 export async function ensureManagedPreset(paths = defaultManagedPresetPaths()): Promise<'installed' | 'unchanged'> {
   await assertSafeTargetDirectory(paths.targetDir)
-  const expected = await Promise.all(MANAGED_PRESET_FILES.map(async file => ({
-    file,
-    content: await readFile(join(paths.sourceDir, file), 'utf8'),
-  })))
+  const expected = await managedContents(paths)
   let changed = false
-  for (const { file, content } of expected) {
+  for (const { file, content, legacy, isLegacy } of expected) {
     const target = join(paths.targetDir, file)
     const current = await readIfPresent(target)
     if (current === content) continue
-    if (current !== undefined) throw new ManagedPresetConflictError(target)
+    if (current !== undefined) {
+      // Upgrade installer-written legacy content in place; never touch user edits.
+      if (!legacy.includes(current) && !isLegacy(current)) throw new ManagedPresetConflictError(target)
+      await rm(target)
+    }
     changed = await atomicWrite(target, content) || changed
   }
   return changed ? 'installed' : 'unchanged'
@@ -92,13 +133,13 @@ async function assertSafeTargetDirectory(targetDir: string): Promise<void> {
 
 export async function removeManagedPreset(paths = defaultManagedPresetPaths()): Promise<'removed' | 'absent'> {
   await assertSafeTargetDirectory(paths.targetDir)
+  const expected = await managedContents(paths)
   let removed = false
-  for (const file of MANAGED_PRESET_FILES) {
-    const source = await readFile(join(paths.sourceDir, file), 'utf8')
+  for (const { file, content, legacy, isLegacy } of expected) {
     const target = join(paths.targetDir, file)
     const current = await readIfPresent(target)
     if (current === undefined) continue
-    if (current !== source) throw new ManagedPresetConflictError(target)
+    if (current !== content && !legacy.includes(current) && !isLegacy(current)) throw new ManagedPresetConflictError(target)
     await rm(target)
     removed = true
   }

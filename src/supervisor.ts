@@ -1,29 +1,41 @@
 import { randomUUID } from 'node:crypto'
 import {
   query as claudeQuery,
+  type EffortLevel,
   type Options as ClaudeOptions,
+  type PermissionMode,
   type Query,
+  type SDKControlGetContextUsageResponse,
   type SDKMessage,
   type SDKUserMessage,
+  type Settings as ClaudeSettings,
+  type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { AsyncQueue } from './async-queue.ts'
+import { TASK_TOOL_NAMES } from './constants.ts'
 import {
-  appendClaudeActivity,
-  appendClaudeSessionBinding,
   currentClaudeActivityCursor,
-  latestClaudeSessionBinding,
+  redactText,
+  safeDetail,
   type ClaudeActivityCursor,
+  type ClaudeActivityInput,
+  type ClaudeTaskInfo,
   type ClaudeUsage,
 } from './events.ts'
 import { createPermissionBridge } from './permission.ts'
+import { ClaudeSidecarRepository } from './sidecar.ts'
+import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
+/** Control requests must settle; a wedged one must not clog the metadata chain. */
+export const CLAUDE_METADATA_TIMEOUT_MS = 15_000
 
 export type ClaudeSupervisorState =
   | 'starting'
@@ -46,10 +58,34 @@ export type ClaudeTurnStreamEvent =
   | { type: 'usage'; usage: ClaudeUsage }
   | { type: 'complete'; text: string }
 
+export type ClaudeThinkingMode = 'off' | 'ultracode' | EffortLevel
+
+export type DshSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+const CLAUDE_MODE_BY_SANDBOX: Readonly<Record<DshSandboxMode, PermissionMode>> = {
+  'read-only': 'plan',
+  'workspace-write': 'acceptEdits',
+  'danger-full-access': 'bypassPermissions',
+}
+
+/** Fold DSH's native access selector into Claude Code's closest permission mode. */
+export function claudePermissionMode(events: readonly { type: string; data: unknown }[]): PermissionMode {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type !== 'sandbox/mode') continue
+    const mode = (event.data as { mode?: unknown }).mode
+    return typeof mode === 'string' && mode in CLAUDE_MODE_BY_SANDBOX
+      ? CLAUDE_MODE_BY_SANDBOX[mode as DshSandboxMode]
+      : 'plan'
+  }
+  return 'plan'
+}
+
 export interface ClaudeTurnRequest {
   agent: Agent
   prompt: string
   model?: string
+  thinkingMode?: ClaudeThinkingMode
   signal?: AbortSignal
 }
 
@@ -59,6 +95,7 @@ export interface ClaudeSupervisorSnapshot {
   state: ClaudeSupervisorState
   cwd: string
   model: string
+  thinkingMode?: ClaudeThinkingMode
   lastUsedAt: number
   pid?: number
 }
@@ -107,6 +144,8 @@ interface ActiveTurn {
   thinking: string
   aborted: boolean
   deniedToolUseIds: Set<string>
+  /** Root call names by toolUseId; tool results carry none of their own. */
+  callNames: Map<string, string>
   signal?: AbortSignal
   abortListener?: () => void
 }
@@ -116,6 +155,8 @@ interface SupervisorEntry {
   ownerAgent: Agent
   cwd: string
   model: string
+  thinkingMode: ClaudeThinkingMode | undefined
+  permissionMode: PermissionMode
   state: ClaudeSupervisorState
   lastUsedAt: number
   input: AsyncQueue<SDKUserMessage>
@@ -128,6 +169,18 @@ interface SupervisorEntry {
   initTimer: ReturnType<typeof setTimeout> | undefined
   initialized: boolean
   expectedResume: string | undefined
+  /** Settled when init arrives; rejected on disconnect before init. */
+  initWaiters: Array<(error: unknown) => void>
+  /** Uuid of the startup handshake prompt; its local-command result is never a DSH turn outcome. */
+  handshakeUuid: ReturnType<typeof randomUUID>
+  /** True until the handshake's settlement arrives; its output is swallowed. */
+  handshakePending: boolean
+  /** Live Claude task board (subagents and background tasks), keyed by task id. */
+  tasks: Map<string, ClaudeTaskInfo>
+  /** Last time a task snapshot was persisted (progress throttling). */
+  taskSnapshotAt: number
+  /** Pending throttled snapshot flush timer. */
+  taskSnapshotTimer: ReturnType<typeof setTimeout> | undefined
   pump: Promise<void>
 }
 
@@ -165,6 +218,12 @@ function sdkUserMessage(prompt: string, uuid: ReturnType<typeof randomUUID>): SD
   }
 }
 
+/** CLI ≥ 2.1.235 emits system/init only after its first stdin input, while
+ *  the supervisor must see init before submitting any real turn. A local
+ *  slash command nudges startup without costing a model call; its lifecycle
+ *  messages are ignored because no DSH turn is active while they arrive. */
+const CLAUDE_HANDSHAKE_PROMPT = '/status'
+
 function usageSummary(usage: ClaudeUsage): string {
   const input = usage.inputTokens ?? 0
   const output = usage.outputTokens ?? 0
@@ -178,6 +237,18 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** Root-call activity summary; subagent dispatches lead with Claude's own task description. */
+function rootCallSummary(toolName: string, input: unknown): string {
+  if (TASK_TOOL_NAMES.has(toolName)) {
+    const description = input !== null && typeof input === 'object'
+      ? (input as Record<string, unknown>).description
+      : undefined
+    if (typeof description === 'string' && description.length > 0) return description
+    return 'Claude dispatched a subagent'
+  }
+  return `Claude called ${toolName}`
+}
+
 export class ClaudeSupervisor {
   readonly #entries = new Map<string, SupervisorEntry>()
   readonly #runtime: Pick<SubprocessRuntime, 'spawn'>
@@ -185,6 +256,9 @@ export class ClaudeSupervisor {
   readonly #config: ClaudeSupervisorConfig
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
+  readonly #sidecar: ClaudeSidecarRepository
+  readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
+  readonly #contextWindows = new Map<string, number>()
   #disposed = false
   #admissionGate: Promise<void> = Promise.resolve()
 
@@ -194,12 +268,14 @@ export class ClaudeSupervisor {
     config: ClaudeSupervisorConfig
     queryFactory?: ClaudeQueryFactory
     runDetached?: <T>(operation: () => T) => T
+    sidecar?: ClaudeSidecarRepository
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
     this.#config = dependencies.config
     this.#queryFactory = dependencies.queryFactory ?? (params => claudeQuery(params))
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
+    this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -209,9 +285,28 @@ export class ClaudeSupervisor {
       state: entry.state,
       cwd: entry.cwd,
       model: entry.model,
+      ...(entry.thinkingMode === undefined ? {} : { thinkingMode: entry.thinkingMode }),
       lastUsedAt: entry.lastUsedAt,
       ...(entry.process === undefined ? {} : { pid: entry.process.handle.pid }),
     }))
+  }
+
+  supportedCommands(agent: Agent, model = this.#config.defaultModel): Promise<readonly SlashCommand[]> {
+    return this.#runMetadata(agent, model, query => query.supportedCommands())
+  }
+
+  async contextUsage(agent: Agent, model = this.#config.defaultModel): Promise<SDKControlGetContextUsageResponse> {
+    const usage = await this.#runMetadata(agent, model, query => query.getContextUsage())
+    const contextWindow = usage.rawMaxTokens > 0 ? usage.rawMaxTokens : usage.maxTokens
+    if (contextWindow > 0) {
+      this.#contextWindows.set(model, contextWindow)
+      this.#contextWindows.set(usage.model, contextWindow)
+    }
+    return usage
+  }
+
+  contextWindow(model: string): number | undefined {
+    return this.#contextWindows.get(model)
   }
 
   runTurn(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
@@ -232,7 +327,7 @@ export class ClaudeSupervisor {
     }
     if (entry === undefined) {
       await this.#makeRoom()
-      entry = this.#createEntry(request.agent, request.model ?? this.#config.defaultModel)
+      entry = await this.#createEntry(request.agent, request.model ?? this.#config.defaultModel, request.thinkingMode)
       this.#entries.set(sessionId, entry)
       this.#armInitializationTimer(entry)
     }
@@ -246,15 +341,33 @@ export class ClaudeSupervisor {
       entry.idleTimer = undefined
     }
     const model = request.model ?? this.#config.defaultModel
-    if (model !== entry.model) {
-      await entry.query.setModel(model === 'default' ? undefined : model)
-      entry.model = model
+    if (request.thinkingMode !== entry.thinkingMode) {
+      // The SDK only accepts effort/thinking at query start, so rebuild the
+      // query; the persisted Claude session binding keeps the context.
+      this.#entries.delete(sessionId)
+      await this.#disposeEntry(entry)
+      entry = await this.#createEntry(request.agent, model, request.thinkingMode)
+      this.#entries.set(sessionId, entry)
+      this.#armInitializationTimer(entry)
+    } else {
+      await this.#syncPermissionMode(entry)
+      if (model !== entry.model) {
+        await entry.query.setModel(model)
+        entry.model = model
+      }
     }
 
     const promptUuid = randomUUID()
+    const cursor = currentClaudeActivityCursor(request.agent.session.events)
+    const projection = await this.#sidecar.read(sessionId)
+    cursor.nextOrdinal = projection.activities.reduce((next, activity) => (
+      activity.turn === cursor.turn && activity.step === cursor.step
+        ? Math.max(next, activity.ordinal + 1)
+        : next
+    ), 0)
     const active: ActiveTurn = {
       agent: request.agent,
-      cursor: currentClaudeActivityCursor(request.agent.session.events),
+      cursor,
       output: new AsyncQueue<ClaudeTurnStreamEvent>(),
       promptUuid,
       sawActivity: false,
@@ -263,13 +376,14 @@ export class ClaudeSupervisor {
       thinking: '',
       aborted: false,
       deniedToolUseIds: new Set(),
+      callNames: new Map(),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
     entry.active = active
     entry.state = 'running'
     entry.lastUsedAt = Date.now()
     try {
-      await appendClaudeActivity(request.agent, active.cursor, {
+      await this.#appendActivity(active, {
         kind: 'status',
         phase: 'started',
         title: 'Claude Code turn started',
@@ -284,7 +398,7 @@ export class ClaudeSupervisor {
     if (signalAborted(request.signal)) {
       active.aborted = true
       active.output.fail(abortFailure())
-      await appendClaudeActivity(request.agent, active.cursor, {
+      await this.#appendActivity(active, {
         kind: 'status',
         phase: 'failed',
         title: 'Claude Code turn cancelled before submission',
@@ -302,6 +416,75 @@ export class ClaudeSupervisor {
     }
     entry.input.push(sdkUserMessage(request.prompt, promptUuid))
     return active.output
+  }
+
+  #runMetadata<T>(
+    agent: Agent,
+    model: string,
+    operation: (query: Query, entry: SupervisorEntry) => Promise<T>,
+  ): Promise<T> {
+    const admitted = this.#admissionGate.then(async () => {
+      if (this.#disposed) throw new Error('dsh-claude-code: supervisor is disposed')
+      const entry = await this.#metadataEntry(agent, model)
+      try {
+        // Control requests go out only after the CLI finishes initializing;
+        // issued earlier they can wedge and clog the caller's refresh chain.
+        await withTimeout(this.#whenInitialized(entry), CLAUDE_INITIALIZATION_TIMEOUT_MS, 'Claude metadata initialization')
+        return await withTimeout(operation(entry.query, entry), CLAUDE_METADATA_TIMEOUT_MS, 'Claude metadata request')
+      } finally {
+        entry.lastUsedAt = Date.now()
+        if (entry.active === undefined && entry.state === 'idle') this.#armIdleTimer(entry)
+      }
+    })
+    this.#admissionGate = admitted.then(() => undefined, () => undefined)
+    return admitted
+  }
+
+  #whenInitialized(entry: SupervisorEntry): Promise<void> {
+    if (entry.initialized) return Promise.resolve()
+    if (entry.state === 'disposed' || entry.state === 'disconnected' || entry.state === 'outcome-unknown') {
+      return Promise.reject(new Error(`dsh-claude-code: session ${entry.sessionId} is ${entry.state}`))
+    }
+    return new Promise<void>((resolve, reject) => {
+      entry.initWaiters.push(error => (error === undefined ? resolve() : reject(error instanceof Error ? error : new Error(String(error)))))
+    })
+  }
+
+  async #metadataEntry(agent: Agent, model: string): Promise<SupervisorEntry> {
+    const sessionId = agent.id as string
+    let entry = this.#entries.get(sessionId)
+    if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
+      this.#entries.delete(sessionId)
+      await this.#disposeEntry(entry)
+      entry = undefined
+    }
+    if (entry === undefined) {
+      await this.#makeRoom()
+      entry = await this.#createEntry(agent, model)
+      this.#entries.set(sessionId, entry)
+      this.#armInitializationTimer(entry)
+    }
+    if (entry.ownerAgent !== agent) {
+      throw new Error(`dsh-claude-code: live agent identity changed for session ${sessionId}`)
+    }
+    if (entry.active !== undefined || entry.state === 'interrupting') throw new ClaudeTurnBusyError(sessionId)
+    if (entry.idleTimer !== undefined) {
+      clearTimeout(entry.idleTimer)
+      entry.idleTimer = undefined
+    }
+    await this.#syncPermissionMode(entry)
+    if (model !== entry.model) {
+      await entry.query.setModel(model)
+      entry.model = model
+    }
+    return entry
+  }
+
+  async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
+    const mode = claudePermissionMode(entry.ownerAgent.session.events)
+    if (mode === entry.permissionMode) return
+    await entry.query.setPermissionMode(mode)
+    entry.permissionMode = mode
   }
 
   async disposeSession(sessionId: string): Promise<void> {
@@ -329,26 +512,36 @@ export class ClaudeSupervisor {
     await this.#disposeEntry(idle)
   }
 
-  #createEntry(agent: Agent, model: string): SupervisorEntry {
+  async #createEntry(agent: Agent, model: string, thinkingMode?: ClaudeThinkingMode): Promise<SupervisorEntry> {
     const sessionId = agent.id as string
     const cwd = agent.session.header.cwd ?? process.cwd()
     const input = new AsyncQueue<SDKUserMessage>()
     const lifetime = new AbortController()
-    const binding = latestClaudeSessionBinding(agent.session.events)
+    const projection = await this.#sidecar.importLegacy(sessionId, agent.session.events)
+    const binding = projection.binding
+    const permissionMode = claudePermissionMode(agent.session.events)
     const entry = {
       sessionId,
       ownerAgent: agent,
       cwd,
       model,
+      thinkingMode,
+      permissionMode,
       state: 'starting' as ClaudeSupervisorState,
       lastUsedAt: Date.now(),
       input,
       lifetime,
       claudeSessionId: binding?.claudeSessionId,
       expectedResume: binding?.claudeSessionId,
+      handshakeUuid: randomUUID(),
+      handshakePending: true,
       initialized: false,
+      initWaiters: [] as Array<(error: unknown) => void>,
       initTimer: undefined,
       idleTimer: undefined,
+      tasks: new Map<string, ClaudeTaskInfo>(),
+      taskSnapshotAt: 0,
+      taskSnapshotTimer: undefined,
     } as SupervisorEntry
 
     const canUseTool = createPermissionBridge(this.#approval, () => {
@@ -358,6 +551,7 @@ export class ClaudeSupervisor {
         cursor: active.cursor,
         markActivity: () => { active.sawActivity = true },
         recordDenial: toolUseId => { active.deniedToolUseIds.add(toolUseId) },
+        appendActivity: activity => this.#appendActivity(active, activity),
       }
     })
     const options: ClaudeOptions = {
@@ -367,16 +561,25 @@ export class ClaudeSupervisor {
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
-      permissionMode: 'default',
+      permissionMode,
+      allowDangerouslySkipPermissions: true,
       canUseTool,
       abortController: lifetime,
       spawnClaudeCodeProcess: createManagedClaudeSpawner(this.#runtime, this.#config.executablePath, process => {
         entry.process = process
       }),
       ...(binding === undefined ? {} : { resume: binding.claudeSessionId }),
-      ...(model === 'default' ? {} : { model }),
+      model,
+      ...(thinkingMode === undefined
+        ? {}
+        : thinkingMode === 'off'
+          ? { thinking: { type: 'disabled' } as const }
+          : thinkingMode === 'ultracode'
+            ? { settings: { ultracode: true } satisfies ClaudeSettings }
+            : { effort: thinkingMode }),
     }
     entry.query = this.#queryFactory({ prompt: input, options })
+    entry.input.push(sdkUserMessage(CLAUDE_HANDSHAKE_PROMPT, entry.handshakeUuid))
     entry.pump = this.#runDetached(() => this.#pump(entry))
     return entry
   }
@@ -413,7 +616,14 @@ export class ClaudeSupervisor {
       entry.initialized = true
       entry.claudeSessionId = message.sessionId
       entry.state = entry.active === undefined ? 'idle' : 'running'
-      await appendClaudeSessionBinding(entry.ownerAgent, {
+      for (const waiter of entry.initWaiters.splice(0)) waiter(undefined)
+      // The SDK emits no background-task level at startup; reset the board on
+      // every (re)start and let membership changes repopulate it.
+      if (entry.tasks.size > 0) {
+        entry.tasks.clear()
+        await this.#flushTasksSnapshot(entry)
+      }
+      await this.#sidecar.writeBinding(entry.sessionId, {
         claudeSessionId: message.sessionId,
         cliVersion: message.cliVersion,
         cwd: message.cwd,
@@ -421,9 +631,35 @@ export class ClaudeSupervisor {
       return
     }
 
+    // Task lifecycle is session-scoped, not turn-scoped: background tasks and
+    // subagents settle while no DSH turn is active, and their notifications
+    // must still reach the task board instead of being dropped with turn-less
+    // messages below.
+    const taskId = message.kind === 'subagent' ? message.taskId : undefined
+    if (message.kind === 'subagent' && taskId !== undefined) {
+      await this.#trackTask(entry, message, taskId, entry.active?.cursor.turn)
+    } else if (message.kind === 'background-tasks') {
+      this.#trackBackgroundLevel(entry, message.tasks, entry.active?.cursor.turn)
+    }
+
+    if (entry.handshakePending) {
+      // Startup-handshake output of the local `/status` nudge: never part of
+      // any DSH turn. Protocol failures stay loud; the settlement clears the
+      // phase so subsequent messages belong to real turns.
+      if (message.kind === 'protocol-error') {
+        throw new ClaudeProtocolError(`${message.title}: ${JSON.stringify(message.detail).slice(0, 1_000)}`)
+      }
+      if (message.kind === 'result') entry.handshakePending = false
+      return
+    }
+
     const active = entry.active
     if (active === undefined) return
     if (message.kind === 'result') {
+      if (message.userMessageUuid !== undefined && message.userMessageUuid === entry.handshakeUuid) {
+        // Startup handshake settlement; never a DSH turn outcome.
+        return
+      }
       if (entry.claudeSessionId === undefined) {
         throw new ClaudeProtocolError('Claude Code sent a result before initialization')
       }
@@ -467,7 +703,7 @@ export class ClaudeSupervisor {
           return
         }
         active.thinking = message.text
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: 'thinking',
           phase: 'completed',
           title: 'Claude thinking',
@@ -475,30 +711,44 @@ export class ClaudeSupervisor {
         })
         return
       case 'tool-call':
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-call' : 'subagent',
           phase: 'started',
           toolUseId: message.toolUseId,
+          ...(message.parentToolUseId === undefined ? {} : { parentToolUseId: message.parentToolUseId }),
           toolName: message.toolName,
           title: message.toolName,
-          summary: message.parentToolUseId === undefined ? `Claude called ${message.toolName}` : `Subagent called ${message.toolName}`,
+          summary: message.parentToolUseId === undefined ? rootCallSummary(message.toolName, message.input) : `Subagent called ${message.toolName}`,
           detail: message.input,
         })
+        if (message.parentToolUseId === undefined) {
+          active.callNames.set(message.toolUseId, message.toolName)
+          this.#ensureDynamicPresenter(active.agent, message.toolName)
+          // Task dispatches render as plugin-owned group cards gathering the
+          // subagents' nested work; only ordinary tools mirror natively.
+          if (!TASK_TOOL_NAMES.has(message.toolName)) await this.#appendNativeToolCall(active, message)
+        }
         return
       case 'tool-result':
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-result' : 'subagent',
           phase: message.isError ? 'failed' : 'completed',
           toolUseId: message.toolUseId,
+          ...(message.parentToolUseId === undefined ? {} : { parentToolUseId: message.parentToolUseId }),
           title: message.isError ? 'Tool failed' : 'Tool completed',
           detail: message.output,
           isError: message.isError,
         })
+        if (message.parentToolUseId === undefined
+          && !TASK_TOOL_NAMES.has(active.callNames.get(message.toolUseId) ?? '')) {
+          await this.#appendNativeToolResult(active, message)
+        }
         return
       case 'subagent':
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: 'subagent',
           phase: message.phase,
+          ...(message.taskId === undefined ? {} : { taskId: message.taskId }),
           title: message.title,
           summary: message.summary,
           detail: message.detail,
@@ -508,7 +758,7 @@ export class ClaudeSupervisor {
       case 'status':
       case 'warning':
       case 'unknown':
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: message.kind === 'status' ? 'status' : 'warning',
           phase: 'updated',
           title: message.title,
@@ -517,7 +767,7 @@ export class ClaudeSupervisor {
         })
         return
       case 'permission-denied':
-        await appendClaudeActivity(active.agent, active.cursor, {
+        await this.#appendActivity(active, {
           kind: 'permission',
           phase: 'denied',
           toolUseId: message.toolUseId,
@@ -527,6 +777,101 @@ export class ClaudeSupervisor {
         })
         return
     }
+  }
+
+  /** Merge one task lifecycle message into the session's task board. */
+  async #trackTask(
+    entry: SupervisorEntry,
+    message: Extract<NormalizedSdkMessage, { kind: 'subagent' }>,
+    taskId: string,
+    originTurn: number | undefined,
+  ): Promise<void> {
+    const previous = entry.tasks.get(taskId)
+    const next: ClaudeTaskInfo = {
+      taskId,
+      description: message.description ?? previous?.description ?? message.title,
+      status: message.taskStatus ?? previous?.status ?? 'running',
+    }
+    const resolvedOriginTurn = previous?.originTurn ?? originTurn
+    if (resolvedOriginTurn !== undefined) next.originTurn = resolvedOriginTurn
+    const subagentType = message.subagentType ?? previous?.subagentType
+    if (subagentType !== undefined) next.subagentType = subagentType
+    const taskType = message.taskType ?? previous?.taskType
+    if (taskType !== undefined) next.taskType = taskType
+    const lastToolName = message.lastToolName ?? previous?.lastToolName
+    if (lastToolName !== undefined) next.lastToolName = lastToolName
+    const summary = message.summary ?? previous?.summary
+    if (summary !== undefined) next.summary = summary
+    const usage = message.usage ?? previous?.usage
+    if (usage !== undefined) next.usage = usage
+    if (previous?.backgrounded === true) next.backgrounded = true
+    entry.tasks.set(taskId, next)
+    const settled = next.status !== 'running'
+    await this.#scheduleTasksSnapshot(entry, settled)
+  }
+
+  /** Fold the background-task level signal into the board (REPLACE semantics
+   *  for the backgrounded flag: only the listed tasks are detached). */
+  #trackBackgroundLevel(
+    entry: SupervisorEntry,
+    tasks: readonly { taskId: string; taskType?: string; description: string }[],
+    originTurn: number | undefined,
+  ): void {
+    const live = new Set(tasks.map(task => task.taskId))
+    let changed = false
+    for (const task of tasks) {
+      const existing = entry.tasks.get(task.taskId)
+      if (existing === undefined) {
+        entry.tasks.set(task.taskId, {
+          taskId: task.taskId,
+          description: task.description,
+          status: 'running',
+          ...(originTurn === undefined ? {} : { originTurn }),
+          ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
+          backgrounded: true,
+        })
+        changed = true
+      } else if (existing.backgrounded !== true || existing.status !== 'running') {
+        entry.tasks.set(task.taskId, { ...existing, status: 'running', backgrounded: true })
+        changed = true
+      }
+    }
+    for (const task of entry.tasks.values()) {
+      if (task.backgrounded === true && task.status === 'running' && !live.has(task.taskId)) {
+        entry.tasks.set(task.taskId, { ...task, status: 'completed' })
+        changed = true
+      }
+    }
+    if (changed) void this.#scheduleTasksSnapshot(entry, true)
+  }
+
+  /** Persist the task board. Settled transitions flush immediately; progress
+   *  ticks throttle to one snapshot per second to bound log volume. */
+  async #scheduleTasksSnapshot(entry: SupervisorEntry, immediate: boolean): Promise<void> {
+    const THROTTLE_MS = 1_000
+    const elapsed = Date.now() - entry.taskSnapshotAt
+    if (!immediate && elapsed < THROTTLE_MS) {
+      if (entry.taskSnapshotTimer === undefined) {
+        entry.taskSnapshotTimer = setTimeout(() => {
+          entry.taskSnapshotTimer = undefined
+          void this.#flushTasksSnapshot(entry)
+        }, THROTTLE_MS - elapsed)
+        entry.taskSnapshotTimer.unref?.()
+      }
+      return
+    }
+    await this.#flushTasksSnapshot(entry)
+  }
+
+  async #flushTasksSnapshot(entry: SupervisorEntry): Promise<void> {
+    if (entry.taskSnapshotTimer !== undefined) {
+      clearTimeout(entry.taskSnapshotTimer)
+      entry.taskSnapshotTimer = undefined
+    }
+    entry.taskSnapshotAt = Date.now()
+    // Snapshot persistence is best-effort: the in-memory board stays
+    // authoritative and the next change re-flushes.
+    await this.#sidecar.writeTasks(entry.sessionId, [...entry.tasks.values()]).catch(() => undefined)
   }
 
   async #completeTurn(
@@ -600,10 +945,81 @@ export class ClaudeSupervisor {
     this.#armIdleTimer(entry)
   }
 
-  /** Persist a durable activity without letting a storage failure unsettle the
-   *  in-memory turn or leak process ownership. Audit failure is best-effort. */
-  async #appendSafely(active: ActiveTurn, activity: Parameters<typeof appendClaudeActivity>[2]): Promise<void> {
-    await appendClaudeActivity(active.agent, active.cursor, activity).catch(() => undefined)
+  async #appendActivity(active: ActiveTurn, activity: ClaudeActivityInput): Promise<void> {
+    const ordinal = active.cursor.nextOrdinal++
+    await this.#sidecar.appendActivity(active.agent.id as string, {
+      ...activity,
+      turn: active.cursor.turn,
+      step: active.cursor.step,
+      ordinal,
+    })
+  }
+
+  /** Persist durable activity without letting a storage failure unsettle the
+   * in-memory turn or leak process ownership. Audit failure is best-effort. */
+  async #appendSafely(active: ActiveTurn, activity: ClaudeActivityInput): Promise<void> {
+    await this.#appendActivity(active, activity).catch(() => undefined)
+  }
+
+  /** Register one presenter-only mirror for a tool name the static preset
+   *  registry does not cover (MCP tools, newly added built-ins). Runs in the
+   *  agent scope so the mirror is visible only to this preset's sessions and
+   *  unwinds with the agent; failure keeps the generic card, never the turn. */
+  #ensureDynamicPresenter(agent: Agent, name: string): void {
+    if (CLAUDE_PRESENTER_NAMES.has(name)) return
+    let known = this.#dynamicPresenterNames.get(agent)
+    if (known === undefined) {
+      known = new Set<string>()
+      this.#dynamicPresenterNames.set(agent, known)
+    }
+    if (known.has(name)) return
+    try {
+      agent.ctx.tools.register(dynamicPresenterDefinition(name))
+      known.add(name)
+    } catch {
+      // A late or disposed agent keeps the generic card; presentation must
+      // never unsettle the Claude turn.
+    }
+  }
+
+  /** Mirror one root Claude tool call into the durable native tool channel so
+   *  the host's tool presentation renders it exactly like a DSH-executed call.
+   *  Presentation duplication is best-effort and never unsettles the turn. */
+  async #appendNativeToolCall(
+    active: ActiveTurn,
+    message: Extract<NormalizedSdkMessage, { kind: 'tool-call' }>,
+  ): Promise<void> {
+    try {
+      await active.agent.session.append('tool/call', {
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        callId: CallId(message.toolUseId),
+        name: message.toolName,
+        arguments: safeDetail(message.input) ?? '{}',
+      })
+    } catch {
+      // Presentation duplication must never unsettle the Claude turn.
+    }
+  }
+
+  async #appendNativeToolResult(
+    active: ActiveTurn,
+    message: Extract<NormalizedSdkMessage, { kind: 'tool-result' }>,
+  ): Promise<void> {
+    const text = typeof message.output === 'string' ? redactText(message.output) : safeDetail(message.output) ?? ''
+    try {
+      await active.agent.session.append('tool/result', {
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        message: createToolResultMessage({
+          callId: CallId(message.toolUseId),
+          content: [{ type: 'text', text }],
+          isError: message.isError,
+        }),
+      }, { surfaceOp: 'append' })
+    } catch {
+      // Presentation duplication must never unsettle the Claude turn.
+    }
   }
 
   async #interrupt(entry: SupervisorEntry): Promise<void> {
@@ -623,7 +1039,7 @@ export class ClaudeSupervisor {
       interruptError = error
     }
     try {
-      await appendClaudeActivity(active.agent, active.cursor, {
+      await this.#appendActivity(active, {
         kind: 'status',
         phase: 'failed',
         title: interruptError === undefined ? 'Claude Code turn cancelled' : 'Claude Code cancelled; process entry reset',
@@ -661,6 +1077,9 @@ export class ClaudeSupervisor {
     } else {
       entry.state = 'disconnected'
     }
+    const waiters = entry.initWaiters.splice(0)
+    const waiterError = error instanceof Error ? error : new Error(String(error))
+    for (const waiter of waiters) waiter(waiterError)
     this.#entries.delete(entry.sessionId)
     await this.#disposeEntry(entry)
   }

@@ -128,4 +128,17 @@ describe('Claude SDK message normalization', () => {
       detail: { type: 'future_message', value: 1 },
     }])
   })
+
+  it('downgrades a healthy rate limit status to audit-only and keeps blocking states as warnings', () => {
+    const healthy = normalizeSdkMessage(sdk({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'allowed', resetsAt: 1787042400, rateLimitType: 'five_hour', isUsingOverage: false },
+    }))
+    expect(healthy).toMatchObject([{ kind: 'status', title: 'Claude rate limit status changed' }])
+    const blocked = normalizeSdkMessage(sdk({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'blocked', rateLimitType: 'five_hour' },
+    }))
+    expect(blocked).toMatchObject([{ kind: 'warning', title: 'Claude rate limit is blocking requests' }])
+  })
 })

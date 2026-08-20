@@ -8,7 +8,28 @@ export type NormalizedSdkMessage =
   | { kind: 'thinking'; text: string; phase: 'updated' | 'completed'; parentToolUseId?: string }
   | { kind: 'tool-call'; toolUseId: string; toolName: string; input: unknown; parentToolUseId?: string }
   | { kind: 'tool-result'; toolUseId: string; output: unknown; isError: boolean; parentToolUseId?: string }
-  | { kind: 'subagent'; title: string; summary?: string; detail?: unknown; phase: 'started' | 'updated' | 'completed' | 'failed' }
+  | {
+    kind: 'subagent'
+    title: string
+    summary?: string
+    detail?: unknown
+    phase: 'started' | 'updated' | 'completed' | 'failed'
+    /** Structured task-board fields for task_started/progress/updated/notification. */
+    taskId?: string
+    taskStatus?: 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
+    description?: string
+    subagentType?: string
+    taskType?: string
+    lastToolName?: string
+    usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }
+    /** Ambient/housekeeping task: hide from chat rows, keep on the task board. */
+    skipTranscript?: boolean
+  }
+  | {
+    /** Level signal: full live background-task set (REPLACE semantics). */
+    kind: 'background-tasks'
+    tasks: readonly { taskId: string; taskType?: string; description: string }[]
+  }
   | { kind: 'status'; title: string; summary?: string; detail?: unknown }
   | { kind: 'warning'; title: string; summary?: string; detail?: unknown }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
@@ -32,6 +53,15 @@ function contentText(content: unknown): string {
     if (block?.type === 'text') return string(block.text) ?? ''
     return ''
   }).join('')
+}
+
+function taskUsageOf(usage: Record<string, unknown> | undefined): { totalTokens?: number; toolUses?: number; durationMs?: number } | undefined {
+  if (usage === undefined) return undefined
+  const normalized: { totalTokens?: number; toolUses?: number; durationMs?: number } = {}
+  if (typeof usage.total_tokens === 'number') normalized.totalTokens = usage.total_tokens
+  if (typeof usage.tool_uses === 'number') normalized.toolUses = usage.tool_uses
+  if (typeof usage.duration_ms === 'number') normalized.durationMs = usage.duration_ms
+  return Object.keys(normalized).length === 0 ? undefined : normalized
 }
 
 function resultUsage(message: Record<string, unknown>): ClaudeUsage {
@@ -132,28 +162,104 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     }
   }
   if (subtype === 'task_started') {
+    const taskId = string(message.task_id)
+    const description = string(message.description)
+    const subagentType = string(message.subagent_type)
+    const taskType = string(message.task_type)
     return [{
       kind: 'subagent',
-      title: string(message.description) ?? string(message.task_id) ?? 'Claude subagent started',
+      title: description ?? taskId ?? 'Claude subagent started',
       phase: 'started',
       detail: message,
+      ...(taskId === undefined ? {} : { taskId }),
+      taskStatus: 'running' as const,
+      ...(description === undefined ? {} : { description }),
+      ...(subagentType === undefined ? {} : { subagentType }),
+      ...(taskType === undefined ? {} : { taskType }),
+      ...(message.skip_transcript === true ? { skipTranscript: true } : {}),
     }]
   }
-  if (subtype === 'task_progress' || subtype === 'task_updated') {
+  if (subtype === 'task_progress') {
+    const taskId = string(message.task_id)
+    const description = string(message.description)
+    const summary = string(message.summary)
+    const subagentType = string(message.subagent_type)
+    const lastToolName = string(message.last_tool_name)
+    const usage = taskUsageOf(record(message.usage))
     return [{
       kind: 'subagent',
-      title: string(message.summary) ?? string(message.description) ?? 'Claude subagent update',
+      title: summary ?? description ?? 'Claude subagent update',
       phase: 'updated',
       detail: message,
+      ...(taskId === undefined ? {} : { taskId }),
+      taskStatus: 'running' as const,
+      ...(description === undefined ? {} : { description }),
+      ...(subagentType === undefined ? {} : { subagentType }),
+      ...(lastToolName === undefined ? {} : { lastToolName }),
+      ...(summary === undefined ? {} : { summary }),
+      ...(usage === undefined ? {} : { usage }),
+    }]
+  }
+  if (subtype === 'task_updated') {
+    const patch = record(message.patch)
+    const status = string(patch?.status)
+    const taskId = string(message.task_id)
+    const description = string(patch?.description)
+    const error = string(patch?.error)
+    const taskStatus = status === undefined
+      ? undefined
+      : status === 'killed'
+        ? 'killed' as const
+        : status === 'completed'
+          ? 'completed' as const
+          : status === 'failed'
+            ? 'failed' as const
+            : 'running' as const
+    return [{
+      kind: 'subagent',
+      title: description ?? 'Claude subagent update',
+      phase: status === 'failed' || status === 'killed' ? 'failed' : status === 'completed' ? 'completed' : 'updated',
+      detail: message,
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(taskStatus === undefined ? {} : { taskStatus }),
+      ...(description === undefined ? {} : { description }),
+      ...(error === undefined ? {} : { summary: error }),
     }]
   }
   if (subtype === 'task_notification') {
-    const phase = message.status === 'failed' ? 'failed' : message.status === 'stopped' || message.status === 'cancelled' ? 'failed' : 'completed'
+    const failed = message.status === 'failed'
+    const stopped = message.status === 'stopped' || message.status === 'cancelled'
+    const taskId = string(message.task_id)
+    const summary = string(message.summary)
+    const taskStatus = failed ? 'failed' as const : stopped ? 'stopped' as const : 'completed' as const
+    const usage = taskUsageOf(record(message.usage))
     return [{
       kind: 'subagent',
-      title: string(message.summary) ?? string(message.task_id) ?? 'Claude subagent finished',
-      phase,
+      title: summary ?? taskId ?? 'Claude subagent finished',
+      phase: failed || stopped ? 'failed' : 'completed',
       detail: message,
+      ...(taskId === undefined ? {} : { taskId }),
+      taskStatus,
+      ...(summary === undefined ? {} : { summary }),
+      ...(usage === undefined ? {} : { usage }),
+    }]
+  }
+  if (subtype === 'background_tasks_changed') {
+    const tasks = Array.isArray(message.tasks) ? message.tasks : []
+    return [{
+      kind: 'background-tasks',
+      tasks: tasks.flatMap(item => {
+        const entry = record(item)
+        const taskId = string(entry?.task_id)
+        const description = string(entry?.description)
+        const taskType = string(entry?.task_type)
+        if (taskId === undefined || description === undefined) return []
+        return [{
+          taskId,
+          description,
+          ...(taskType === undefined ? {} : { taskType }),
+        }]
+      }),
     }]
   }
   if (subtype === 'api_retry') {
@@ -252,7 +358,16 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
     }]
   }
   if (value.type === 'rate_limit_event') {
-    return [{ kind: 'warning', title: 'Claude rate limit status changed', detail: value.rate_limit_info }]
+    // The CLI pushes subscription-quota status after API activity. Only a
+    // non-allowed state is a real warning; healthy updates stay audit-only.
+    const info = record(value.rate_limit_info)
+    const status = string(info?.status)
+    const blocking = status !== undefined && status !== 'allowed'
+    return [{
+      kind: blocking ? 'warning' : 'status',
+      title: blocking ? 'Claude rate limit is blocking requests' : 'Claude rate limit status changed',
+      detail: value.rate_limit_info,
+    }]
   }
   return [{ kind: 'unknown', title: `Unknown Claude SDK message: ${String(value.type)}`, detail: value }]
 }

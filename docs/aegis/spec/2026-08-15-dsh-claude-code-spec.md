@@ -1,6 +1,6 @@
 # dsh-claude-code Product and Architecture Spec
 
-Status: approved design baseline with implementation discovery amendments
+Status: implemented baseline with sidecar persistence amendment
 Date: 2026-08-15
 
 ## 1. Product / Requirement Baseline
@@ -41,7 +41,7 @@ Ship an out-of-tree DSH bundle named `dsh-claude-code` that adds a `Claude Code 
 - Switching a non-empty conversation between native DSH and Claude Code presets.
 - Windows or Linux verification.
 - DSH attachments/images forwarded into Claude Code.
-- Background-agent continuation after the top-level Claude result.
+- Plugin-owned background-agent execution or continuation after the top-level Claude result. Claude Code may continue Claude-owned tasks; the plugin only observes and presents their SDK lifecycle.
 - Publishing to npm before local installation and compatibility validation pass.
 - Modifying DeepSeek Harness core APIs.
 
@@ -60,10 +60,11 @@ This is an agent bridge at the LLM seam, not a claim that Claude Code is a state
 | DSH conversation identity, turn boundaries, standard assistant text | DSH session and native agent loop |
 | Claude context, internal agent loop, tool selection/execution | Claude Code CLI |
 | Local Claude auth, settings, CLAUDE.md, Skills, Hooks, Plugins, MCP | Existing Claude Code installation and `~/.claude` |
-| Claude process lifetime and cancellation | Plugin process supervisor over DSH managed subprocess |
+| Claude process lifetime and whole-turn cancellation | Plugin process supervisor over DSH managed subprocess |
+| Claude background task execution and per-task lifecycle | Claude Code CLI; plugin observes SDK lifecycle only |
 | Tool permission decision UI and audit | DSH approval service |
-| Claude-to-DSH session binding | Plugin-owned durable DSH event |
-| Claude internal activity presentation | Plugin-owned durable events and client projection |
+| Claude-to-DSH session binding | Plugin-owned sidecar keyed by DSH session id |
+| Claude internal activity presentation | Redacted sidecar data exposed through a trusted Host projection |
 
 ### 2.3 Agent SDK amendment
 
@@ -75,8 +76,9 @@ Required SDK options include:
 - `systemPrompt: { type: 'preset', preset: 'claude_code' }`
 - `settingSources: ['user', 'project', 'local']`
 - `includePartialMessages: true`
-- `permissionMode: 'default'`
-- `canUseTool`: DSH approval bridge
+- `permissionMode`: mapped from the session's durable DSH sandbox mode (`read-only` → `plan`, `workspace-write` → `acceptEdits`, `danger-full-access` → `bypassPermissions`)
+- `allowDangerouslySkipPermissions: true`: enables the explicitly confirmed DSH Full access mapping without activating it in other modes
+- `canUseTool`: DSH approval bridge for modes where Claude still requests approval
 - `cwd`: immutable DSH session cwd
 - `resume`: persisted Claude session id when present
 - explicit model only when the selected alias is not `default`
@@ -86,7 +88,7 @@ The version initially pinned for development is `@anthropic-ai/claude-agent-sdk@
 
 ### 2.4 Sandbox boundary amendment
 
-The plugin reuses the DSH permission UI and maps DSH permission policy into Claude permission behavior, but v0.1 does not claim kernel-level workspace confinement.
+The plugin reuses the DSH permission UI and maps its three durable sandbox modes into Claude permission behavior, but v0.1 does not claim kernel-level workspace confinement.
 
 Reason: DSH's current process sandbox permits writes only to the workspace and temporary roots, while full Claude Code semantics and durable resume require writes under `~/.claude`. The public sandbox contract has no additional technical-state-root vocabulary. Silently bypassing `~/.claude`, copying credentials, or widening the workspace root would each violate a more important boundary.
 
@@ -131,8 +133,9 @@ The supervisor is keyed by DSH session id and owns at most one live query/proces
 
 Responsibilities:
 
-- lazy start on first bridged request
+- lazy start on the first bridged turn or metadata request (command discovery/context usage)
 - maintain a streaming-input Claude query while the DSH session is active
+- expose serialized, non-turn metadata reads for the current command catalog and context usage
 - serialize one active DSH request per session
 - record the Claude session id from initialization/result messages
 - route SDK messages to the active request
@@ -167,88 +170,55 @@ Map Claude partial output to DSH `StreamChunk`:
 
 Claude internal tool calls are not emitted as DSH `tool-call` chunks.
 
-### 3.5 Durable plugin events
+### 3.5 Plugin-owned sidecar
 
-Register runtime event vocabulary in the running Host entrypoint's `KNOWN_SESSION_EVENT_TYPES` singleton. A linked checkout may carry its own DSH development packages; mutating that checkout-local module is insufficient because Host persistence validates logs with its own module instance.
+DSH session logs contain only DSH-supported event types. The plugin must not mutate `KNOWN_SESSION_EVENT_TYPES` or append `claude-code/*` events: Desktop validates persisted vocabulary before plugin activation, so runtime registration cannot make custom events cold-load compatible.
 
-`claude-code/session-bound`:
+The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude-code/sessions`. It stores the Claude resume binding, ordered activity records, latest aggregate context usage, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated.
 
-```ts
-interface ClaudeSessionBoundEvent {
-  claudeSessionId: string
-  cliVersion?: string
-  sdkVersion: string
-  cwd: string
-}
-```
+Each DSH turn maps to exactly one Claude turn. Sidecar activities retain `turn`, `step`, and `ordinal` so the Client can place them immediately before the corresponding standard Claude assistant message in the chat flow. SDK `total_cost_usd` is cumulative across streaming-input turns and is retained as the latest cumulative value rather than summed.
 
-`claude-code/activity`:
+The SDK `getContextUsage()` response remains authoritative. Persist only aggregate category counts and model/window figures; memory-file paths, MCP tool names, system-prompt section text, configuration content, and grid rendering data are excluded. All sidecar payloads are bounded and secret-aware: environment maps, credential-shaped keys, and known token fields are redacted before persistence.
 
-Each DSH turn maps to exactly one Claude turn: the adapter performs one `runTurn` per DSH step, Claude owns its internal tool loop, and auxiliary DSH model calls (compaction, session title) are rejected at the adapter boundary. The `ordinal` therefore restarts at zero per DSH step, and because a turn has exactly one Claude-emitting step, ordinal zero occurs exactly once per turn — the turn-keyed client projection has no multi-step collision.
+For migration only, readable historical `claude-code/session-bound`, `claude-code/activity`, `claude-code/context-usage`, and `claude-code/tasks` events are imported idempotently into an absent or incomplete sidecar. They are decode-only legacy formats and are never appended by current runtime code.
 
-```ts
-type ClaudeActivityEvent = {
-  turn: number
-  step: number
-  ordinal: number
-  kind:
-    | 'status'
-    | 'thinking'
-    | 'tool-call'
-    | 'tool-result'
-    | 'permission'
-    | 'subagent'
-    | 'usage'
-    | 'warning'
-    | 'error'
-  phase?: 'started' | 'updated' | 'completed' | 'denied' | 'failed'
-  toolUseId?: string
-  toolName?: string
-  title?: string
-  summary?: string
-  detail?: string
-  isError?: boolean
-  usage?: {
-    inputTokens?: number
-    outputTokens?: number
-    cacheReadTokens?: number
-    cacheCreationTokens?: number
-    /** SDK `total_cost_usd` is cumulative across streaming-input turns; retain
-     *  the latest value rather than summing across results. */
-    cumulativeCostUsd?: number
-  }
-}
-```
+### 3.6 Claude command bridge
 
-Payloads must be lossless JSON, bounded, and secret-aware. Input/output detail is truncated before persistence. Environment maps, credential-shaped keys, and known token fields are redacted rather than truncated.
+For agents composed with the Claude preset, initialize the owned Query on the first metadata or turn request and read its authoritative `supportedCommands()` catalog. Reconcile per-agent DSH command registrations whenever the catalog is first loaded or refreshed.
+
+- A non-conflicting Claude command keeps its native name and argument hint.
+- Existing effective DSH commands remain authoritative. A colliding Claude command is exposed as `claude-<name>`; a further collision fails that entry loud rather than replacing another owner.
+- Claude aliases follow the same rules and never replace DSH commands.
+- A registered handler does not drive the Query directly. It creates a user-sourced DSH follow-up containing the exact Claude slash-command line, so the ordinary DSH turn, status, cancellation, persistence, approval, and adapter path remain the sole execution owner.
+- Invalid command names are excluded with a bounded diagnostic; command metadata is never treated as trusted HTML.
+- Catalog discovery failure is non-fatal to ordinary prompts and is retried on the next metadata refresh.
+
+The plugin may provide a plugin-owned context refresh command, but must not shadow an existing DSH command. Claude commands that are local-only or produce no assistant text still complete through the ordinary turn boundary without synthesizing model output.
 
 ## 4. Permission Contract
 
 `canUseTool(toolName, input, context)` performs:
 
-1. append permission-pending activity with a stable tool-use id
+1. write permission-pending sidecar activity with a stable tool-use id
 2. derive a bounded human-readable reason and activity detail
 3. call `ctx.approval.request({ agent, toolName, callId?, reason, signal })`
 4. map `allowed-once` to `{ behavior: 'allow', updatedInput: input }`
 5. map rejected/cancelled/unavailable to `{ behavior: 'deny', message }`
-6. append the resulting permission activity
+6. write the resulting sidecar permission activity
 
-DSH approval policy `never` fails closed. The plugin never turns `danger-full-access` into implicit Claude `bypassPermissions`; v0.1 keeps the callback active in every DSH mode.
+The native DSH access selector remains the sole write path and its `sandbox/mode` event is the sole durable source of truth. The supervisor folds that event at Query creation and before every turn or metadata operation, mapping `read-only` to Claude `plan`, `workspace-write` to `acceptEdits`, and `danger-full-access` to `bypassPermissions`. The native UI already requires explicit risk acknowledgement before Full access.
 
-The DSH public model-call contract does not carry a session sandbox-mode signal to this adapter, so v0.1 does not infer read-only/workspace-write behavior from prompts or ambient text. Claude stays in `default` permission mode and every SDK permission callback is bridged to DSH approval. This is policy mapping, not kernel confinement.
+The plugin keeps `canUseTool` active for modes where Claude requests approval. `bypassPermissions` skips those SDK requests only after the user selects DSH Full access. A missing or invalid sandbox event fails safe to `plan`. This is Claude behavior mapping, not kernel confinement of the Claude subprocess.
 
 ## 5. Client Components
 
 ### 5.1 Conversation projection
 
-Register a `ConversationNodeDefinition` that:
+Register one session-scoped projection source through the public Client session provider. The source fetches the same-origin trusted Host endpoint immediately when its first subscriber mounts and polls every two seconds only while subscribed. It validates the response before publication, notifies only on revision changes, and aborts requests and timers when the session unmounts. Failures degrade to an empty projection and never block the conversation.
 
-- starts on the matching turn's ordinal-zero `claude-code/activity`
-- consumes later `claude-code/activity` events for that turn
-- declares Definition kind `claudeCode` and publishes turn data under the same owned key, as required by the client runtime contract
-- emits no independent chat node
+The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, context usage, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
 
-Register a `conversation.chat.turnTail` chain entry whose selector claims only turns with Claude activity. The component renders an ordered collapsible activity list beneath the closing assistant message.
+A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude-code-cli`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail can show an accurate running-task launcher; tasks observed without an active turn remain available from the session header.
 
 ### 5.2 Activity card
 
@@ -264,12 +234,31 @@ The activity card shows:
 
 Do not render raw JSON by default. An expand control may show already-redacted detail. Use DSH theme tokens and existing primitive styles; no private shell modification.
 
-### 5.3 Settings and Doctor
+### 5.3 Background tasks panel
+
+Register an additive session-header utility and a matching Claude turn-tail launcher that open the same DSH details column. The panel groups the latest sidecar task snapshot into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
+
+Finished tasks may be collapsed and cleared from the mounted Client view. Clear is deliberately local presentation state: it does not mutate or falsify the canonical sidecar snapshot, and a newly observed settled task remains visible. “View activity” filters only already-redacted sidecar activity by the bounded task id; it never reads Claude transcript paths or exposes the resume identity.
+
+The pinned Agent SDK and DSH public session face expose whole-turn interruption only. The panel must not present a per-task Stop control. Whole-turn cancellation remains the native DSH composer Stop action.
+
+### 5.4 Context meter
+
+Register an additive `conversation.input.right` entry so the meter appears between the model selector and send button without replacing the native composer. Its compact trigger is a circular percentage indicator. Activating it opens a theme-token-based panel showing:
+
+- used percentage
+- total tokens and context-window maximum
+- a segmented category bar
+- category rows for the aggregate SDK categories
+
+The session-owned sidecar projection supplies the latest context sample, so refresh and Host restart preserve the last known meter. Refresh usage after Query initialization and after each completed Claude turn. While no sample exists, render nothing; metadata or projection failure must not block prompting. The component must not display excluded paths, tool identities, prompt content, or secrets.
+
+### 5.5 Settings and Doctor
 
 Add a settings section with:
 
 - executable path
-- default model alias (`default`, `sonnet`, `opus`, `haiku`)
+- default model alias (`default`, `opus[1m]`, `fable`, `sonnet`, `haiku`)
 - idle timeout
 - maximum live processes
 - redacted Doctor output and rerun action
@@ -287,7 +276,7 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 | permission answer unavailable | deny action and continue Claude turn where possible |
 | user cancels | call query interrupt, then terminate tree if not quiescent |
 | process exits while idle | mark disconnected; resume on next prompt |
-| process exits mid-turn after activity | append outcome-unknown error; never replay prompt automatically |
+| process exits mid-turn after activity | persist a sidecar outcome-unknown error; never replay prompt automatically |
 | persisted Claude session missing | fail explicitly with option to start a new DSH conversation; no silent context reset |
 | process limit reached | evict least-recently-idle entry, otherwise fail with active-session count |
 | plugin unload | terminate and await all owned trees |
@@ -297,7 +286,8 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 - Target installed DSH `0.1.0-rc.5` public package surfaces.
 - Keep peer dependency ranges broad enough for compatible rc updates but test against the installed host.
 - Never import DSH internal source paths or copy `dsh-agent-loop` implementation.
-- Use public session event extension, agent request waterfall, LLM adapter, subprocess, approval, client conversation projection, and slot APIs.
+- Use public agent request waterfall, LLM adapter, subprocess, approval, Web prefix route, per-agent command registry, session provider, client conversation projection, and additive input-slot APIs.
+- Never depend on runtime mutation of DSH's persisted event vocabulary.
 - A DSH upgrade that removes any required public seam must fail at plugin activation with a named compatibility diagnostic.
 
 ## 8. Verification and Acceptance
@@ -308,11 +298,14 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 - prompt extraction and unsupported-input failures
 - stream mapping without duplicate text
 - activity normalization, truncation, and redaction
-- session-binding fold and resume selection
+- sidecar binding persistence, legacy-event import, and resume selection
 - permission allow/deny/cancel/unavailable mapping
 - process supervisor serialization, cancellation, idle eviction, process cap, crash classification, and disposal
 - SDK message fixtures for init, partial text, tool use/result, permission, usage, success, failure, and malformed input
-- client conversation projection and selector
+- command catalog reconciliation, aliases, DSH-name collision prefixing, follow-up delivery, and disposal
+- context-usage normalization, safe-field sidecar persistence, latest-sample projection, and meter rendering
+- trusted projection route, Client initial load/polling/cleanup/failure degradation, per-step chat-node ordering, and task-launcher turn-tail selectors
+- Desktop cold-load of a newly produced session with no `claude-code/*` events
 - typecheck Host and Client builds
 - bundle build and package contents check
 
@@ -328,6 +321,9 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 - refresh the page and continue the same live session
 - restart DSH and resume the persisted Claude session
 - idle-evict and resume
+- type `/` and verify Claude Skills/Commands are discoverable with DSH collisions prefixed
+- execute one Claude Skill and confirm it runs as an ordinary DSH turn with activity and approval behavior intact
+- verify the context meter beside model selection initializes, updates after a turn, opens its aggregate breakdown, and survives refresh
 - run Doctor with the detected `~/.local/bin/claude` path
 
 ### 8.3 Completion evidence
