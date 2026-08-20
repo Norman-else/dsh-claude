@@ -10,13 +10,37 @@ if (unknownArguments.length > 0) {
   throw new Error(`Unknown argument: ${unknownArguments.join(', ')}`)
 }
 
+const WINDOWS_COMMAND_SHIMS = new Set(['npm', 'pnpm', 'npx'])
+
+function windowsCommandLine(command, args) {
+  for (const value of args) {
+    if (/["%&|<>^!()\r\n]/u.test(value)) {
+      throw new Error(`Unsafe Windows command argument: ${value}`)
+    }
+  }
+  return [`${command}.cmd`, ...args.map(value => `"${value}"`)].join(' ')
+}
+
+function spawnCommand(command, args) {
+  if (process.platform !== 'win32' || !WINDOWS_COMMAND_SHIMS.has(command)) {
+    return { file: command, args }
+  }
+  return {
+    file: process.env.ComSpec ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', windowsCommandLine(command, args)],
+  }
+}
+
 function run(command, args, options = {}) {
   const display = [command, ...args].join(' ')
   console.log(`> ${display}`)
-  const result = spawnSync(command, args, {
+  const invocation = spawnCommand(command, args)
+  const result = spawnSync(invocation.file, invocation.args, {
     cwd: process.cwd(),
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
+    windowsHide: true,
+    windowsVerbatimArguments: process.platform === 'win32' && WINDOWS_COMMAND_SHIMS.has(command),
   })
   if (result.error !== undefined) throw result.error
   if (options.allowFailure === true) return result

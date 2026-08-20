@@ -156,6 +156,29 @@ describe('Claude sidecar conversation projection', () => {
     ], 2, 1)).toEqual([expect.objectContaining({ activity: taskCall })])
   })
 
+  it('folds task lifecycle messages sharing a taskId into one settled row', () => {
+    const started: ClaudeActivityEvent = {
+      turn: 2,
+      step: 1,
+      ordinal: 5,
+      kind: 'subagent',
+      phase: 'started',
+      taskId: 'background-1',
+      title: 'Inspect files',
+    }
+    const completed: ClaudeActivityEvent = {
+      ...started,
+      ordinal: 6,
+      phase: 'completed',
+      summary: 'Inspect files',
+    }
+
+    expect(activityRowsForStep([started, completed], 2, 1)).toEqual([expect.objectContaining({
+      running: false,
+      activity: expect.objectContaining({ taskId: 'background-1', phase: 'completed' }),
+    })])
+  })
+
   it('settles historical task progress from the authoritative task snapshot', () => {
     const progress: ClaudeActivityEvent = {
       turn: 2,

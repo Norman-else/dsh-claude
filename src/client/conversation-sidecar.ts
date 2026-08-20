@@ -102,6 +102,7 @@ function activityRows(
     let id: string
     if ((isTaskActivity(value) || updatesExistingTask) && existingTaskId !== undefined) id = existingTaskId
     else if (value.kind === 'subagent' && value.parentToolUseId !== undefined) id = `task-${value.parentToolUseId}`
+    else if (value.kind === 'subagent' && value.taskId !== undefined) id = `subagent-task-${value.taskId}`
     else if (value.kind === 'subagent' && value.toolUseId !== undefined) id = `call-${value.toolUseId}`
     else id = `act-${value.turn}-${value.step}-${value.ordinal}`
     const index = byId.get(id)
