@@ -381,9 +381,15 @@ export const tasksTurnLauncherDot: CSSProperties = {
   fontSize: 9,
 }
 
-export const tasksTriggerHoverCss = '.dsh-claude-tasks-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}'
+export const tasksTriggerHoverCss = [
+  '.dsh-claude-tasks-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
+  '.dsh-claude-tasks-trigger:focus:not(:focus-visible){outline:none;border-color:var(--dsw-alias-border-l2)}',
+  '.dsh-claude-tasks-trigger[aria-pressed="true"]:focus:not(:focus-visible){border-color:var(--dsw-alias-border-l3)}',
+  '.dsh-claude-tasks-trigger>span,.dsh-claude-tasks-trigger>svg{flex:none}',
+].join('')
 
 export const tasksHeaderButton: CSSProperties = {
+  minWidth: 111,
   height: 32,
   display: 'inline-flex',
   alignItems: 'center',
@@ -392,7 +398,6 @@ export const tasksHeaderButton: CSSProperties = {
   padding: '6px 12px',
   border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: 18,
-  background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   fontFamily: 'var(--dsw-font-family)',
   fontSize: 13,

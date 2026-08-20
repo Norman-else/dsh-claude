@@ -1,9 +1,9 @@
 {
   "schemaVersion": "aegis.schema.v0",
-  "taskId": "2026-08-15-dsh-claude-code",
-  "taskIntentRef": "docs/aegis/work/2026-08-15-dsh-claude-code/task-intent-draft.json",
+  "taskId": "2026-08-15-dsh-claude",
+  "taskIntentRef": "docs/aegis/work/2026-08-15-dsh-claude/task-intent-draft.json",
   "baselineRefs": [
-    "docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md"
+    "docs/aegis/spec/2026-08-15-dsh-claude-spec.md"
   ],
   "scopeStatus": "not-yet-verified",
   "compatStatus": "not-yet-verified",

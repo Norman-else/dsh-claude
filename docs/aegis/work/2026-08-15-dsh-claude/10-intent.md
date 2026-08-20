@@ -1,4 +1,4 @@
-# Implement dsh-claude-code - Intent
+# Implement dsh-claude - Intent
 
 ## TaskIntentDraft
 
@@ -17,18 +17,18 @@
 
 ## BaselineReadSetHint
 
-- docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md
+- docs/aegis/spec/2026-08-15-dsh-claude-spec.md
 
 ## BaselineUsageDraft
 
 - Required baseline refs:
-- docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md
+- docs/aegis/spec/2026-08-15-dsh-claude-spec.md
 - Acknowledged before plan:
 - none
 - Cited in plan:
 - none
 - Missing refs:
-- docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md
+- docs/aegis/spec/2026-08-15-dsh-claude-spec.md
 - Advisory decision: needs-baseline-readback
 
 ## ImpactStatementDraft
@@ -37,7 +37,7 @@
 - Affected layers:
 - Host adapter, subprocess, approval, session events, Agent Preset, Web client
 - Owners:
-- dsh-claude-code plugin
+- dsh-claude plugin
 - Invariants:
 - Claude owns internal tools; DSH owns UI/audit/process lifecycle; native presets remain unchanged
 - Non-goals:

@@ -69,7 +69,7 @@ describe('managed spawner', () => {
         AUTHORIZATION: 'Bearer secret-three',
         COOKIE: 'session=secret-four',
         DATABASE_URL: 'postgres://user:pass@host/db',
-        CLAUDE_AGENT_SDK_CLIENT_APP: 'dsh-claude-code/0.1.0',
+        CLAUDE_AGENT_SDK_CLIENT_APP: 'dsh-claude/0.1.0',
         DSH_SESSION_ID: 'private-host-context',
       },
       signal: new AbortController().signal,
@@ -79,7 +79,7 @@ describe('managed spawner', () => {
     expect(spec?.cwd).toBe('/workspace')
     expect(spec?.env).toEqual({
       HOME: '/Users/test',
-      CLAUDE_AGENT_SDK_CLIENT_APP: 'dsh-claude-code/0.1.0',
+      CLAUDE_AGENT_SDK_CLIENT_APP: 'dsh-claude/0.1.0',
     })
   })
 

@@ -48,8 +48,8 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
     [t('version'), value(report.version.status, report.version.value ?? report.version.message)],
     [t('authentication'), value(report.authentication.status, [report.authentication.method, report.authentication.subscription].filter(Boolean).join(' · ') || report.authentication.message)],
     [t('handshake'), report.handshake],
-    [t('processes'), `${report.processes.count} total · ${report.processes.active} active`],
-    [t('limits'), `${report.limits.maxProcesses} max · ${Math.round(report.limits.idleTimeoutMs / 60_000)} min idle`],
+    [t('processes'), t('processSummary', { total: report.processes.count, active: report.processes.active })],
+    [t('limits'), t('limitSummary', { max: report.limits.maxProcesses, minutes: Math.round(report.limits.idleTimeoutMs / 60_000) })],
   ]
 
   return (

@@ -60,7 +60,7 @@ function taskMeta(task: ClaudeTaskInfo, t: ClaudeTasksPanelInjected['t']): strin
   if (task.subagentType !== undefined) parts.push(task.subagentType)
   else if (task.taskType !== undefined) parts.push(task.taskType)
   if (task.usage?.durationMs !== undefined) parts.push(formatDuration(task.usage.durationMs))
-  if (task.usage?.totalTokens !== undefined) parts.push(formatTokenCount(task.usage.totalTokens) + ' tok')
+  if (task.usage?.totalTokens !== undefined) parts.push(t('tokens', { count: formatTokenCount(task.usage.totalTokens) }))
   if (task.usage?.toolUses !== undefined) parts.push(t('tasksToolUses', { count: task.usage.toolUses }))
   if (task.lastToolName !== undefined) parts.push(t('tasksLastTool', { tool: task.lastToolName }))
   return parts
@@ -197,7 +197,17 @@ export function ClaudeTasksHeaderButton({ useClaudeProjection, t, isOpen, toggle
   if (!projection.owned) return null
   const runningCount = projection.tasks?.tasks.filter(task => task.status === 'running').length ?? 0
   return (
-    <button type="button" className="dsh-claude-tasks-trigger" style={{ ...styles.tasksHeaderButton, ...(open ? styles.tasksHeaderButtonActive : {}) }} aria-label={t('tasksOpen')} aria-pressed={open} onClick={toggle}>
+    <button
+      type="button"
+      className="dsh-claude-tasks-trigger"
+      style={{ ...styles.tasksHeaderButton, ...(open ? styles.tasksHeaderButtonActive : {}) }}
+      aria-label={t('tasksOpen')}
+      aria-pressed={open}
+      onClick={(event) => {
+        toggle()
+        event.currentTarget.blur()
+      }}
+    >
       <style>{styles.tasksTriggerHoverCss}</style>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" />

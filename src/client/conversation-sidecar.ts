@@ -4,7 +4,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo } from '../events.ts'
-import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
+import { isClaudeProvider, TASK_TOOL_NAMES } from '../constants.ts'
 
 export interface ClaudeSubcall {
   toolUseId: string
@@ -180,7 +180,7 @@ export const claudeActivityStepDefinition: ConversationNodeDefinition<ClaudeActi
   target: 'chat',
   match(event) {
     if (event.type === 'step/start') return { id: `${event.data.turn}:${event.data.step}`, role: 'start' }
-    if (event.type !== 'assistant/message' || event.data.message.source.provider !== CLAUDE_CODE_PROVIDER) return null
+    if (event.type !== 'assistant/message' || !isClaudeProvider(event.data.message.source.provider)) return null
     return { id: `${event.data.turn}:${event.data.step}`, role: 'update' }
   },
   start(_context, match) {
@@ -212,7 +212,7 @@ export const claudeTurnDefinition: ConversationNodeDefinition<ClaudeTurnProjecti
   kind: 'claudeCode',
   match(event) {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
-    if (event.type !== 'assistant/message' || event.data.message.source.provider !== CLAUDE_CODE_PROVIDER) return null
+    if (event.type !== 'assistant/message' || !isClaudeProvider(event.data.message.source.provider)) return null
     return { id: String(event.data.turn), role: 'update' }
   },
   start(_context, match) {

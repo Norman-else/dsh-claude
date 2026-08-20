@@ -31,12 +31,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const name = 'dsh-claude-code-client'
+export const name = 'dsh-claude-client'
 export const inject = ['slots', 'locale', 'conversationEvents', 'sessions']
 
 export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
-  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude-code: client copy')
+  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   const projections = new ClaudeProjectionStore()
   const sessions = ctx.get('sessions') as ISessions | undefined
@@ -44,15 +44,15 @@ export function apply(ctx: ClientContext): void {
     ctx.effect(() => sessions.provide({
       hooks: ['claudeProjection'],
       resolve: binding => ({ hooks: { claudeProjection: projections.source(binding.sessionId) } }),
-    }), 'dsh-claude-code: sidecar projection provider')
+    }), 'dsh-claude: sidecar projection provider')
   }
-  ctx.effect(() => () => projections.dispose(), 'dsh-claude-code: sidecar projection lifecycle')
-  ctx.effect(() => ctx.conversationEvents.register(claudeTurnDefinition), 'dsh-claude-code: Claude turn marker')
-  ctx.effect(() => ctx.conversationEvents.register(claudeActivityStepDefinition), 'dsh-claude-code: Claude activity flow node')
+  ctx.effect(() => () => projections.dispose(), 'dsh-claude: sidecar projection lifecycle')
+  ctx.effect(() => ctx.conversationEvents.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
+  ctx.effect(() => ctx.conversationEvents.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-activity-step',
-    locale: 'conversation',
+    locale: namespace,
   }, ClaudeActivityNode))
   const layout = ctx.get('layout') as LayoutFace | undefined
   // Conditional switching for the details column: the tasks panel registration
@@ -98,7 +98,19 @@ export function apply(ctx: ClientContext): void {
     if (tasksPanelSession === sessionId) closeTasksPanel()
     else openTasksPanel(sessionId)
   }
-  ctx.effect(() => () => closeTasksPanel(), 'dsh-claude-code: tasks panel lifecycle')
+  ctx.effect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closeTasksPanel()
+    const observer = new MutationObserver(() => {
+      if (tasksPanelSession !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
+        closeTasksPanel()
+      }
+    })
+    observer.observe(document.body, { attributes: true, attributeFilter: ['data-details-collapsed'], subtree: true })
+    return () => {
+      observer.disconnect()
+      closeTasksPanel()
+    }
+  }, 'dsh-claude: tasks panel lifecycle')
   const tasksLauncher = (sessionId: string): Omit<ClaudeTasksLauncherInjected, 't'> => ({
     isOpen: () => tasksPanelSession === sessionId,
     toggle: () => toggleTasksPanel(sessionId),
@@ -122,7 +134,7 @@ export function apply(ctx: ClientContext): void {
     // next session's native details view is not shadowed.
     ctx.effect(() => sessions.list.subscribe(() => {
       if (tasksPanelSession !== undefined && sessions.list.getSnapshot().current !== tasksPanelSession) closeTasksPanel()
-    }), 'dsh-claude-code: tasks panel session tracking')
+    }), 'dsh-claude: tasks panel session tracking')
   }
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',

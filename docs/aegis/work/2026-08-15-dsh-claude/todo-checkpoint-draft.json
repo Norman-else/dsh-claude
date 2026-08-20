@@ -1,6 +1,6 @@
 {
   "schemaVersion": "aegis.schema.v0",
-  "taskId": "2026-08-15-dsh-claude-code",
+  "taskId": "2026-08-15-dsh-claude",
   "currentTodo": "Implement DSH adapter, route, and managed preset",
   "completedTodos": [
     "Tasks 2-5: durable events, redaction, executable Doctor, managed process adapter, permission bridge, SDK message normalization, and long-lived supervisor"

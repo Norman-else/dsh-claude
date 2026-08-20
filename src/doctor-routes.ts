@@ -111,5 +111,5 @@ export function registerClaudeDoctorRoutes(
         json(res, 500, { error: safeMessage(error) })
       }
     },
-  }), 'dsh-claude-code: Doctor route')
+  }), 'dsh-claude: Doctor route')
 }

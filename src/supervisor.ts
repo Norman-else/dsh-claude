@@ -316,7 +316,7 @@ export class ClaudeSupervisor {
   }
 
   async #runTurnAdmitted(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
-    if (this.#disposed) throw new Error('dsh-claude-code: supervisor is disposed')
+    if (this.#disposed) throw new Error('dsh-claude: supervisor is disposed')
     if (signalAborted(request.signal)) throw abortFailure()
     const sessionId = request.agent.id as string
     let entry = this.#entries.get(sessionId)
@@ -332,7 +332,7 @@ export class ClaudeSupervisor {
       this.#armInitializationTimer(entry)
     }
     if (entry.ownerAgent !== request.agent) {
-      throw new Error(`dsh-claude-code: live agent identity changed for session ${sessionId}`)
+      throw new Error(`dsh-claude: live agent identity changed for session ${sessionId}`)
     }
     if (entry.active !== undefined || entry.state === 'interrupting') throw new ClaudeTurnBusyError(sessionId)
 
@@ -424,7 +424,7 @@ export class ClaudeSupervisor {
     operation: (query: Query, entry: SupervisorEntry) => Promise<T>,
   ): Promise<T> {
     const admitted = this.#admissionGate.then(async () => {
-      if (this.#disposed) throw new Error('dsh-claude-code: supervisor is disposed')
+      if (this.#disposed) throw new Error('dsh-claude: supervisor is disposed')
       const entry = await this.#metadataEntry(agent, model)
       try {
         // Control requests go out only after the CLI finishes initializing;
@@ -443,7 +443,7 @@ export class ClaudeSupervisor {
   #whenInitialized(entry: SupervisorEntry): Promise<void> {
     if (entry.initialized) return Promise.resolve()
     if (entry.state === 'disposed' || entry.state === 'disconnected' || entry.state === 'outcome-unknown') {
-      return Promise.reject(new Error(`dsh-claude-code: session ${entry.sessionId} is ${entry.state}`))
+      return Promise.reject(new Error(`dsh-claude: session ${entry.sessionId} is ${entry.state}`))
     }
     return new Promise<void>((resolve, reject) => {
       entry.initWaiters.push(error => (error === undefined ? resolve() : reject(error instanceof Error ? error : new Error(String(error)))))
@@ -465,7 +465,7 @@ export class ClaudeSupervisor {
       this.#armInitializationTimer(entry)
     }
     if (entry.ownerAgent !== agent) {
-      throw new Error(`dsh-claude-code: live agent identity changed for session ${sessionId}`)
+      throw new Error(`dsh-claude: live agent identity changed for session ${sessionId}`)
     }
     if (entry.active !== undefined || entry.state === 'interrupting') throw new ClaudeTurnBusyError(sessionId)
     if (entry.idleTimer !== undefined) {

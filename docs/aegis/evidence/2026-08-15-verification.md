@@ -1,4 +1,4 @@
-# dsh-claude-code verification evidence
+# dsh-claude verification evidence
 
 Date: 2026-08-15
 
@@ -7,7 +7,7 @@ Date: 2026-08-15
 - `pnpm typecheck`: passed for Host and Client TypeScript projects.
 - `pnpm test`: 10 files, 62 tests passed.
 - `pnpm build`: Host, preset route, CLI, and browser artifacts emitted under `lib/` without errors.
-- `pnpm pack --pack-destination ./dist-pack`: produced `dist-pack/dsh-claude-code-0.1.0.tgz` with the declared Host/Client/CLI/preset artifacts.
+- `pnpm pack --pack-destination ./dist-pack`: produced `dist-pack/dsh-claude-0.1.0.tgz` with the declared Host/Client/CLI/preset artifacts.
 
 Covered boundaries include event vocabulary and bounds, recursive/key and inline-string credential redaction, executable resolution and safe Doctor parsing, exact SDK executable enforcement, sensitive/DSH environment scrubbing, process exit/tree termination mapping, approval allow-once/fail-closed mapping, SDK message normalization, stream chunk ordering, no outer DSH tool calls, per-session query reuse, cancellation before and after submission, outcome-unknown crash classification, LRU process eviction, concurrent no-clobber preset installation, client event projection/rendering, preset route scoping, and Doctor privacy/authorization.
 
@@ -26,9 +26,9 @@ All release-blocking findings were resolved: client bundle format, durable crede
 
 ## DSH profile integration
 
-- Official DSH plugin command linked `dsh-claude-code` into the existing `web` profile successfully.
-- `dsh --profile web --dump-config` composed an `llm-claude-code-cli` row with `name: dsh-claude-code`.
-- `node lib/bin.mjs install-preset` installed `$DSH_HOME/.agent-presets/claude-code-cli/{agent.cordis.yml,preset.yml}`; both files match the package-managed sources.
+- Official DSH plugin command linked `dsh-claude` into the existing `web` profile successfully.
+- `dsh --profile web --dump-config` composed an `llm-claude` row with `name: dsh-claude`.
+- `node lib/bin.mjs install-preset` installed `$DSH_HOME/.agent-presets/claude/{agent.cordis.yml,preset.yml}`; both files match the package-managed sources.
 - The current Host process at `http://127.0.0.1:56454` started before the profile link, so its Doctor route remains 404 until that Host is restarted. No replacement Web server was started.
 
 ## Remaining live checks

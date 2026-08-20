@@ -93,7 +93,7 @@ async function main(): Promise<number> {
     process.stdout.write(`${await removeManagedPreset()}\n`)
     return 0
   }
-  process.stderr.write(`Usage: dsh-claude-code [doctor [--executable PATH] | install-preset | remove-preset]\n`)
+  process.stderr.write(`Usage: dsh-claude [doctor [--executable PATH] | install-preset | remove-preset]\n`)
   return 2
 }
 

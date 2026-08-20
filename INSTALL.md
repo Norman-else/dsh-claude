@@ -1,11 +1,11 @@
 # Agent Installation Runbook
 
-This runbook is idempotent for the checkout at `/Users/normanzuo/PersonalRepos/dsh-claude-code` and the existing DSH `web` profile.
+This runbook is idempotent for a local `dsh-claude` checkout and an existing DSH `web` profile.
 
 ## 1. Verify the checkout
 
 ```sh
-cd /Users/normanzuo/PersonalRepos/dsh-claude-code
+cd /path/to/dsh-claude
 export PATH="/opt/homebrew/bin:$PATH"
 pnpm install
 pnpm check
@@ -27,8 +27,7 @@ Expected output is `installed` on first run or `unchanged` on later runs. A conf
 ## 3. Link the bundle into the current Web profile
 
 ```sh
-node "/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js" \
-  plugin --profile web add "link:/Users/normanzuo/PersonalRepos/dsh-claude-code"
+dsh plugin --profile web add "link:$(pwd)"
 ```
 
 Do not start another DSH Web server. This bundle must load in the existing app at `http://127.0.0.1:56454`.
@@ -36,9 +35,9 @@ Do not start another DSH Web server. This bundle must load in the existing app a
 ## 4. Refresh and smoke test
 
 1. Refresh the existing DSH Web page.
-2. Confirm **Claude Code** appears in the new-session Agent Preset picker.
+2. Confirm **Claude** appears in the new-session Agent Preset picker.
 3. Run one existing native preset prompt and verify it remains native.
-4. Create a Claude Code session and send a read-only prompt.
+4. Create a Claude session and send a read-only prompt.
 5. Send one edit prompt; verify DSH displays a permission request. Exercise reject first, then allow once with a harmless temporary file.
 6. Cancel a running prompt and confirm the cancelled session owns no child `claude` process that is still executing cancelled work or left orphaned/unowned.
 7. Refresh the browser and continue the session.
@@ -51,10 +50,9 @@ A live prompt can consume the user's Claude subscription. Keep it minimal.
 Run before removing the link:
 
 ```sh
-cd /Users/normanzuo/PersonalRepos/dsh-claude-code
+cd /path/to/dsh-claude
 node lib/bin.mjs remove-preset
-node "/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js" \
-  plugin --profile web remove dsh-claude-code
+dsh plugin --profile web remove @norman-else/dsh-claude
 ```
 
 The remover refuses to delete any user-modified preset file.

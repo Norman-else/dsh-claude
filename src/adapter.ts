@@ -10,7 +10,7 @@ import {
   type TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, isClaudePresetId } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
 
@@ -35,7 +35,7 @@ const THINKING_MODES = [
 export function thinkingModeFor(effort: ReasoningEffortId | undefined): ClaudeThinkingMode | undefined {
   if (effort === undefined) return undefined
   if (THINKING_MODES.some(mode => mode.id === (effort as string))) return effort as unknown as ClaudeThinkingMode
-  throw new Error(`dsh-claude-code: unsupported reasoning effort ${JSON.stringify(effort)}`)
+  throw new Error(`dsh-claude: unsupported reasoning effort ${JSON.stringify(effort)}`)
 }
 
 const NO_RETRY_POLICY: ResolvedRetryPolicy = Object.freeze({
@@ -58,10 +58,10 @@ export function extractDirectUserText(messages: GenerateOptions['messages']): st
       .trim()
     if (text.length > 0) return text
     if (message.content.some(block => block.type === 'image')) {
-      throw new Error('dsh-claude-code: image-only prompts are not supported in v0.1; include a text prompt')
+      throw new Error('dsh-claude: image-only prompts are not supported in v0.1; include a text prompt')
     }
   }
-  throw new Error('dsh-claude-code: no direct human text was present in this model step')
+  throw new Error('dsh-claude: no direct human text was present in this model step')
 }
 
 function tokenUsage(usage: ClaudeUsage): TokenUsage {
@@ -81,7 +81,7 @@ function resolveAgent(agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>, o
     const agent = agents.get(options.sessionId)
     if (agent !== undefined) return agent
   }
-  throw new Error('dsh-claude-code: the model request has no live owning DSH agent')
+  throw new Error('dsh-claude: the model request has no live owning DSH agent')
 }
 
 export class ClaudeCodeAdapter extends LlmAdapter {
@@ -141,11 +141,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (options.purpose !== undefined) {
-      throw new Error(`dsh-claude-code: auxiliary ${options.purpose} calls are not routed into the Claude session`)
+      throw new Error(`dsh-claude: auxiliary ${options.purpose} calls are not routed into the Claude session`)
     }
     const agent = resolveAgent(this.#agents, options)
-    if (this.#presetIdFor(agent) !== CLAUDE_CODE_PRESET_ID) {
-      throw new Error(`dsh-claude-code: provider ${CLAUDE_CODE_PROVIDER} is available only to the ${CLAUDE_CODE_PRESET_ID} preset`)
+    if (!isClaudePresetId(this.#presetIdFor(agent))) {
+      throw new Error(`dsh-claude: provider ${CLAUDE_CODE_PROVIDER} is available only to the ${CLAUDE_CODE_PRESET_ID} preset`)
     }
     const thinkingMode = thinkingModeFor(options.reasoningEffort)
     const prompt = extractDirectUserText(options.messages)
@@ -199,7 +199,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       throw error
     }
-    if (!completed) throw new Error('dsh-claude-code: Claude turn stream ended without a result')
+    if (!completed) throw new Error('dsh-claude: Claude turn stream ended without a result')
   }
 }
 

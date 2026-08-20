@@ -1,4 +1,4 @@
-# Managed by dsh-claude-code. Do not edit; copy this preset under a new id to customize it.
-name: Claude Code
+# Managed by dsh-claude. Do not edit; copy this preset under a new id to customize it.
+name: Claude
 description: Use the local Claude Code as the complete agent runtime inside DSH.
 order: 10

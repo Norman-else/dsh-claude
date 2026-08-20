@@ -1,16 +1,16 @@
-# Implement dsh-claude-code - Evidence
+# Implement dsh-claude - Evidence
 
 ## 2026-08-15 Final
 
 - `pnpm typecheck`: passed for Host and Client TypeScript projects.
 - `pnpm test`: 10 files, 62 tests passed.
 - `pnpm build`: Host, preset route, CLI, and browser artifacts emitted under `lib/` without errors.
-- `pnpm pack --pack-destination ./dist-pack`: produced `dist-pack/dsh-claude-code-0.1.0.tgz`.
+- `pnpm pack --pack-destination ./dist-pack`: produced `dist-pack/dsh-claude-0.1.0.tgz`.
 - Independent security and runtime reviews integrated; all release-blocking findings resolved.
 - CLI Doctor resolved local Claude 2.1.233 and reported only coarse auth category.
 - Live Agent SDK handshake with explicit local executable succeeded (init + result + usage).
-- Profile link succeeded; composed Web profile includes `llm-claude-code-cli`.
-- Managed preset installed at `$DSH_HOME/.agent-presets/claude-code-cli/`.
+- Profile link succeeded; composed Web profile includes `llm-claude`.
+- Managed preset installed at `$DSH_HOME/.agent-presets/claude/`.
 - Existing Host at `http://127.0.0.1:56454` predates profile link; Doctor route 404 until Host restart.
 
 ## Remaining live checks

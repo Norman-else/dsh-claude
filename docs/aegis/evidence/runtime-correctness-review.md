@@ -10,7 +10,7 @@ Review mode: advisory, findings first
 
 `tsdown.config.ts:17-23` builds the client as ordinary browser ESM. The generated `lib/client.js:1-2` begins with static `import` statements instead of registering a factory through `window.__ModuleLoader__.load({ id, factory })`.
 
-The installed DSH rc.5 client-module contract requires that registration handoff (`/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh-client-modules/lib/types/client/manifest.d.ts:9-16,100-118`). A working installed third-party bundle uses it at `/Users/normanzuo/.dsh/profiles/web/node_modules/dsh-codex/lib/client.js:1-8`.
+The installed DSH rc.5 client-module contract requires that registration handoff (`/Applications/DeepSeek Harness.app/Contents/Resources/host/node_modules/@deepseek-ai/dsh-client-modules/lib/types/client/manifest.d.ts:9-16,100-118`). A working installed third-party bundle uses the same loader contract under `$DSH_HOME/profiles/web/node_modules/`.
 
 Impact: the activity projection, activity card, and Settings/Doctor UI cannot register from the packaged artifact even though their TypeScript and component tests pass.
 
@@ -112,7 +112,7 @@ The `agent/disposed` listener at `src/index.ts:58-60` discards `disposeSession()
 
 ### 17. Usage/accounting has a durable-schema and completeness mismatch
 
-`src/sdk-messages.ts:36-46` combines per-turn main-agent-only `usage` with the SDK's cumulative `total_cost_usd`, omits cumulative `modelUsage` for subagents/internal calls, and exposes the renamed `cumulativeCostUsd` field. The authoritative durable schema still specifies `costUsd` at `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md:209-215`.
+`src/sdk-messages.ts:36-46` combines per-turn main-agent-only `usage` with the SDK's cumulative `total_cost_usd`, omits cumulative `modelUsage` for subagents/internal calls, and exposes the renamed `cumulativeCostUsd` field. The authoritative durable schema still specifies `costUsd` at `docs/aegis/spec/2026-08-15-dsh-claude-spec.md:209-215`.
 
 This needs an explicit schema/baseline decision and defined turn-versus-query accounting semantics, not an unrecorded persisted-schema change. The fixture covers only one result.
 
@@ -120,7 +120,7 @@ This needs an explicit schema/baseline decision and defined turn-versus-query ac
 
 All DSH development/type dependencies are rc.6 at `package.json:77-93`, while the product claims rc.5 compatibility and most peer ranges are unrestricted (`package.json:57-73`). There is no rc.5 compile/load lane.
 
-The authoritative acceptance matrix requires native-session coexistence, a live Claude turn, approval allow/deny, cancellation with no orphan, refresh/restart resume, and idle eviction/resume (`docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md:315-331`). The evidence record remains empty at `docs/aegis/work/2026-08-15-dsh-claude-code/90-evidence.md:1-3`, and the linked GUI Doctor endpoint was observed returning 404.
+The authoritative acceptance matrix requires native-session coexistence, a live Claude turn, approval allow/deny, cancellation with no orphan, refresh/restart resume, and idle eviction/resume (`docs/aegis/spec/2026-08-15-dsh-claude-spec.md:315-331`). The evidence record remains empty at `docs/aegis/work/2026-08-15-dsh-claude/90-evidence.md:1-3`, and the linked GUI Doctor endpoint was observed returning 404.
 
 Classification: **Implementation Drift / evidence insufficiency — scope: both**.
 
@@ -167,7 +167,7 @@ Latest stable review snapshot:
 - Host and Client bundles built.
 - Package contents were inspectable with `pnpm pack`.
 - The built client artifact remains ordinary ESM and therefore fails the DSH client-module handoff contract.
-- The currently linked GUI did not substantiate activation; `/plugins/dsh-claude-code/doctor` returned HTTP 404 during review.
+- The currently linked GUI did not substantiate activation; `/plugins/dsh-claude/doctor` returned HTTP 404 during review.
 
 Review-time verification regenerated/refreshed ignored `lib/` output and source-adjacent generated `.js`, `.d.ts`, and map files. No authored TypeScript/TSX, configuration, preset, or documentation source was intentionally changed by verification. Because the repository has no commit baseline and all project files are untracked, generated outputs were not reverted to avoid overwriting unknown prior state.
 

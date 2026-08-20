@@ -1,4 +1,4 @@
-# dsh-claude-code Product and Architecture Spec
+# dsh-claude Product and Architecture Spec
 
 Status: implemented baseline with sidecar persistence amendment
 Date: 2026-08-15
@@ -11,7 +11,7 @@ DeepSeek Harness (DSH) can run its native agent loop and can expose external cod
 
 ### 1.2 Goal
 
-Ship an out-of-tree DSH bundle named `dsh-claude-code` that adds a `Claude Code CLI` Agent Preset to the current Web profile. A session using that preset routes each outer DSH model step into a complete Claude Code turn driven by the user's local CLI. DSH remains the conversation UI, durable presentation mirror, permission UI, process owner, and cancellation surface.
+Ship an out-of-tree DSH bundle named `dsh-claude` that adds a `Claude Code CLI` Agent Preset to the current Web profile. A session using that preset routes each outer DSH model step into a complete Claude Code turn driven by the user's local CLI. DSH remains the conversation UI, durable presentation mirror, permission UI, process owner, and cancellation surface.
 
 ### 1.3 Required experience
 
@@ -49,7 +49,7 @@ Ship an out-of-tree DSH bundle named `dsh-claude-code` that adds a `Claude Code 
 
 ### 2.1 Integration shape
 
-The plugin does not replace the process-global DSH `AgentFactory`. The Web profile keeps the native `dsh-agent-loop`. A plugin-provided Agent Preset contributes an `agent/request` waterfall listener that replaces the request route with the plugin's `claude-code-cli` provider. The provider's adapter turns one DSH model request into one complete Claude Code agent turn and emits only final assistant content back through the DSH LLM stream.
+The plugin does not replace the process-global DSH `AgentFactory`. The Web profile keeps the native `dsh-agent-loop`. A plugin-provided Agent Preset contributes an `agent/request` waterfall listener that replaces the request route with the plugin's `claude` provider. The provider's adapter turns one DSH model request into one complete Claude Code agent turn and emits only final assistant content back through the DSH LLM stream.
 
 This is an agent bridge at the LLM seam, not a claim that Claude Code is a stateless LLM provider.
 
@@ -98,9 +98,9 @@ The process still runs through `ctx.subprocess` for explicit argv, credential-sh
 
 The bundle adds:
 
-- one host adapter route: `claude-code-cli`
-- one preset-scoped route plugin that overrides `agent/request` to `{ provider: 'claude-code-cli', model: <alias> }`
-- one user-visible preset: `claude-code-cli`
+- one host adapter route: `claude`
+- one preset-scoped route plugin that overrides `agent/request` to `{ provider: 'claude', model: <alias> }`
+- one user-visible preset: `claude`
 
 The preset contains no DSH model-facing filesystem, shell, skill, web, goal, todo, workflow, or subagent tools. Claude Code owns those capabilities. It may include only the route plugin and a minimal persona/presentation contribution needed by DSH.
 
@@ -174,7 +174,7 @@ Claude internal tool calls are not emitted as DSH `tool-call` chunks.
 
 DSH session logs contain only DSH-supported event types. The plugin must not mutate `KNOWN_SESSION_EVENT_TYPES` or append `claude-code/*` events: Desktop validates persisted vocabulary before plugin activation, so runtime registration cannot make custom events cold-load compatible.
 
-The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude-code/sessions`. It stores the Claude resume binding, ordered activity records, latest aggregate context usage, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated.
+The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude/sessions`. It stores the Claude resume binding, ordered activity records, latest aggregate context usage, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated.
 
 Each DSH turn maps to exactly one Claude turn. Sidecar activities retain `turn`, `step`, and `ordinal` so the Client can place them immediately before the corresponding standard Claude assistant message in the chat flow. SDK `total_cost_usd` is cumulative across streaming-input turns and is retained as the latest cumulative value rather than summed.
 
@@ -218,7 +218,7 @@ Register one session-scoped projection source through the public Client session 
 
 The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, context usage, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
 
-A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude-code-cli`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail can show an accurate running-task launcher; tasks observed without an active turn remain available from the session header.
+A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail can show an accurate running-task launcher; tasks observed without an active turn remain available from the session header.
 
 ### 5.2 Activity card
 

@@ -3,7 +3,7 @@ import { link, lstat, mkdir, readFile, readdir, rm, rmdir, writeFile } from 'nod
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import { CLAUDE_CODE_PRESET_ID } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, LEGACY_CLAUDE_CODE_PRESET_ID } from './constants.ts'
 
 export const MANAGED_PRESET_FILES = ['agent.cordis.yml', 'preset.yml'] as const
 
@@ -12,13 +12,13 @@ export const MANAGED_PRESET_FILES = ['agent.cordis.yml', 'preset.yml'] as const
  *  resolve through Node's internal loader with an unrelated base and cannot
  *  find linked packages. The installer therefore substitutes the absolute
  *  built entry path, which the preset tree imports directly as a file URL. */
-const PRESET_ROUTE_PACKAGE_SPECIFIER = 'dsh-claude-code/preset-route'
+const PRESET_ROUTE_PACKAGE_SPECIFIER = '@norman-else/dsh-claude/preset-route'
 
 export class ManagedPresetConflictError extends Error {
   readonly path: string
 
   constructor(path: string) {
-    super(`dsh-claude-code: refusing to overwrite user-modified preset file ${path}`)
+    super(`dsh-claude: refusing to overwrite user-modified preset file ${path}`)
     this.name = 'ManagedPresetConflictError'
     this.path = path
   }
@@ -27,6 +27,7 @@ export class ManagedPresetConflictError extends Error {
 export interface ManagedPresetPaths {
   sourceDir: string
   targetDir: string
+  legacyTargetDir?: string
 }
 
 export function defaultManagedPresetPaths(dshHome?: string): ManagedPresetPaths {
@@ -36,6 +37,9 @@ export function defaultManagedPresetPaths(dshHome?: string): ManagedPresetPaths 
     targetDir: dshHome === undefined
       ? dshHomePath('.agent-presets', CLAUDE_CODE_PRESET_ID)
       : join(dshHome, '.agent-presets', CLAUDE_CODE_PRESET_ID),
+    legacyTargetDir: dshHome === undefined
+      ? dshHomePath('.agent-presets', LEGACY_CLAUDE_CODE_PRESET_ID)
+      : join(dshHome, '.agent-presets', LEGACY_CLAUDE_CODE_PRESET_ID),
   }
 }
 
@@ -114,7 +118,32 @@ export async function ensureManagedPreset(paths = defaultManagedPresetPaths()): 
     }
     changed = await atomicWrite(target, content) || changed
   }
+  if (paths.legacyTargetDir !== undefined) {
+    changed = await removeLegacyManagedPreset(paths.legacyTargetDir) || changed
+  }
   return changed ? 'installed' : 'unchanged'
+}
+
+async function removeLegacyManagedPreset(targetDir: string): Promise<boolean> {
+  await assertSafeTargetDirectory(targetDir)
+  const agent = await readIfPresent(join(targetDir, 'agent.cordis.yml'))
+  const preset = await readIfPresent(join(targetDir, 'preset.yml'))
+  if (agent === undefined && preset === undefined) return false
+
+  // Only migrate the prior installer-owned template. Any user edit leaves the
+  // complete legacy preset untouched so existing sessions remain recoverable.
+  const managedAgent = agent !== undefined
+    && agent.includes('id: claude-code-route')
+    && (agent.includes('dsh-claude-code/preset-route') || agent.includes('lib/preset-route.mjs'))
+  const managedPreset = preset !== undefined
+    && preset.includes('Managed by dsh-claude-code')
+    && preset.includes('name: Claude Code')
+  if (!managedAgent || !managedPreset) return false
+
+  await rm(join(targetDir, 'agent.cordis.yml'))
+  await rm(join(targetDir, 'preset.yml'))
+  if ((await readdir(targetDir)).length === 0) await rmdir(targetDir)
+  return true
 }
 
 /** Reject a target directory that is a symlink (or occupies the path as a file)

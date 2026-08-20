@@ -1,6 +1,6 @@
-# Implement dsh-claude-code - Checkpoint
+# Implement dsh-claude - Checkpoint
 
-- Task ID: 2026-08-15-dsh-claude-code
+- Task ID: 2026-08-15-dsh-claude
 - Current todo: Scaffold package
 - Active slice: Plan Task 1
 - Blocked on: none
@@ -36,7 +36,7 @@
 - Tasks 6-9: DSH adapter/provider with zero outer retries, preset-scoped routing, no-clobber managed preset installer, Host activation/Doctor route, CLI, native client activity cards, bilingual Settings Doctor, package/runbook documentation
 - Hardening: abort-before-submit race closed; permission activity participates in outcome-unknown classification; embedded string credentials redacted; SDK executable command pinned; cumulative query cost named explicitly
 - Evidence refs:
-- 49 Vitest regressions; pnpm typecheck/build/pack; safe CLI Doctor; composed Web profile includes llm-claude-code-cli; live Agent SDK handshake/result succeeded; link install and managed preset install succeeded
+- 49 Vitest regressions; pnpm typecheck/build/pack; safe CLI Doctor; composed Web profile includes llm-claude; live Agent SDK handshake/result succeeded; link install and managed preset install succeeded
 - Blocked on: current DSH Host predates profile link and requires Host restart before existing 56454 URL can expose the new route/client
 - Next step: Resolve independent review findings, restart/reload the existing Host, verify Doctor route and GUI contribution
 

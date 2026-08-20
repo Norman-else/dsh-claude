@@ -35,6 +35,7 @@ export interface ClaudeSidecarProjection {
 
 export interface ClaudeSidecarRepositoryOptions {
   readonly root?: string
+  readonly legacyRoot?: string
 }
 
 function emptyProjection(): ClaudeSidecarProjection {
@@ -104,17 +105,17 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     || !finiteInteger(input.revision)
     || !Array.isArray(input.activities)
     || input.activities.length > MAX_ACTIVITIES) {
-    throw new Error('dsh-claude-code: invalid sidecar document')
+    throw new Error('dsh-claude: invalid sidecar document')
   }
   const activities = input.activities.map(activity)
-  if (activities.some(item => item === undefined)) throw new Error('dsh-claude-code: invalid sidecar activity')
+  if (activities.some(item => item === undefined)) throw new Error('dsh-claude: invalid sidecar activity')
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
   if ((input.binding !== undefined && parsedBinding === undefined)
     || (input.contextUsage !== undefined && parsedUsage === undefined)
     || (input.tasks !== undefined && parsedTasks === undefined)) {
-    throw new Error('dsh-claude-code: invalid sidecar projection')
+    throw new Error('dsh-claude: invalid sidecar projection')
   }
   return {
     schemaVersion: SIDECAR_SCHEMA_VERSION,
@@ -156,20 +157,18 @@ function normalizeBinding(
 
 export class ClaudeSidecarRepository {
   readonly root: string
+  readonly legacyRoot: string | undefined
   readonly #pending = new Map<string, Promise<unknown>>()
 
   constructor(options: ClaudeSidecarRepositoryOptions = {}) {
-    this.root = options.root ?? dshHomePath('plugins', 'dsh-claude-code', 'sessions')
+    this.root = options.root ?? dshHomePath('plugins', 'dsh-claude', 'sessions')
+    this.legacyRoot = options.legacyRoot
+      ?? (options.root === undefined ? dshHomePath('plugins', 'dsh-claude-code', 'sessions') : undefined)
   }
 
   async read(sessionId: string): Promise<ClaudeSidecarProjection> {
     await this.#pending.get(sessionId)?.catch(() => undefined)
-    try {
-      return parseClaudeSidecar(JSON.parse(await readFile(this.#path(sessionId), 'utf8')))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyProjection()
-      throw error
-    }
+    return this.#readNow(sessionId)
   }
 
   writeBinding(
@@ -218,9 +217,9 @@ export class ClaudeSidecarRepository {
     }), true)
   }
 
-  #path(sessionId: string): string {
-    if (sessionId.length === 0 || sessionId.length > 1_024) throw new Error('dsh-claude-code: invalid session id')
-    return join(this.root, `${Buffer.from(sessionId).toString('base64url')}.json`)
+  #path(sessionId: string, root = this.root): string {
+    if (sessionId.length === 0 || sessionId.length > 1_024) throw new Error('dsh-claude: invalid session id')
+    return join(root, `${Buffer.from(sessionId).toString('base64url')}.json`)
   }
 
   #update(
@@ -251,6 +250,12 @@ export class ClaudeSidecarRepository {
   async #readNow(sessionId: string): Promise<ClaudeSidecarProjection> {
     try {
       return parseClaudeSidecar(JSON.parse(await readFile(this.#path(sessionId), 'utf8')))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (this.legacyRoot === undefined) return emptyProjection()
+    try {
+      return parseClaudeSidecar(JSON.parse(await readFile(this.#path(sessionId, this.legacyRoot), 'utf8')))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyProjection()
       throw error

@@ -4,7 +4,7 @@
     "Host adapter, subprocess, approval, session events, Agent Preset, Web client"
   ],
   "owners": [
-    "dsh-claude-code plugin"
+    "dsh-claude plugin"
   ],
   "invariants": [
     "Claude owns internal tools; DSH owns UI/audit/process lifecycle; native presets remain unchanged"

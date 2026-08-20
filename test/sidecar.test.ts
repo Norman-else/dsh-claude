@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -72,6 +72,28 @@ describe('Claude sidecar repository', () => {
       revision: 0,
       activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'credential' }],
     })).toThrow('invalid sidecar activity')
+  })
+
+  it('reads the prior plugin data root and copies it forward on write', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'dsh-claude-sidecar-migration-'))
+    roots.push(base)
+    const root = join(base, 'dsh-claude', 'sessions')
+    const legacyRoot = join(base, 'dsh-claude-code', 'sessions')
+    const sessionId = 'legacy-session'
+    const file = `${Buffer.from(sessionId).toString('base64url')}.json`
+    await mkdir(legacyRoot, { recursive: true })
+    await writeFile(join(legacyRoot, file), `${JSON.stringify({
+      schemaVersion: 1,
+      revision: 2,
+      activities: [],
+      binding: { claudeSessionId: 'legacy', sdkVersion: '0.3.233', cwd: '/workspace' },
+    })}\n`)
+    const store = new ClaudeSidecarRepository({ root, legacyRoot })
+
+    await expect(store.read(sessionId)).resolves.toMatchObject({ revision: 2, binding: { claudeSessionId: 'legacy' } })
+    await store.writeContextUsage(sessionId, { model: 'default', totalTokens: 10, maxTokens: 100, percentage: 10, categories: [] })
+    await expect(readFile(join(root, file), 'utf8')).resolves.toContain('legacy')
+    await expect(readFile(join(legacyRoot, file), 'utf8')).resolves.not.toContain('contextUsage')
   })
 
   it('imports readable legacy events idempotently without replacing newer sidecar state', async () => {

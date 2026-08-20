@@ -34,6 +34,6 @@ export function apply(ctx: Context, config: Config = {}): void {
   // the host compute native render intents for the mirrored Claude tool
   // events. Claude Code owns execution; the stub `execute` never runs.
   for (const definition of claudePresenterDefinitions()) {
-    ctx.effect(() => ctx.tools.register(definition), `dsh-claude-code: ${definition.name} presentation`)
+    ctx.effect(() => ctx.tools.register(definition), `dsh-claude: ${definition.name} presentation`)
   }
 }

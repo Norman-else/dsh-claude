@@ -12,11 +12,11 @@ const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
 }) as unknown as Message
 
 const agent = { id: 'session-1' } as unknown as Agent
-const claudePreset = () => 'claude-code-cli'
+const claudePreset = () => 'claude'
 
 function options(messages: Message[] = [user('hello')]): GenerateOptions {
   return {
-    provider: 'claude-code-cli',
+    provider: 'claude',
     model: 'default',
     messages,
     sessionId: 'session-1' as never,
@@ -123,23 +123,33 @@ describe('DSH stream mapping', () => {
     ])
   })
 
+  it('accepts the legacy preset id for existing sessions', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([{ type: 'complete', text: '' }]), {
+      currentInitiator: () => agent,
+      get: () => agent,
+    }, () => 'claude-code-cli')
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
   it('rejects a native or recomposed session even if the global provider is selected', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, () => 'standard')
     await expect(async () => {
       for await (const _chunk of adapter.stream(options())) { /* no chunks expected */ }
-    }).rejects.toThrow(/available only to the claude-code-cli preset/)
+    }).rejects.toThrow(/available only to the claude preset/)
   })
 
   it('disables outer DSH retries', () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    expect(adapter.providerRetryPolicy('claude-code-cli')).toMatchObject({ mode: 'normal', maxRetries: 0 })
+    expect(adapter.providerRetryPolicy('claude')).toMatchObject({ mode: 'normal', maxRetries: 0 })
   })
 })
 
 describe('Claude Code model catalog', () => {
   it('advertises the five native Claude Code choices and aliases in CLI order', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    const models = await adapter.listModels('claude-code-cli')
+    const models = await adapter.listModels('claude')
     expect(models.map(model => ({ id: model.id, name: model.name }))).toEqual([
       { id: 'default', name: 'Default (recommended)' },
       { id: 'opus[1m]', name: 'Opus (1M context)' },
@@ -151,21 +161,21 @@ describe('Claude Code model catalog', () => {
 
   it('publishes the explicit 1M alias capacity through the native DSH model contract', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    await expect(adapter.resolveModel('claude-code-cli', 'opus[1m]')).resolves.toMatchObject({
+    await expect(adapter.resolveModel('claude', 'opus[1m]')).resolves.toMatchObject({
       context: { contextWindow: 1_000_000 },
     })
   })
 
   it('publishes an SDK-observed capacity for dynamic Claude aliases', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([], undefined, 272_000), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    await expect(adapter.resolveModel('claude-code-cli', 'default')).resolves.toMatchObject({
+    await expect(adapter.resolveModel('claude', 'default')).resolves.toMatchObject({
       context: { contextWindow: 272_000 },
     })
   })
 
   it('omits unverified capacity until Claude reports it', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    const model = await adapter.resolveModel('claude-code-cli', 'sonnet')
+    const model = await adapter.resolveModel('claude', 'sonnet')
     expect(model.context).toBeUndefined()
   })
 
@@ -180,7 +190,7 @@ describe('Claude Code model catalog', () => {
 describe('reasoning effort', () => {
   it('advertises the seven Claude thinking modes for selector surfaces', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    const info = await adapter.resolveModel('claude-code-cli', 'sonnet')
+    const info = await adapter.resolveModel('claude', 'sonnet')
     expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['off', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(info.reasoning?.defaultEffort).toBeUndefined()
   })

@@ -217,7 +217,7 @@ describe('Claude sidecar conversation projection', () => {
 
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {
     const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
-    const assistant = (seq: number, step: number, provider = 'claude-code-cli') => ({
+    const assistant = (seq: number, step: number, provider = 'claude') => ({
       type: 'assistant/message',
       seq,
       time: seq,

@@ -2,7 +2,7 @@
 
 Date: 2026-08-15
 
-Authority: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
+Authority: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 
 Scope: all repository source, configuration, documentation, tests, generated/package surfaces where relevant, and exact installed public contracts in `node_modules` and the DSH rc.5 host. Advisory only; this review made no runtime/source changes.
 
@@ -12,7 +12,7 @@ Scope: all repository source, configuration, documentation, tests, generated/pac
 - The workspace changed concurrently during review. This document reflects the final re-read state, including current embedded-string redaction and the expanded supervisor tests.
 - A concurrent reviewer observed the current automated suite passing 43/43 tests. Existing evidence also states typecheck/build/pack pass.
 - The Web profile link points to this checkout, but the existing host has not restarted. The linked Doctor route currently returns 404, so link success is not activation evidence.
-- `docs/aegis/work/2026-08-15-dsh-claude-code/90-evidence.md:1-3` explicitly records that no final integration evidence exists.
+- `docs/aegis/work/2026-08-15-dsh-claude/90-evidence.md:1-3` explicitly records that no final integration evidence exists.
 - Native DSH behavior being unaffected, actual linked-host activation, cancellation quiescence, and restart resume remain unverified acceptance requirements.
 - No kernel confinement is implemented or claimed; the repository states this boundary accurately at `README.md:63-74`.
 
@@ -249,7 +249,7 @@ This should not be broadened into a claim of kernel confinement or universal app
 - `package.json:12-16` has no package-contents verification despite the authority requiring it.
 - Tests compile against rc.6 rather than the target host rc.5: `package.json:80-93`.
 - `README.md:132` claims a minimal live smoke, but the repository contains fixture/unit tests only.
-- The durable evidence record explicitly says none exists: `docs/aegis/work/2026-08-15-dsh-claude-code/90-evidence.md:1-3`.
+- The durable evidence record explicitly says none exists: `docs/aegis/work/2026-08-15-dsh-claude/90-evidence.md:1-3`.
 - Profile linking succeeded, but the existing host has not restarted and the route remains 404. This is not activation, native-coexistence, cancellation, resume, or browser evidence.
 - Native DSH behavior being unaffected remains an acceptance requirement, not an established result.
 - No kernel confinement is implemented, and the repository correctly avoids claiming it: `README.md:63-74`.

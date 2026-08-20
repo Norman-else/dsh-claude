@@ -1,4 +1,4 @@
-# Implement dsh-claude-code - Reflection
+# Implement dsh-claude - Reflection
 
 Completion reflection has not been recorded yet.
 

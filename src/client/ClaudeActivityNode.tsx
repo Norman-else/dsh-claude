@@ -9,7 +9,11 @@ import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/
 import type { ClaudeActivityEvent } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeSubcall } from './conversation-sidecar.ts'
 import { activityRowsForStep } from './conversation-sidecar.ts'
-export type ClaudeActivityNodeProps = ChatNodeViewProps<'claude-activity-step'>
+import type { ClaudeCodeSettingsKey } from './locales.ts'
+
+type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
+
+export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-step'>, 't'> & { t: Translate }
 
 const EMPTY_TASKS = [] as const
 
@@ -56,13 +60,13 @@ function activityState(activity: ClaudeActivityEvent, running: boolean): 'done' 
   return 'done'
 }
 
-function ActivityRow({ row }: { row: ClaudeActivityChatData }) {
+function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) {
   const { activity, running, subcalls } = row
   const [open, setOpen] = useState(false)
   const state = activityState(activity, running)
   const detail = activity.detail
   const expandable = detail !== undefined || subcalls.length > 0 || activity.kind === 'thinking'
-  const summary = activity.summary ?? (running ? 'Running' : state === 'error' ? 'Failed' : 'Done')
+  const summary = activity.summary ?? (running ? t('running') : state === 'error' ? t('failed') : t('done'))
   const body = activity.kind === 'thinking' ? activity.summary : detail
   const icon = activity.kind === 'thinking'
     ? <IconThinkOutline14 size={14} />
@@ -76,7 +80,7 @@ function ActivityRow({ row }: { row: ClaudeActivityChatData }) {
       titleClassName="dsh-claude-flow-title"
       chevronClassName="dsh-claude-flow-chevron"
       icon={icon}
-      title={activity.kind === 'thinking' ? 'Think' : title(activity)}
+      title={activity.kind === 'thinking' ? t('thinking') : title(activity)}
       open={open}
       expandable={expandable}
       expandOnRowClick
@@ -92,7 +96,7 @@ function ActivityRow({ row }: { row: ClaudeActivityChatData }) {
       {subcalls.length === 0 ? null : (
         <div className="dsh-claude-flow-subcalls">
           {subcalls.map(subcall => (
-            <div key={subcall.toolUseId}>{subcallGlyph(subcall)} {subcall.toolName ?? 'subagent'}{subcall.summary === undefined ? '' : ` · ${subcall.summary}`}</div>
+            <div key={subcall.toolUseId}>{subcallGlyph(subcall)} {subcall.toolName ?? t('subagent')}{subcall.summary === undefined ? '' : ` · ${subcall.summary}`}</div>
           ))}
         </div>
       )}
@@ -103,7 +107,7 @@ function ActivityRow({ row }: { row: ClaudeActivityChatData }) {
   )
 }
 
-export function ClaudeActivityNode({ node, useClaudeProjection }: ClaudeActivityNodeProps) {
+export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
   ensureCss()
   const marker = node.data
   const activities = useClaudeProjection(value => value.activities)
@@ -113,5 +117,5 @@ export function ClaudeActivityNode({ node, useClaudeProjection }: ClaudeActivity
     [activities, marker.step, marker.turn, tasks],
   )
   if (rows.length === 0) return null
-  return <div className="dsh-claude-flow">{rows.map((row, index) => <ActivityRow key={`${row.activity.ordinal}:${index}`} row={row} />)}</div>
+  return <div className="dsh-claude-flow">{rows.map((row, index) => <ActivityRow key={`${row.activity.ordinal}:${index}`} row={row} t={t} />)}</div>
 }

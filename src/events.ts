@@ -331,7 +331,7 @@ export function currentClaudeActivityCursor(events: readonly SessionEvent[]): Cl
     step = data.step
   }
   if (turn < 1 || step < 1) {
-    throw new Error('dsh-claude-code: Claude activity requires an open DSH step')
+    throw new Error('dsh-claude: Claude activity requires an open DSH step')
   }
   return { turn, step, nextOrdinal: 0 }
 }

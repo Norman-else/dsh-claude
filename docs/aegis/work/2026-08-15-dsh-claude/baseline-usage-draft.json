@@ -1,14 +1,14 @@
 {
   "schemaVersion": "aegis.schema.v0",
-  "taskId": "2026-08-15-dsh-claude-code",
+  "taskId": "2026-08-15-dsh-claude",
   "requiredBaselineRefs": [
-    "docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md"
+    "docs/aegis/spec/2026-08-15-dsh-claude-spec.md"
   ],
   "deliveredContextRefs": [],
   "acknowledgedBeforePlanRefs": [],
   "citedInPlanRefs": [],
   "missingRefs": [
-    "docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md"
+    "docs/aegis/spec/2026-08-15-dsh-claude-spec.md"
   ],
   "decision": "needs-baseline-readback"
 }

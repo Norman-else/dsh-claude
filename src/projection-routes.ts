@@ -49,5 +49,5 @@ export function registerClaudeProjectionRoute(
         return json(res, 500, { error: 'projection unavailable' })
       }
     },
-  }), 'dsh-claude-code: sidecar projection route')
+  }), 'dsh-claude: sidecar projection route')
 }

@@ -1,19 +1,19 @@
 {
-  "name": "dsh-claude-code",
+  "name": "@norman-else/dsh-claude",
   "description": "Run the local Claude Code CLI as a first-class main conversation inside DeepSeek Harness",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
   "bin": {
-    "dsh-claude-code": "lib/bin.mjs"
+    "dsh-claude": "lib/bin.mjs"
   },
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "test": "vitest run",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepack": "pnpm run build"
   },
   "exports": {
     ".": {
@@ -36,6 +36,20 @@
     "LICENSE"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Norman-else/dsh-claude.git"
+  },
+  "homepage": "https://github.com/Norman-else/dsh-claude#readme",
+  "bugs": {
+    "url": "https://github.com/Norman-else/dsh-claude/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

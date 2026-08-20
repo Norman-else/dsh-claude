@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, isClaudePresetId } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, ClaudeCommandBridge, type ClaudeAgentCommandService } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
@@ -17,7 +17,7 @@ import { ensureManagedPreset } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 
-export const name = 'llm-claude-code-cli'
+export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval']
 
 export interface Config {
@@ -53,7 +53,7 @@ export function mountClaudeMetadata(
   resolveCommands: () => ClaudeAgentCommandService | undefined =
     () => ctx.agentPresets.serviceFor(agent, CLAUDE_COMMANDS_SERVICE),
 ): (() => Promise<void>) | undefined {
-  if (ctx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
+  if (!isClaudePresetId(ctx.agentPresets.composedPreset(agent.ctx))) return undefined
 
   let stopped = false
   let pending = Promise.resolve()
@@ -80,7 +80,7 @@ export function mountClaudeMetadata(
   })
 
   const warn = (area: string, error: unknown) => {
-    ctx.logger.warn(`dsh-claude-code: ${area} refresh failed for ${String(agent.id)}: ${error instanceof Error ? error.message : String(error)}`)
+    ctx.logger.warn(`dsh-claude: ${area} refresh failed for ${String(agent.id)}: ${error instanceof Error ? error.message : String(error)}`)
   }
 
   const isScopeUnavailable = (error: unknown): boolean => {
@@ -168,7 +168,7 @@ export function mountClaudeMetadata(
       await pending
       bridge.dispose()
     }
-  }, 'dsh-claude-code: agent metadata bridge')
+  }, 'dsh-claude: agent metadata bridge')
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
@@ -197,7 +197,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     )
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
-      [CLAUDE_CODE_PROVIDER],
+      [...CLAUDE_CODE_PROVIDER_IDS],
       createClaudeCodeAdapter(supervisor, ctx.agents, agent => ctx.agentPresets.composedPreset(agent.ctx)),
     )
     ctx.effect(() => {
@@ -246,7 +246,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       // of the typed host event map yet; subscribe through a typed escape hatch.
       const onPresetSelected = ctx.on as (event: 'agent-preset/selected', handler: (sessionId: string, preset: string) => void) => () => void
       const stopSelected = onPresetSelected('agent-preset/selected', (sessionId, preset) => {
-        if (preset !== CLAUDE_CODE_PRESET_ID) return
+        if (!isClaudePresetId(preset)) return
         const agent = ctx.agents.get(sessionId as never)
         if (agent !== undefined) mountWhenPresetSettles(agent)
       })
@@ -258,19 +258,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         await Promise.allSettled([...mounted.values()].map(dispose => dispose()))
         mounted.clear()
       }
-    }, 'dsh-claude-code: metadata bridges')
+    }, 'dsh-claude: metadata bridges')
   } catch (error) {
     resolutionError = error
   }
   ctx.on('agent/disposed', async ({ agent }) => {
     await supervisor.disposeSession(agent.id as string)
   })
-  ctx.effect(() => () => supervisor.dispose(), 'dsh-claude-code: process supervisor')
+  ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.inject(['webServer'], webCtx => {
     registerClaudeDoctorRoutes(webCtx, webCtx.subprocess, supervisor, supervisorConfig, resolutionError)
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
-      return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
+      return agent !== undefined && isClaudePresetId(webCtx.agentPresets.composedPreset(agent.ctx))
     })
   })
 }

@@ -36,7 +36,7 @@ export class ManagedClaudeProcess extends EventEmitter implements SpawnedProcess
   constructor(handle: SubprocessHandle) {
     super()
     if (handle.stdin === undefined || handle.stdout === undefined) {
-      throw new Error('dsh-claude-code: managed Claude process requires piped stdin/stdout')
+      throw new Error('dsh-claude: managed Claude process requires piped stdin/stdout')
     }
     this.handle = handle
     this.stdin = handle.stdin
@@ -86,7 +86,7 @@ export function createManagedClaudeSpawner(
 ): (options: SpawnOptions) => SpawnedProcess {
   return options => {
     if (options.command !== executablePath) {
-      throw new Error(`dsh-claude-code: SDK requested unexpected executable ${JSON.stringify(options.command)}`)
+      throw new Error(`dsh-claude: SDK requested unexpected executable ${JSON.stringify(options.command)}`)
     }
     const handle = runtime.spawn({
       argv: [executablePath, ...options.args],

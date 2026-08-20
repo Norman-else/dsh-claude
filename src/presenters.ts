@@ -128,7 +128,7 @@ function presenterDefinition(
       render: () => [],
     },
     execute: async () => {
-      throw new Error(`dsh-claude-code: Claude Code owns execution of ${name}`)
+      throw new Error(`dsh-claude: Claude Code owns execution of ${name}`)
     },
     ...(presentCall === undefined ? {} : { presentCall }),
     ...(presentResult === undefined ? {} : { presentResult }),

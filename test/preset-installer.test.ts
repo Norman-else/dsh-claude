@@ -15,12 +15,12 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-claude-code-test-'))
+  const root = await mkdtemp(join(tmpdir(), 'dsh-claude-test-'))
   roots.push(root)
   const sourceDir = join(root, 'source')
-  const targetDir = join(root, 'home', '.agent-presets', 'claude-code-cli')
+  const targetDir = join(root, 'home', '.agent-presets', 'claude')
   await mkdir(sourceDir, { recursive: true })
-  await writeFile(join(sourceDir, 'agent.cordis.yml'), '# managed\n- name: dsh-claude-code/preset-route\n')
+  await writeFile(join(sourceDir, 'agent.cordis.yml'), '# managed\n- name: @norman-else/dsh-claude/preset-route\n')
   await writeFile(join(sourceDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
   return { sourceDir, targetDir }
 }
@@ -68,7 +68,7 @@ describe('managed Agent Preset installation', () => {
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const installed = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
     expect(installed).toContain(`name: ${join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')}`)
-    expect(installed).not.toContain('name: dsh-claude-code/preset-route')
+    expect(installed).not.toContain('name: @norman-else/dsh-claude/preset-route')
   })
 
   it('upgrades legacy bare-specifier content left by older installers', async () => {
@@ -80,18 +80,18 @@ describe('managed Agent Preset installation', () => {
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
     expect(upgraded).toContain('lib')
-    expect(upgraded).not.toContain('name: dsh-claude-code/preset-route')
+    expect(upgraded).not.toContain('name: @norman-else/dsh-claude/preset-route')
     await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
   })
 
   it('upgrades legacy content even when template comments drifted', async () => {
     const paths = await fixture()
     await mkdir(paths.targetDir, { recursive: true })
-    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), '# older installer generation\n- id: claude-code-route\n  name: dsh-claude-code/preset-route\n')
+    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), '# older installer generation\n- id: claude-code-route\n  name: @norman-else/dsh-claude/preset-route\n')
     await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
-    expect(upgraded).not.toContain('name: dsh-claude-code/preset-route')
+    expect(upgraded).not.toContain('name: @norman-else/dsh-claude/preset-route')
     await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
   })
 
@@ -105,12 +105,35 @@ describe('managed Agent Preset installation', () => {
     await expect(readdir(paths.targetDir)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('removes the prior managed preset after installing the renamed preset', async () => {
+    const paths = await fixture()
+    const legacyTargetDir = join(paths.targetDir, '..', 'claude-code-cli')
+    await mkdir(legacyTargetDir, { recursive: true })
+    await writeFile(join(legacyTargetDir, 'agent.cordis.yml'), '# Managed by dsh-claude-code\n- id: claude-code-route\n  name: dsh-claude-code/preset-route\n')
+    await writeFile(join(legacyTargetDir, 'preset.yml'), '# Managed by dsh-claude-code\nname: Claude Code\n')
+
+    await expect(ensureManagedPreset({ ...paths, legacyTargetDir })).resolves.toBe('installed')
+    await expect(readdir(legacyTargetDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(paths.targetDir, 'preset.yml'), 'utf8')).resolves.toContain('Claude Code CLI')
+  })
+
+  it('preserves a user-modified prior preset', async () => {
+    const paths = await fixture()
+    const legacyTargetDir = join(paths.targetDir, '..', 'claude-code-cli')
+    await mkdir(legacyTargetDir, { recursive: true })
+    await writeFile(join(legacyTargetDir, 'agent.cordis.yml'), '# user edit\n')
+    await writeFile(join(legacyTargetDir, 'preset.yml'), 'name: My Claude\n')
+
+    await expect(ensureManagedPreset({ ...paths, legacyTargetDir })).resolves.toBe('installed')
+    await expect(readFile(join(legacyTargetDir, 'preset.yml'), 'utf8')).resolves.toBe('name: My Claude\n')
+  })
+
   it('refuses a symlinked target directory', async () => {
     const paths = await fixture()
     const realDir = join(paths.targetDir, '..', 'real-preset-dir')
     await mkdir(realDir, { recursive: true })
     const symlinkTarget = paths.targetDir
-    const symlinkSource = join(paths.targetDir, '..', 'claude-code-cli-link')
+    const symlinkSource = join(paths.targetDir, '..', 'claude-link')
     await symlink(realDir, symlinkSource)
     await expect(ensureManagedPreset({ ...paths, targetDir: symlinkSource })).rejects.toBeInstanceOf(ManagedPresetConflictError)
     // And the real dir must not have been written through the link.

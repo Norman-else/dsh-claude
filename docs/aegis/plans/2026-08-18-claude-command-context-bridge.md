@@ -9,8 +9,8 @@
 **Tech Stack:** TypeScript, Cordis, DSH public agent/commands/session/client slot contracts, Claude Agent SDK 0.3.233, React 18, Vitest, tsdown.
 
 **Baseline / Authority Refs:**
-- `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md` §§2.5, 3.2, 3.5–3.6, 5.3, 7–8
-- `docs/aegis/plan/2026-08-15-dsh-claude-code-implementation-plan.md`
+- `docs/aegis/spec/2026-08-15-dsh-claude-spec.md` §§2.5, 3.2, 3.5–3.6, 5.3, 7–8
+- `docs/aegis/plan/2026-08-15-dsh-claude-implementation-plan.md`
 - `AGENTS.md`
 
 **Compatibility Boundary:** Out-of-tree plugin only; no installed DSH edits, private imports, copied agent-loop logic, duplicate turn driver, or credential/path persistence. Existing DSH commands retain ownership on collisions. Existing ordinary Claude prompts, approval bridging, activity projection, cancellation, resume, and process limits must continue to work.
@@ -165,7 +165,7 @@
 4. Execute one harmless Claude Skill/custom command and verify it opens a normal DSH turn, renders activity, settles idle, and leaves no console error.
 5. Verify the model-adjacent meter appears, opens, matches SDK total/max/percentage/categories, updates after a new turn, and survives refresh.
 6. Re-run one ordinary prompt and one denied tool action to guard adapter/approval behavior.
-7. Record bounded evidence in `docs/aegis/work/2026-08-15-dsh-claude-code/20-checkpoint.md` and commit only task-owned files.
+7. Record bounded evidence in `docs/aegis/work/2026-08-15-dsh-claude/20-checkpoint.md` and commit only task-owned files.
 
 ## Risks and Mitigations
 

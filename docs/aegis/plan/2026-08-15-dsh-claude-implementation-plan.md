@@ -1,16 +1,16 @@
-# dsh-claude-code Implementation Plan
+# dsh-claude Implementation Plan
 
 Status: implemented; persistence and background-task presentation amended
 Date: 2026-08-15
-Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
+Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 
 ## Scope check
 
 ### Facts
 
-- Target project is a new repository at `/Users/normanzuo/PersonalRepos/dsh-claude-code`.
+- Target project is a standalone `dsh-claude` repository.
 - Installed DSH is `0.1.0-rc.5` and exposes public LLM adapter, agent request waterfall, session event extension, subprocess, approval, Agent Preset, client conversation projection, slots, Web server, and client-module bundle surfaces.
-- Local Claude Code is `2.1.233` at `/Users/normanzuo/.local/bin/claude`.
+- Local Claude Code is `2.1.233`, resolved through the documented executable lookup order.
 - `@anthropic-ai/claude-agent-sdk@0.3.233` supports an explicit local executable, streaming input, partial messages, `canUseTool`, and custom process spawning.
 - DSH Agent Presets are discovered from `$DSH_HOME/.agent-presets` without restart, but there is no public dynamic root-registration API.
 - DSH's current process sandbox cannot add a separate Claude state root; v0.1 uses permission bridging and managed process cleanup without claiming kernel-level workspace confinement.
@@ -67,7 +67,7 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 - No changes under the installed DSH checkout or current Navi repository.
 - Depend only on published DSH package exports and declared client entry points.
 - The installed Web profile is changed only during the final link-install smoke.
-- Automatic preset installation writes a tiny managed preset under `$DSH_HOME/.agent-presets/claude-code-cli`; it never overwrites a non-managed user preset.
+- Automatic preset installation writes a tiny managed preset under `$DSH_HOME/.agent-presets/claude`; it never overwrites a non-managed user preset.
 - Uninstall leaves the managed preset as visibly broken unless the package CLI removes it; provide an idempotent uninstall command and document it.
 
 ## File map
@@ -103,7 +103,7 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-code-spec.md`
 
 ### Preset
 
-- `preset/agent.cordis.yml` — minimal preset composition containing `dsh-claude-code/preset-route`.
+- `preset/agent.cordis.yml` — minimal preset composition containing `dsh-claude/preset-route`.
 - `preset/preset.yml` — display metadata.
 
 ### Client
@@ -165,7 +165,7 @@ Expected evidence: new session logs contain no `claude-code/*` events, old reada
 5. Preserve the subprocess service's credential-shaped ambient environment scrub. Forward no credential variables explicitly.
 6. Add fake-handle tests for events, kill, exit code, error, stderr, and cleanup.
 
-Expected evidence: resolver detects `/Users/normanzuo/.local/bin/claude`; process wrapper unit tests pass.
+Expected evidence: resolver detects an authenticated local Claude executable; process wrapper unit tests pass.
 
 ### Task 4 — Implement the long-lived Claude supervisor
 
@@ -207,7 +207,7 @@ Expected evidence: adapter tests and DSH invariant/type checks pass.
 ### Task 7 — Install the managed Agent Preset
 
 1. Package the minimal preset composition and metadata.
-2. Implement idempotent installation under `$DSH_HOME/.agent-presets/claude-code-cli` using atomic writes.
+2. Implement idempotent installation under `$DSH_HOME/.agent-presets/claude` using atomic writes.
 3. Mark generated files with an exact managed header and compare their complete packaged contents.
 4. Create only absent files with a no-clobber atomic publish; accept exact current content and refuse every mismatch. Future upgrades must explicitly enumerate exact prior managed contents before replacing them.
 5. Implement remove that deletes only exact managed files and then the empty directory.
@@ -252,7 +252,7 @@ Expected evidence: clean check, inspectable tarball, installation instructions m
 
 ### Task 10 — Linked-profile integration and live smoke
 
-1. Link-install the project into the current Web profile using `dsh plugin --profile web add link:/Users/normanzuo/PersonalRepos/dsh-claude-code` or the packaged app equivalent.
+1. Link-install the project into the current Web profile using `dsh plugin --profile web add link:/path/to/dsh-claude` or the packaged app equivalent.
 2. Rebuild the affected client-plugin artifact through the package build; do not start a replacement DSH server.
 3. Refresh the existing DSH Web GUI and confirm the preset appears.
 4. Verify one existing native preset turn remains unchanged.
