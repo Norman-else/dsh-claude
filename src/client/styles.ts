@@ -38,8 +38,30 @@ export const detailCode: CSSProperties = {
 export const settingsPage: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 18,
-  maxWidth: 760,
+  gap: 16,
+  width: '100%',
+  maxWidth: 820,
+  paddingBottom: 28,
+}
+
+export const settingsHero: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 14,
+  padding: '2px 2px 8px',
+}
+
+export const settingsMark: CSSProperties = {
+  width: 42,
+  height: 42,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  borderRadius: 13,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-static-blue-450)',
+  fontSize: 18,
+  fontWeight: 700,
 }
 
 export const settingsHeading: CSSProperties = {
@@ -50,18 +72,43 @@ export const settingsHeading: CSSProperties = {
   fontWeight: 650,
 }
 
+export const settingsSectionHeading: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 15,
+  lineHeight: '22px',
+  fontWeight: 650,
+}
+
 export const settingsBody: CSSProperties = {
   margin: 0,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
+}
+
+export const settingsCard: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 14,
+  padding: 18,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 14,
+  background: 'var(--dsw-alias-bg-layer-1)',
+}
+
+export const settingsCardHeader: CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'space-between',
+  gap: 16,
 }
 
 export const diagnosticGrid: CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(130px, 0.4fr) minmax(0, 1fr)',
-  gap: '9px 18px',
-  padding: '16px 0',
+  gridTemplateColumns: 'minmax(130px, 0.36fr) minmax(0, 1fr)',
+  gap: '10px 18px',
+  padding: '14px 0',
   borderTop: '1px solid var(--dsw-alias-border-l2)',
   borderBottom: '1px solid var(--dsw-alias-border-l2)',
   fontSize: 13,
@@ -73,20 +120,47 @@ export const diagnosticLabel: CSSProperties = {
 
 export const diagnosticValue: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
+  fontWeight: 500,
   overflowWrap: 'anywhere',
+}
+
+export const settingsActions: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+}
+
+export const notice: CSSProperties = {
+  margin: 0,
+  padding: '10px 12px',
+  borderRadius: 9,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
 }
 
 export const button: CSSProperties = {
   alignSelf: 'flex-start',
+  flex: 'none',
   minHeight: 34,
   padding: '6px 14px',
   border: '1px solid var(--dsw-alias-border-l2)',
-  borderRadius: 18,
-  background: 'var(--dsw-alias-bg-layer-1)',
+  borderRadius: 9,
+  background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
   fontSize: 13,
+  fontWeight: 550,
+  whiteSpace: 'nowrap',
   cursor: 'pointer',
+}
+
+export const primaryButton: CSSProperties = {
+  ...button,
+  borderColor: 'transparent',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-static-white)',
 }
 
 /* Claude tasks details panel (right sidebar). */

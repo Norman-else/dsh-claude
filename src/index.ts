@@ -17,6 +17,7 @@ import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
+import { registerClaudeUpdateRoutes } from './update-routes.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions']
@@ -286,6 +287,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.inject(['webServer'], webCtx => {
     registerClaudeDoctorRoutes(webCtx, webCtx.subprocess, supervisor, supervisorConfig, resolutionError)
+    registerClaudeUpdateRoutes(webCtx, webCtx.subprocess)
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID

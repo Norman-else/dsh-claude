@@ -10,4 +10,6 @@ export const CLAUDE_TASKS_EVENT = 'claude-code/tasks'
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(['Task', 'Agent'])
 export const SDK_VERSION = '0.3.233'
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
+export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'
+export const CLAUDE_UPDATE_PATH = '/plugins/dsh-claude/update'
 export const CLAUDE_PROJECTION_PATH = '/plugins/dsh-claude/projection'
