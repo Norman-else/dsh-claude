@@ -1,14 +1,6 @@
 export const CLAUDE_CODE_PROVIDER = 'claude'
 export const CLAUDE_CODE_PRESET_ID = 'claude'
-export const LEGACY_CLAUDE_CODE_PROVIDER = 'claude-code-cli'
-export const LEGACY_CLAUDE_CODE_PRESET_ID = 'claude-code-cli'
-export const CLAUDE_CODE_PROVIDER_IDS = [CLAUDE_CODE_PROVIDER, LEGACY_CLAUDE_CODE_PROVIDER] as const
-export function isClaudePresetId(value: string | undefined): boolean {
-  return value === CLAUDE_CODE_PRESET_ID || value === LEGACY_CLAUDE_CODE_PRESET_ID
-}
-export function isClaudeProvider(value: string | undefined): boolean {
-  return value === CLAUDE_CODE_PROVIDER || value === LEGACY_CLAUDE_CODE_PROVIDER
-}
+export const CLAUDE_CODE_PROVIDER_IDS = [CLAUDE_CODE_PROVIDER] as const
 export const CLAUDE_SESSION_BOUND_EVENT = 'claude-code/session-bound'
 export const CLAUDE_ACTIVITY_EVENT = 'claude-code/activity'
 export const CLAUDE_CONTEXT_USAGE_EVENT = 'claude-code/context-usage'

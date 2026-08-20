@@ -12,6 +12,20 @@ describe('published package contract', () => {
     await expect(readFile(join(presetRoot, 'claude', 'preset.yml'), 'utf8')).resolves.toContain('name: Claude')
   })
 
+  it('contains no legacy claude-code-cli runtime or migration identifier', async () => {
+    const paths = [
+      'src/constants.ts',
+      'src/index.ts',
+      'src/adapter.ts',
+      'src/client/conversation-sidecar.ts',
+      'src/preset-installer.ts',
+      'test/adapter.test.ts',
+      'test/preset-installer.test.ts',
+    ]
+    const contents = await Promise.all(paths.map(path => readFile(join(root, path), 'utf8')))
+    expect(contents.join('\n')).not.toContain('claude-code-cli')
+  })
+
   it('uses the npm package name in the DSH host and browser bundles', async () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { name: string }
     const [patch, buildConfig] = await Promise.all([

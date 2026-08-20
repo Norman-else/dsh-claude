@@ -33,7 +33,7 @@ dsh plugin --profile web add @norman-else/dsh-claude
 
 Wait for the Web profile to rebuild, then refresh the existing DSH page. Open a new conversation and select **Claude** from the Agent Preset picker.
 
-The package ships the Claude preset as a read-only system preset. It does not copy files into `$DSH_HOME/.agent-presets`, so removing the package also removes the preset.
+The package ships a read-only system preset and, during Host activation, installs a protected compatibility copy at `$DSH_HOME/.agent-presets/claude`. The compatibility copy is required because DSH `0.1.0-rc.6` through `0.1.0-rc.8` replace third-party preset roots during profile boot. Installation is idempotent and never overwrites user-modified preset content.
 
 ## Use
 
@@ -145,19 +145,26 @@ The project uses fixture/state-machine tests and a minimal SDK-level handshake p
 
 ## Uninstall
 
-Remove the package from the profile where it was installed:
+Remove the managed compatibility preset before removing the package:
 
 ```sh
+dsh plugin --profile web exec dsh-claude remove-preset
 dsh plugin --profile web remove @norman-else/dsh-claude
 ```
 
-The preset is package-contained and disappears with the dependency. Upgrading from a version that copied a managed preset into `$DSH_HOME/.agent-presets` removes that exact legacy copy automatically while preserving user-modified content.
+DSH does not expose a plugin uninstall lifecycle hook, so removing the package directly can leave `$DSH_HOME/.agent-presets/claude` behind. If the package was already removed, clean it up without cloning the source repository by running the matching installed version through npm:
+
+```sh
+pnpm dlx @norman-else/dsh-claude@<version> remove-preset
+```
+
+Both cleanup paths remove only installer-managed content. They fail without deleting anything if a preset file was user-modified; preserve or remove that custom content manually after review.
 
 ## Troubleshooting
 
 ### Claude preset appears broken
 
-Confirm the package remains installed in the intended profile with `dsh plugin --profile web why @norman-else/dsh-claude`, then restart that profile so its bundle patch and package-contained system preset are reloaded.
+Confirm the package remains installed in the intended profile with `dsh plugin --profile web why @norman-else/dsh-claude`, then restart that profile so Host activation can install or refresh the protected managed preset. You can also run `dsh plugin --profile web exec dsh-claude install-preset` explicitly.
 
 ### Executable is missing
 

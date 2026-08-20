@@ -551,6 +551,10 @@ export class ClaudeSupervisor {
         cursor: active.cursor,
         markActivity: () => { active.sawActivity = true },
         recordDenial: toolUseId => { active.deniedToolUseIds.add(toolUseId) },
+        hasFullAccess: async () => {
+          await this.#syncPermissionMode(entry)
+          return entry.permissionMode === 'bypassPermissions'
+        },
         appendActivity: activity => this.#appendActivity(active, activity),
       }
     })
@@ -775,6 +779,14 @@ export class ClaudeSupervisor {
           title: message.toolName,
           summary: message.summary,
         })
+        if (!TASK_TOOL_NAMES.has(active.callNames.get(message.toolUseId) ?? message.toolName)) {
+          await this.#appendNativeToolResult(active, {
+            kind: 'tool-result',
+            toolUseId: message.toolUseId,
+            output: message.summary,
+            isError: true,
+          })
+        }
         return
     }
   }

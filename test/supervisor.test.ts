@@ -860,6 +860,32 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('settles a native tool card when Claude reports permission denied', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'pull latest' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    query.push({
+      type: 'system',
+      subtype: 'permission_denied',
+      tool_use_id: 'tool-1',
+      tool_name: 'Bash',
+      message: 'The user rejected this action in DeepSeek Harness.',
+    } as SDKMessage)
+    query.push(result('not pulled'))
+    await collect(output)
+
+    const settled = owner.events.find(event => event.type === 'tool/result')
+    const block = (settled?.data as { message: { content: Array<{ toolCallId: string; isError: boolean; content: Array<{ text: string }> }> } }).message.content[0]
+    expect(block?.toolCallId).toBe('tool-1')
+    expect(block?.isError).toBe(true)
+    expect(block?.content[0]?.text).toContain('rejected')
+    await runtime.dispose()
+  })
+
   it('does not mirror subagent-nested tool calls into the native tool channel', async () => {
     const transport = factory()
     const owner = fakeAgent()

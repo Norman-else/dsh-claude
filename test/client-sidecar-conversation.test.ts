@@ -18,10 +18,12 @@ import {
 } from '../src/client/conversation-sidecar.ts'
 import {
   activitiesForTask,
-  ClaudeTasksHeaderButton,
-  runningTasksForTurn,
+  ClaudeTasksPanel,
+  summarizeTurnTasks,
+  tasksForTurn,
   visibleTaskGroups,
 } from '../src/client/ClaudeTasksPanel.tsx'
+import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
 
 const taskCall: ClaudeActivityEvent = {
   turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
@@ -192,7 +194,16 @@ describe('Claude sidecar conversation projection', () => {
       finished: [{ taskId: 'done' }],
     })
     expect(visibleTaskGroups(tasks, new Set(['done'])).finished).toEqual([])
-    expect(runningTasksForTurn(tasks, 2).map(task => task.taskId)).toEqual(['running-2'])
+    expect(tasksForTurn(tasks, 2).map(task => task.taskId)).toEqual(['running-2', 'done'])
+    expect(summarizeTurnTasks(tasksForTurn(tasks, 2))).toEqual({
+      state: 'running', count: 2, running: 1, failed: 0, completed: 1,
+    })
+    expect(summarizeTurnTasks([{ taskId: 'failed', description: 'failed', status: 'failed' }])).toEqual({
+      state: 'failed', count: 1, running: 0, failed: 1, completed: 0,
+    })
+    expect(summarizeTurnTasks([{ taskId: 'done', description: 'done', status: 'completed' }])).toEqual({
+      state: 'completed', count: 1, running: 0, failed: 0, completed: 1,
+    })
     const activities = [
       { ...nestedStarted, taskId: 'running-2' },
       { ...nestedDone, taskId: 'running-3' },
@@ -200,19 +211,37 @@ describe('Claude sidecar conversation projection', () => {
     expect(activitiesForTask(activities, 'running-2')).toEqual([activities[0]])
   })
 
-  it('renders the Tasks launcher only for Claude-owned sessions', () => {
-    const props = {
-      t: (key: string) => key,
-      isOpen: () => false,
-      toggle: () => {},
-      subscribe: () => () => {},
-    }
-    const render = (owned: boolean) => renderToStaticMarkup(createElement(ClaudeTasksHeaderButton, {
-      ...props as never,
-      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned, activities: [] })) as never,
+  it('renders a turn-bound Tasks launcher only when that turn has tasks', () => {
+    const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActivityTail, {
+      matched: { turn },
+      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
+      openTasks: () => {},
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
     }))
-    expect(render(false)).toBe('')
-    expect(render(true)).toContain('dsh-claude-tasks-trigger')
+    expect(render([])).toBe('')
+    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3 }])).toBe('')
+    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2 }])).toContain('tasksTurnRunning')
+    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2 }])).toContain('tasksTurnCompleted')
+    expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2 }])).toContain('tasksTurnFailed')
+  })
+
+  it('renders only the selected turn in the Tasks details panel', () => {
+    const markup = renderToStaticMarkup(createElement(ClaudeTasksPanel, {
+      turn: 2,
+      t: ((key: string) => key) as never,
+      closeDetails: () => {},
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({
+        owned: true,
+        activities: [],
+        tasks: { tasks: [
+          { taskId: 'turn-2', description: 'Task for selected turn', status: 'completed', originTurn: 2 },
+          { taskId: 'turn-3', description: 'Task for other turn', status: 'completed', originTurn: 3 },
+        ] },
+      })) as never,
+    }))
+    expect(markup).toContain('Task for selected turn')
+    expect(markup).not.toContain('Task for other turn')
+    expect(markup).toContain('tasksPanelTurn')
   })
 
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {

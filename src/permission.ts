@@ -15,6 +15,7 @@ export interface ActivePermissionContext {
   cursor: ClaudeActivityCursor
   markActivity?: () => void
   recordDenial?: (toolUseId: string) => void
+  hasFullAccess?: () => Promise<boolean>
   appendActivity: (activity: ClaudeActivityInput) => Promise<void>
 }
 
@@ -87,21 +88,33 @@ export function createPermissionBridge(
         summary: options.title ?? options.description ?? reason,
         detail: input,
       })
-      const outcome = await approval.request({
-        agent: active.agent,
-        toolName,
-        reason,
-        signal: options.signal,
-      })
-      const result = mapApprovalOutcome(outcome, input, options.toolUseID)
+      const alreadyFullAccess = await active.hasFullAccess?.() === true
+      const outcome = alreadyFullAccess
+        ? 'allowed-once'
+        : await approval.request({
+            agent: active.agent,
+            toolName,
+            reason,
+            signal: options.signal,
+          })
+      // The access selector can change while the approval UI is open. Re-read
+      // its durable state so an explicit Full access choice wins over the stale
+      // request being closed as rejected/cancelled by that mode transition.
+      const fullAccess = alreadyFullAccess || await active.hasFullAccess?.() === true
+      const effectiveOutcome = fullAccess ? 'allowed-once' : outcome
+      const result = mapApprovalOutcome(effectiveOutcome, input, options.toolUseID)
       if (result.behavior === 'deny') active.recordDenial?.(options.toolUseID)
       await active.appendActivity({
         kind: 'permission',
-        phase: outcome === 'allowed-once' ? 'completed' : 'denied',
+        phase: effectiveOutcome === 'allowed-once' ? 'completed' : 'denied',
         toolUseId: options.toolUseID,
         toolName,
         title: options.displayName ?? toolName,
-        summary: outcome === 'allowed-once' ? 'Allowed once in DeepSeek Harness' : denialMessage(outcome),
+        summary: fullAccess
+          ? 'Allowed by Full access in DeepSeek Harness'
+          : effectiveOutcome === 'allowed-once'
+            ? 'Allowed once in DeepSeek Harness'
+            : denialMessage(effectiveOutcome),
       })
       return result
     } catch (error) {

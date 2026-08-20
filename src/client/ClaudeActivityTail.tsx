@@ -3,12 +3,12 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeTurnMarker } from './conversation-sidecar.ts'
-import { runningTasksForTurn } from './ClaudeTasksPanel.tsx'
+import { summarizeTurnTasks, tasksForTurn } from './ClaudeTasksPanel.tsx'
 import * as styles from './styles.ts'
 
 export interface ClaudeActivityTailInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
-  openTasks: () => void
+  openTasks: (turn: number) => void
 }
 
 export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected {
@@ -18,20 +18,32 @@ export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected {
 
 export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
   const projection = useClaudeProjection(value => value)
-  const runningTasks = useMemo(
-    () => runningTasksForTurn(projection.tasks?.tasks ?? [], matched.turn),
+  const summary = useMemo(
+    () => summarizeTurnTasks(tasksForTurn(projection.tasks?.tasks ?? [], matched.turn)),
     [projection.tasks, matched.turn],
   )
-  if (runningTasks.length === 0) return null
+  if (summary === undefined) return null
+  const label = summary.state === 'running'
+    ? t('tasksTurnRunning', { count: summary.running })
+    : summary.state === 'failed'
+      ? t('tasksTurnFailed', { failed: summary.failed, completed: summary.completed })
+      : t('tasksTurnCompleted', { count: summary.completed })
+  const glyph = summary.state === 'running' ? '●' : summary.state === 'failed' ? '×' : '✓'
   return (
     <div data-claude-activity-tail={matched.turn}>
-      {runningTasks.length === 0 ? null : (
-        <button type="button" style={styles.tasksTurnLauncher} onClick={openTasks}>
-          <span className="dsh-claude-act-running" style={styles.tasksTurnLauncherDot} aria-hidden="true">●</span>
-          <span>{t('tasksRunningCount', { count: runningTasks.length })}</span>
-          <span aria-hidden="true">›</span>
-        </button>
-      )}
+      <button type="button" style={styles.tasksTurnLauncher} onClick={() => openTasks(matched.turn)}>
+        <span
+          className={summary.state === 'running' ? 'dsh-claude-act-running' : undefined}
+          style={{
+            ...styles.tasksTurnLauncherDot,
+            ...(summary.state === 'failed' ? styles.iconChipError : {}),
+            ...(summary.state === 'completed' ? styles.tasksTurnLauncherDone : {}),
+          }}
+          aria-hidden="true"
+        >{glyph}</span>
+        <span>{label}</span>
+        <span aria-hidden="true">›</span>
+      </button>
     </div>
   )
 }

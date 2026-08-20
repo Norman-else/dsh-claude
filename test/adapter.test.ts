@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
 import { ClaudeCodeAdapter, extractDirectUserText } from '../src/adapter.ts'
+import { CLAUDE_CODE_PROVIDER_IDS } from '../src/constants.ts'
 import type { ClaudeSupervisor, ClaudeTurnStreamEvent } from '../src/supervisor.ts'
 
 const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
@@ -123,16 +124,6 @@ describe('DSH stream mapping', () => {
     ])
   })
 
-  it('accepts the legacy preset id for existing sessions', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([{ type: 'complete', text: '' }]), {
-      currentInitiator: () => agent,
-      get: () => agent,
-    }, () => 'claude-code-cli')
-    const chunks = []
-    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
-    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
-  })
-
   it('rejects a native or recomposed session even if the global provider is selected', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, () => 'standard')
     await expect(async () => {
@@ -147,6 +138,10 @@ describe('DSH stream mapping', () => {
 })
 
 describe('Claude Code model catalog', () => {
+  it('registers only the current Claude provider in the model selector', () => {
+    expect(CLAUDE_CODE_PROVIDER_IDS).toEqual(['claude'])
+  })
+
   it('advertises the five native Claude Code choices and aliases in CLI order', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
     const models = await adapter.listModels('claude')
@@ -157,12 +152,6 @@ describe('Claude Code model catalog', () => {
       { id: 'sonnet', name: 'Sonnet' },
       { id: 'haiku', name: 'Haiku' },
     ])
-  })
-
-  it('labels model metadata with the provider route being queried', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
-    const models = await adapter.listModels('claude-code-cli')
-    expect(models.every(model => model.provider === 'claude-code-cli')).toBe(true)
   })
 
   it('publishes the explicit 1M alias capacity through the native DSH model contract', async () => {

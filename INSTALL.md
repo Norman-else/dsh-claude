@@ -16,7 +16,7 @@ Stop if Doctor cannot find an authenticated local Claude Code installation. Do n
 
 ## 2. Link the bundle into the current Web profile
 
-The bundle registers its package-contained Claude preset as a system preset; no files are copied into the user preset root.
+The bundle retains its package-contained system preset and installs a protected compatibility copy at `$DSH_HOME/.agent-presets/claude` during Host activation. This works around DSH `0.1.0-rc.6` through `0.1.0-rc.8` replacing third-party preset roots. Existing user-modified files are preserved rather than overwritten.
 
 ```sh
 dsh plugin --profile web add "link:$(pwd)"
@@ -39,8 +39,17 @@ A live prompt can consume the user's Claude subscription. Keep it minimal.
 
 ## 4. Uninstall
 
+Clean up the managed preset while the profile can still execute the package CLI, then remove the plugin:
+
 ```sh
+dsh plugin --profile web exec dsh-claude remove-preset
 dsh plugin --profile web remove @norman-else/dsh-claude
 ```
 
-The package-contained system preset disappears with the dependency. No source checkout or separate cleanup command is required.
+DSH has no plugin uninstall lifecycle hook, so direct package removal can leave the compatibility preset behind. After direct removal, no source checkout is required; run the matching package version:
+
+```sh
+pnpm dlx @norman-else/dsh-claude@<version> remove-preset
+```
+
+Cleanup refuses to delete user-modified preset content.

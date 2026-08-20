@@ -206,7 +206,7 @@ The plugin may provide a plugin-owned context refresh command, but must not shad
 5. map rejected/cancelled/unavailable to `{ behavior: 'deny', message }`
 6. write the resulting sidecar permission activity
 
-The native DSH access selector remains the sole write path and its `sandbox/mode` event is the sole durable source of truth. The supervisor folds that event at Query creation and before every turn or metadata operation, mapping `read-only` to Claude `plan`, `workspace-write` to `acceptEdits`, and `danger-full-access` to `bypassPermissions`. The native UI already requires explicit risk acknowledgement before Full access.
+The native DSH access selector remains the sole write path and its `sandbox/mode` event is the sole durable source of truth. The supervisor folds that event at Query creation, before every turn or metadata operation, and before and after each approval request, mapping `read-only` to Claude `plan`, `workspace-write` to `acceptEdits`, and `danger-full-access` to `bypassPermissions`. If the user explicitly selects Full access while an approval request is open, the newest durable mode overrides the stale request being closed as rejected or cancelled. The native UI already requires explicit risk acknowledgement before Full access.
 
 The plugin keeps `canUseTool` active for modes where Claude requests approval. `bypassPermissions` skips those SDK requests only after the user selects DSH Full access. A missing or invalid sandbox event fails safe to `plan`. This is Claude behavior mapping, not kernel confinement of the Claude subprocess.
 
@@ -218,7 +218,7 @@ Register one session-scoped projection source through the public Client session 
 
 The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, context usage, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
 
-A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail can show an accurate running-task launcher; tasks observed without an active turn remain available from the session header.
+A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail shows a running, completed, or failed launcher for as long as that task remains in the canonical snapshot. Tasks without a known origin turn are not given a detached global UI entry.
 
 ### 5.2 Activity card
 
@@ -236,7 +236,7 @@ Do not render raw JSON by default. An expand control may show already-redacted d
 
 ### 5.3 Background tasks panel
 
-Register an additive session-header utility and a matching Claude turn-tail launcher that open the same DSH details column. The panel groups the latest sidecar task snapshot into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
+Register a Claude turn-tail launcher only when that turn owns tasks in the latest sidecar snapshot; do not keep a permanent session-header Tasks control. The launcher reflects running, completed, or failed state and opens the DSH details column scoped to that origin turn. The panel groups that turn's tasks into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
 
 Finished tasks may be collapsed and cleared from the mounted Client view. Clear is deliberately local presentation state: it does not mutate or falsify the canonical sidecar snapshot, and a newly observed settled task remains visible. “View activity” filters only already-redacted sidecar activity by the bounded task id; it never reads Claude transcript paths or exposes the resume identity.
 

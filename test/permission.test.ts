@@ -66,6 +66,25 @@ describe('DSH approval bridge', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('honors Full access selected while an approval request is pending', async () => {
+    const state = active()
+    let fullAccess = false
+    const request = vi.fn(async () => {
+      fullAccess = true
+      return 'rejected' as const
+    })
+    const canUseTool = createPermissionBridge({ request }, () => ({
+      ...state,
+      hasFullAccess: async () => fullAccess,
+    }))
+
+    await expect(canUseTool('Bash', { command: 'git pull --ff-only' }, toolOptions())).resolves.toMatchObject({
+      behavior: 'allow',
+      toolUseID: 'tool-1',
+    })
+    expect(state.events.at(-1)?.data).toMatchObject({ phase: 'completed', summary: 'Allowed by Full access in DeepSeek Harness' })
+  })
+
   it('fails closed when the approval service rejects', async () => {
     const state = active()
     const canUseTool = createPermissionBridge({ request: async () => { throw new Error('audit failed') } }, () => state)

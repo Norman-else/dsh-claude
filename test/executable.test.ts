@@ -36,7 +36,20 @@ describe('Claude executable resolution', () => {
     expect(calls).toEqual(['/custom/claude'])
   })
 
-  it('falls back after PATH resolution fails', async () => {
+  it('accepts a configured absolute Windows path', async () => {
+    const configuredPath = String.raw`C:\Users\Administrator\AppData\Local\Microsoft\WinGet\Links\claude.EXE`
+    const runtime = {
+      resolveExecutable: async (candidate: string) => candidate,
+      spawn: () => handle(''),
+    }
+
+    await expect(resolveClaudeExecutable(runtime, configuredPath)).resolves.toEqual({
+      path: configuredPath,
+      searched: [configuredPath],
+    })
+  })
+
+  it.runIf(process.platform === 'darwin')('falls back after PATH resolution fails', async () => {
     const calls: string[] = []
     const runtime = {
       resolveExecutable: async (candidate: string) => {

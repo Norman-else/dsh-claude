@@ -185,10 +185,10 @@ Expected evidence: state-machine tests cover multi-turn reuse, resume, idle evic
 1. Implement `canUseTool` with access to the active Agent/request state.
 2. Create a stable DSH call id from the Claude tool-use id only where the public branding helper permits; otherwise omit callId and put the bounded summary in `reason`.
 3. Map DSH `allowed-once` to SDK allow with unchanged input.
-4. Map rejected/cancelled/unavailable to SDK deny with stable messages.
-5. Do not infer a DSH sandbox mode from prompt text; the public model-call contract has no sandbox-mode signal. Keep Claude in default permission mode and bridge every callback.
-6. Persist pending and decided sidecar activities and mark permission work as side-effect-relevant activity for crash classification.
-7. Test every approval outcome, fail-closed audit behavior, secret redaction, and missing active-turn ownership.
+4. Map rejected/cancelled/unavailable to SDK deny with stable messages, except when the newest durable sandbox mode shows that the user selected Full access while the request was open.
+5. Fold the current DSH sandbox mode before and after every permission callback so live access-selector changes update the long-lived Query and stale approval closure cannot override explicit Full access.
+6. Persist pending and decided sidecar activities, settle denied native tool mirrors with an error result, and mark permission work as side-effect-relevant activity for crash classification.
+7. Test every approval outcome, live Full access transition, denied tool-card settlement, fail-closed audit behavior, secret redaction, and missing active-turn ownership.
 
 Expected evidence: permission tests pass and the callback never grants on unavailable/cancelled outcomes.
 
@@ -233,9 +233,10 @@ Expected evidence: Client typecheck/build passes; real assembler regression demo
 2. Group the DSH details panel into Running and Finished cards with duration, token, tool-use, type, last-tool, and summary metadata.
 3. Implement Finished collapse and mounted-Client-only Clear; do not mutate canonical sidecar truth.
 4. Expose only already-redacted matching sidecar activity as “View activity”; never read Claude transcript paths or resume identity.
-5. Add a matching-turn running-task launcher and keep the session-header utility as the fallback for tasks without a known origin.
-6. Do not expose per-task Stop because the public SDK and DSH contracts only support whole-turn cancellation.
-7. Add normalization, sidecar, supervisor, and pure Client-selection regressions.
+5. Add a matching-turn launcher for running, completed, and failed tasks; remove the permanent session-header utility and do not create a detached entry for tasks without a known origin.
+6. Scope the details panel to the selected origin turn so historical launchers do not open the latest session-wide task list.
+7. Do not expose per-task Stop because the public SDK and DSH contracts only support whole-turn cancellation.
+8. Add normalization, sidecar, supervisor, and pure Client-selection regressions.
 
 Expected evidence: grouped interaction tests pass, the panel and turn-tail share one details controller, and no unsupported task mutation surface exists.
 

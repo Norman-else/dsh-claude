@@ -10,7 +10,7 @@ import {
   type TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, isClaudePresetId } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
 
@@ -144,7 +144,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new Error(`dsh-claude: auxiliary ${options.purpose} calls are not routed into the Claude session`)
     }
     const agent = resolveAgent(this.#agents, options)
-    if (!isClaudePresetId(this.#presetIdFor(agent))) {
+    if (this.#presetIdFor(agent) !== CLAUDE_CODE_PRESET_ID) {
       throw new Error(`dsh-claude: provider ${CLAUDE_CODE_PROVIDER} is available only to the ${CLAUDE_CODE_PRESET_ID} preset`)
     }
     const thinkingMode = thinkingModeFor(options.reasoningEffort)

@@ -57,8 +57,10 @@ describe('Claude sidecar repository', () => {
     const files = await readdir(store.root)
     expect(files).toHaveLength(1)
     expect(files[0]).not.toContain('session')
-    expect((await stat(store.root)).mode & 0o777).toBe(0o700)
-    expect((await stat(join(store.root, files[0]!))).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect((await stat(store.root)).mode & 0o777).toBe(0o700)
+      expect((await stat(join(store.root, files[0]!))).mode & 0o777).toBe(0o600)
+    }
     const durable = await readFile(join(store.root, files[0]!), 'utf8')
     expect(durable).not.toContain('raw-secret')
     expect(durable).not.toContain('embedded-secret')

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -9,6 +9,7 @@ import { formatTokenCount } from './token-format.ts'
 export interface ClaudeTasksPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   closeDetails: () => void
+  turn: number
 }
 
 export interface ClaudeTasksPanelProps extends ClaudeTasksPanelInjected {
@@ -36,8 +37,30 @@ export function activitiesForTask(activities: readonly ClaudeActivityEvent[], ta
   return activities.filter(activity => activity.taskId === taskId)
 }
 
-export function runningTasksForTurn(tasks: readonly ClaudeTaskInfo[], turn: number) {
-  return tasks.filter(task => task.status === 'running' && task.originTurn === turn)
+export function tasksForTurn(tasks: readonly ClaudeTaskInfo[], turn: number) {
+  return tasks.filter(task => task.originTurn === turn)
+}
+
+export interface TurnTaskSummary {
+  state: 'running' | 'failed' | 'completed'
+  count: number
+  running: number
+  failed: number
+  completed: number
+}
+
+export function summarizeTurnTasks(tasks: readonly ClaudeTaskInfo[]): TurnTaskSummary | undefined {
+  if (tasks.length === 0) return undefined
+  const running = tasks.filter(task => task.status === 'running').length
+  const failed = tasks.filter(task => task.status === 'failed' || task.status === 'stopped' || task.status === 'killed').length
+  const completed = tasks.filter(task => task.status === 'completed').length
+  return {
+    state: running > 0 ? 'running' : failed > 0 ? 'failed' : 'completed',
+    count: tasks.length,
+    running,
+    failed,
+    completed,
+  }
 }
 
 function statusGlyph(status: ClaudeTaskInfo['status']): string {
@@ -135,12 +158,15 @@ function GroupHeading(props: { label: string; count: number; collapsed?: boolean
   )
 }
 
-export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails }: ClaudeTasksPanelProps) {
+export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }: ClaudeTasksPanelProps) {
   const projection = useClaudeProjection(value => value)
+  const tasks = useMemo(
+    () => tasksForTurn(projection.tasks?.tasks ?? [], turn),
+    [projection.tasks, turn],
+  )
   useEffect(() => {
-    if (!projection.owned) closeDetails()
-  }, [closeDetails, projection.owned])
-  const tasks = projection.tasks?.tasks ?? []
+    if (!projection.owned || tasks.length === 0) closeDetails()
+  }, [closeDetails, projection.owned, tasks.length])
   const [finishedCollapsed, setFinishedCollapsed] = useState(false)
   const [dismissedSettledIds, setDismissedSettledIds] = useState<ReadonlySet<string>>(() => new Set())
   const groups = useMemo(() => visibleTaskGroups(tasks, dismissedSettledIds), [tasks, dismissedSettledIds])
@@ -153,7 +179,10 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails }: Claud
   return (
     <div style={styles.tasksPanel}>
       <div style={styles.tasksHeader}>
-        <span style={styles.tasksHeading}>{t('tasksPanel')}</span>
+        <div>
+          <span style={styles.tasksHeading}>{t('tasksPanelTurn')}</span>
+          <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn })}</span>
+        </div>
         <button type="button" style={styles.tasksClose} aria-label={t('tasksClose')} onClick={closeDetails}>×</button>
       </div>
       <div style={styles.tasksBody}>
@@ -177,43 +206,5 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails }: Claud
         </section>
       </div>
     </div>
-  )
-}
-
-export interface ClaudeTasksLauncherInjected {
-  t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
-  isOpen: () => boolean
-  toggle: () => void
-  subscribe: (fn: () => void) => () => void
-}
-
-export interface ClaudeTasksHeaderButtonProps extends ClaudeTasksLauncherInjected {
-  useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
-}
-
-export function ClaudeTasksHeaderButton({ useClaudeProjection, t, isOpen, toggle, subscribe }: ClaudeTasksHeaderButtonProps) {
-  const open = useSyncExternalStore(subscribe, isOpen, isOpen)
-  const projection = useClaudeProjection(value => value)
-  if (!projection.owned) return null
-  const runningCount = projection.tasks?.tasks.filter(task => task.status === 'running').length ?? 0
-  return (
-    <button
-      type="button"
-      className="dsh-claude-tasks-trigger"
-      style={{ ...styles.tasksHeaderButton, ...(open ? styles.tasksHeaderButtonActive : {}) }}
-      aria-label={t('tasksOpen')}
-      aria-pressed={open}
-      onClick={(event) => {
-        toggle()
-        event.currentTarget.blur()
-      }}
-    >
-      <style>{styles.tasksTriggerHoverCss}</style>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" />
-      </svg>
-      <span>{t('tasks')}</span>
-      {runningCount === 0 ? null : <span className="dsh-claude-act-running" style={styles.tasksBadgeInline} aria-hidden="true">{runningCount}</span>}
-    </button>
   )
 }

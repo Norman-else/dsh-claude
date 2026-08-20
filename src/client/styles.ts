@@ -109,10 +109,19 @@ export const tasksHeader: CSSProperties = {
 }
 
 export const tasksHeading: CSSProperties = {
+  display: 'block',
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 14,
   lineHeight: '20px',
   fontWeight: 600,
+}
+
+export const tasksTurnMeta: CSSProperties = {
+  display: 'block',
+  marginTop: 1,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
 }
 
 export const tasksClose: CSSProperties = {
@@ -358,7 +367,7 @@ export const tasksBadge: CSSProperties = {
   fontWeight: 600,
 }
 
-/* Claude tasks session-header button (next to Session log). */
+/* Claude task launcher attached to the owning conversation turn. */
 
 export const tasksTurnLauncher: CSSProperties = {
   display: 'inline-flex',
@@ -381,47 +390,6 @@ export const tasksTurnLauncherDot: CSSProperties = {
   fontSize: 9,
 }
 
-export const tasksTriggerHoverCss = [
-  '.dsh-claude-tasks-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
-  '.dsh-claude-tasks-trigger:focus:not(:focus-visible){outline:none;border-color:var(--dsw-alias-border-l2)}',
-  '.dsh-claude-tasks-trigger[aria-pressed="true"]:focus:not(:focus-visible){border-color:var(--dsw-alias-border-l3)}',
-  '.dsh-claude-tasks-trigger>span,.dsh-claude-tasks-trigger>svg{flex:none}',
-].join('')
-
-export const tasksHeaderButton: CSSProperties = {
-  minWidth: 111,
-  height: 32,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 4,
-  padding: '6px 12px',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  borderRadius: 18,
-  color: 'var(--dsw-alias-label-primary)',
-  fontFamily: 'var(--dsw-font-family)',
-  fontSize: 13,
-  fontWeight: 400,
-  lineHeight: '20px',
-  whiteSpace: 'nowrap',
-  cursor: 'pointer',
-}
-
-export const tasksHeaderButtonActive: CSSProperties = {
-  borderColor: 'var(--dsw-alias-border-l3)',
-  background: 'var(--dsw-alias-interactive-bg-hover)',
-}
-
-export const tasksBadgeInline: CSSProperties = {
-  minWidth: 14,
-  height: 14,
-  display: 'grid',
-  placeItems: 'center',
-  padding: '0 3px',
-  borderRadius: 999,
-  background: 'var(--dsw-static-blue-450)',
-  color: 'var(--dsw-alias-label-on-accent, #fff)',
-  fontSize: 9,
-  lineHeight: '1',
-  fontWeight: 600,
+export const tasksTurnLauncherDone: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary, var(--dsw-alias-label-tertiary))',
 }

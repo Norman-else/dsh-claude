@@ -7,7 +7,7 @@ import { claudeActivityStepDefinition, claudeTurnDefinition, selectClaudeTurn } 
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
-import { ClaudeTasksHeaderButton, ClaudeTasksPanel, type ClaudeTasksLauncherInjected, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
+import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
 import { ClaudeProjectionStore } from './projection.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
@@ -58,21 +58,16 @@ export function apply(ctx: ClientContext): void {
   // Conditional switching for the details column: the tasks panel registration
   // exists only while the panel is open. While closed, the built-in tool
   // details view (priority 0) owns the single slot again.
-  const tasksPanelListeners = new Set<() => void>()
   let disposeTasksDetails: (() => void) | undefined
-  let tasksPanelSession: string | undefined
-  const notifyTasksPanel = (): void => {
-    for (const fn of [...tasksPanelListeners]) fn()
-  }
+  let tasksPanelTarget: { sessionId: string; turn: number } | undefined
   const closeTasksPanel = (): void => {
     if (disposeTasksDetails === undefined) return
     disposeTasksDetails()
     disposeTasksDetails = undefined
-    tasksPanelSession = undefined
+    tasksPanelTarget = undefined
     layout?.closeDetails()
-    notifyTasksPanel()
   }
-  const openTasksPanel = (sessionId: string): void => {
+  const openTasksPanel = (sessionId: string, turn: number): void => {
     closeTasksPanel()
     // The details column is a single slot and the built-in conversation UI
     // already occupies priority 0, so register below it (lowest renders) to
@@ -84,24 +79,20 @@ export function apply(ctx: ClientContext): void {
         locale: namespace,
         inject: (): ClaudeTasksPanelInjected => ({
           t,
+          turn,
           closeDetails: closeTasksPanel,
         }),
       }, ClaudeTasksPanel)
     } catch {
       return
     }
-    tasksPanelSession = sessionId
+    tasksPanelTarget = { sessionId, turn }
     layout?.openDetails()
-    notifyTasksPanel()
-  }
-  const toggleTasksPanel = (sessionId: string): void => {
-    if (tasksPanelSession === sessionId) closeTasksPanel()
-    else openTasksPanel(sessionId)
   }
   ctx.effect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closeTasksPanel()
     const observer = new MutationObserver(() => {
-      if (tasksPanelSession !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
+      if (tasksPanelTarget !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
         closeTasksPanel()
       }
     })
@@ -111,41 +102,21 @@ export function apply(ctx: ClientContext): void {
       closeTasksPanel()
     }
   }, 'dsh-claude: tasks panel lifecycle')
-  const tasksLauncher = (sessionId: string): Omit<ClaudeTasksLauncherInjected, 't'> => ({
-    isOpen: () => tasksPanelSession === sessionId,
-    toggle: () => toggleTasksPanel(sessionId),
-    subscribe: (fn) => {
-      tasksPanelListeners.add(fn)
-      return () => {
-        tasksPanelListeners.delete(fn)
-      }
-    },
-  })
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
     select: selectClaudeTurn,
     inject: (sessionId: string): ClaudeActivityTailInjected => ({
       t,
-      openTasks: () => openTasksPanel(sessionId),
+      openTasks: turn => openTasksPanel(sessionId, turn),
     }),
   }, ClaudeActivityTail))
   if (sessions !== undefined) {
     // The layout closes the column on session switch; mirror that here so the
     // next session's native details view is not shadowed.
     ctx.effect(() => sessions.list.subscribe(() => {
-      if (tasksPanelSession !== undefined && sessions.list.getSnapshot().current !== tasksPanelSession) closeTasksPanel()
+      if (tasksPanelTarget !== undefined && sessions.list.getSnapshot().current !== tasksPanelTarget.sessionId) closeTasksPanel()
     }), 'dsh-claude: tasks panel session tracking')
   }
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
-    id: 'claude-tasks',
-    order: -10,
-    label: () => t('tasksOpen'),
-    inject: (sessionId: string): ClaudeTasksLauncherInjected => ({
-      t,
-      ...tasksLauncher(sessionId),
-    }),
-  }, ClaudeTasksHeaderButton))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'claude-code',
