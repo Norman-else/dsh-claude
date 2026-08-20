@@ -66,6 +66,25 @@ describe('DSH approval bridge', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('routes AskUserQuestion before Full access and never opens approval', async () => {
+    const state = active()
+    const request = vi.fn(async () => 'allowed-once' as const)
+    const userQuestion = vi.fn(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { questions: [], answers: {} },
+    }))
+    const hasFullAccess = vi.fn(async () => true)
+    const canUseTool = createPermissionBridge({ request }, () => ({
+      ...state,
+      hasFullAccess,
+    }), userQuestion)
+
+    await expect(canUseTool('AskUserQuestion', { questions: [] }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    expect(userQuestion).toHaveBeenCalledOnce()
+    expect(hasFullAccess).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('honors Full access selected while an approval request is pending', async () => {
     const state = active()
     let fullAccess = false

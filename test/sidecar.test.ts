@@ -41,6 +41,27 @@ describe('Claude sidecar repository', () => {
     expect(projection.tasks?.tasks).toEqual([{ taskId: 'task', description: 'work', status: 'running', originTurn: 1 }])
   })
 
+  it('persists native question lifecycle without answer content', async () => {
+    const store = await repository()
+    await store.appendActivity('session', {
+      turn: 1,
+      step: 1,
+      ordinal: 0,
+      kind: 'question',
+      phase: 'started',
+      toolUseId: 'question-1',
+      title: 'Claude asked a question',
+      summary: 'Which database?',
+    })
+    await expect(store.read('session')).resolves.toMatchObject({
+      activities: [{
+        kind: 'question',
+        phase: 'started',
+        summary: 'Which database?',
+      }],
+    })
+  })
+
   it('redacts durable values and restricts filesystem permissions', async () => {
     const store = await repository()
     await store.appendActivity('session', {

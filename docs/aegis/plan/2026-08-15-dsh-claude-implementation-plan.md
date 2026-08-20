@@ -94,7 +94,8 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 - `src/async-queue.ts` — bounded closeable async input/output queues.
 - `src/sdk-messages.ts` — SDK message normalization and protocol fixtures' owning parser.
 - `src/supervisor.ts` — per-session long-lived query/process state machine.
-- `src/permission.ts` — DSH approval bridge and policy mapping.
+- `src/permission.ts` — DSH approval dispatch and policy mapping.
+- `src/user-question.ts` — Claude `AskUserQuestion` mapping to DSH's native user-question service.
 - `src/adapter.ts` — DSH LLM adapter and StreamChunk mapping.
 - `src/preset-route.ts` — preset-scoped `agent/request` route override.
 - `src/preset-installer.ts` — legacy managed preset install/remove using templates retained under `legacy-preset/`.
@@ -124,7 +125,7 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 - `test/sdk-messages.test.ts`
 - `test/spawn.test.ts`
 - `test/supervisor.test.ts`
-- `test/permission.test.ts`
+- `test/permission.test.ts`, `test/user-question.test.ts`
 - `test/adapter.test.ts`
 - `test/preset-installer.test.ts`
 - `test/sidecar.test.ts`, `test/projection-routes.test.ts`
@@ -191,6 +192,17 @@ Expected evidence: state-machine tests cover multi-turn reuse, resume, idle evic
 7. Test every approval outcome, live Full access transition, denied tool-card settlement, fail-closed audit behavior, secret redaction, and missing active-turn ownership.
 
 Expected evidence: permission tests pass and the callback never grants on unavailable/cancelled outcomes.
+
+### Task 5A — Bridge Claude user questions to the native DSH composer
+
+1. Inject the public `ctx.userQuestions` service and route `AskUserQuestion` before approval or Full access handling.
+2. Validate and map Claude question prompts, headers, choices, and multi-select flags to stable DSH question ids.
+3. Convert selected labels and custom text back to Claude's `updatedInput.answers` object while preserving the original questions.
+4. Fail closed on malformed input, unavailable UI, cancellation, abort, or missing active-turn ownership; never open an approval row for a question.
+5. Persist only bounded question lifecycle metadata, never the user's answer content.
+6. Test single-select, multi-select, custom text, Full access non-bypass, malformed input, and failure behavior.
+
+Expected evidence: Claude blocks on DSH's native question composer and resumes with the exact selected answer mapping.
 
 ### Task 6 — Implement the DSH LLM bridge and preset route
 

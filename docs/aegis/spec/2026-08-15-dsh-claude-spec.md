@@ -210,6 +210,12 @@ The native DSH access selector remains the sole write path and its `sandbox/mode
 
 The plugin keeps `canUseTool` active for modes where Claude requests approval. `bypassPermissions` skips those SDK requests only after the user selects DSH Full access. A missing or invalid sandbox event fails safe to `plan`. This is Claude behavior mapping, not kernel confinement of the Claude subprocess.
 
+### 4.1 User-question contract
+
+Claude `AskUserQuestion` is an interaction, not an approval. `canUseTool` must route it before approval or Full access handling, map its bounded `questions` array to `ctx.userQuestions.ask({ questions, agent, signal })`, wait for the native DSH answer, and return an SDK allow result whose `updatedInput` preserves the original questions and adds Claude's required `answers` object keyed by question text. Multi-select values are comma-separated labels; DSH custom text replaces a single-select choice and supplements multi-select labels.
+
+Full access never bypasses a user question. Missing active-turn ownership, malformed or duplicate questions, native provider failure, cancellation, and abort all fail closed with an SDK deny result. Sidecar activity may record only pending/completed/cancelled state and bounded question prompts; it must never persist the user's selected labels or custom text. Ordinary tools continue through `ctx.approval` unchanged.
+
 ## 5. Client Components
 
 ### 5.1 Conversation projection

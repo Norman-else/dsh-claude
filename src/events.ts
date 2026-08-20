@@ -12,6 +12,7 @@ export type ClaudeActivityKind =
   | 'tool-call'
   | 'tool-result'
   | 'permission'
+  | 'question'
   | 'subagent'
   | 'usage'
   | 'warning'

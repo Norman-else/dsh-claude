@@ -7,6 +7,7 @@ import {
   type ClaudeActivityInput,
   type ClaudeActivityCursor,
 } from './events.ts'
+import type { UserQuestionBridge } from './user-question.ts'
 
 export type ApprovalRequester = Pick<ApprovalService, 'request'>
 
@@ -64,8 +65,19 @@ export function mapApprovalOutcome(
 export function createPermissionBridge(
   approval: ApprovalRequester,
   activeContext: ActivePermissionContextProvider,
+  userQuestion?: UserQuestionBridge,
 ): CanUseTool {
   return async (toolName, input, options) => {
+    if (toolName === 'AskUserQuestion') {
+      return userQuestion === undefined
+        ? {
+            behavior: 'deny',
+            message: 'DeepSeek Harness user questions are unavailable; the question was cancelled.',
+            toolUseID: options.toolUseID,
+            decisionClassification: 'user_reject',
+          }
+        : userQuestion(input, options)
+    }
     const active = activeContext()
     if (active === undefined) {
       return {

@@ -9,8 +9,8 @@ Run the local Claude Code CLI as a first-class main conversation inside DeepSeek
 - A `Claude` Agent Preset in the normal new-session preset picker.
 - A `claude` DSH model provider with Claude Code's `default`, `opus[1m]`, `fable`, `sonnet`, and `haiku` choices.
 - Long-lived Claude processes with per-session serialization, idle eviction, cancellation, and persisted Claude session resume.
-- DSH approval prompts for Claude tool permission requests.
-- Durable, redacted plugin-sidecar activity for thinking summaries, tool calls/results, permissions, subagents, status, usage, and errors.
+- DSH approval prompts for Claude tool permission requests and native DSH question forms for Claude clarifications.
+- Durable, redacted plugin-sidecar activity for thinking summaries, tool calls/results, permissions, question lifecycle, subagents, status, usage, and errors.
 - Native turn-tail activity cards and a Settings → Claude Code Doctor panel.
 - A safe CLI for Doctor and managed preset install/remove.
 
@@ -41,7 +41,7 @@ The package ships a read-only system preset and, during Host activation, install
 2. Choose **Claude** in the Agent Preset picker.
 3. Choose **Default (recommended)**, **Opus (1M context)**, **Fable**, **Sonnet**, or **Haiku**.
 4. Send a normal text prompt.
-5. Answer Claude tool permissions through the existing DSH approval UI.
+5. Answer Claude tool permissions through the existing DSH approval UI and Claude clarifying questions through DSH's native question form.
 6. Expand **Claude Code activity** beneath a completed assistant turn to inspect the redacted execution trail.
 
 Native DSH presets remain available and keep the native DSH agent loop.
@@ -60,6 +60,7 @@ Every Claude permission callback is bridged to `ctx.approval.request(...)`:
 - reject, cancel, missing answerer, and audit failure all deny the action.
 - DSH `never` approval policy therefore fails closed.
 - DSH access modes map to Claude permission modes: `read-only` → `plan`, `workspace-write` → `acceptEdits`, and explicitly acknowledged `danger-full-access` → `bypassPermissions`.
+- Claude `AskUserQuestion` is always routed to `ctx.userQuestions`, including under Full access; cancellation or an unavailable question surface denies the interaction, and answer content is not copied into the sidecar.
 
 This is a permission-policy bridge, not kernel-level workspace confinement. DSH `0.1.0-rc.5` exposes one writable sandbox root, while full Claude compatibility also requires writable `~/.claude`. The plugin therefore does **not** claim that paths outside the workspace are technically unwritable. It still uses DSH managed subprocess ownership for explicit argv, credential-shaped environment scrubbing, cancellation, and whole-process-tree termination.
 

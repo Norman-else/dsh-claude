@@ -71,7 +71,7 @@ function binding(value: unknown): ClaudeSessionBoundEvent | undefined {
   }
 }
 
-const ACTIVITY_KINDS = new Set(['status', 'thinking', 'tool-call', 'tool-result', 'permission', 'subagent', 'usage', 'warning', 'error'])
+const ACTIVITY_KINDS = new Set(['status', 'thinking', 'tool-call', 'tool-result', 'permission', 'question', 'subagent', 'usage', 'warning', 'error'])
 const ACTIVITY_PHASES = new Set(['started', 'updated', 'completed', 'denied', 'failed'])
 
 function activity(value: unknown): ClaudeActivityEvent | undefined {

@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
+import type {} from '@deepseek-ai/dsh-user-questions'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, ClaudeCommandBridge, type ClaudeAgentCommandService } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
@@ -18,7 +19,7 @@ import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeD
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 
 export const name = 'llm-claude'
-export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval']
+export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions']
 
 export interface Config {
   executablePath?: string
@@ -199,6 +200,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const supervisor = new ClaudeSupervisor({
     runtime: ctx.subprocess,
     approval: ctx.approval,
+    userQuestions: ctx.userQuestions,
     config: supervisorConfig,
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,

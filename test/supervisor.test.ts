@@ -136,6 +136,7 @@ function supervisor(
   const runtime = new ClaudeSupervisor({
     runtime: { spawn: () => { throw new Error('fake query must not spawn') } },
     approval: { request: async () => 'rejected' },
+    userQuestions: { ask: async () => ({ answers: [] }) },
     config: {
       executablePath: '/local/claude',
       idleTimeoutMs,

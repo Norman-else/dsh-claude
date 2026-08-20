@@ -14,6 +14,7 @@ import {
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
+import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { AsyncQueue } from './async-queue.ts'
 import { TASK_TOOL_NAMES } from './constants.ts'
@@ -27,6 +28,7 @@ import {
   type ClaudeUsage,
 } from './events.ts'
 import { createPermissionBridge } from './permission.ts'
+import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
@@ -253,6 +255,7 @@ export class ClaudeSupervisor {
   readonly #entries = new Map<string, SupervisorEntry>()
   readonly #runtime: Pick<SubprocessRuntime, 'spawn'>
   readonly #approval: Pick<ApprovalService, 'request'>
+  readonly #userQuestions: Pick<UserQuestionService, 'ask'>
   readonly #config: ClaudeSupervisorConfig
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
@@ -265,6 +268,7 @@ export class ClaudeSupervisor {
   constructor(dependencies: {
     runtime: Pick<SubprocessRuntime, 'spawn'>
     approval: Pick<ApprovalService, 'request'>
+    userQuestions: Pick<UserQuestionService, 'ask'>
     config: ClaudeSupervisorConfig
     queryFactory?: ClaudeQueryFactory
     runDetached?: <T>(operation: () => T) => T
@@ -272,6 +276,7 @@ export class ClaudeSupervisor {
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
+    this.#userQuestions = dependencies.userQuestions
     this.#config = dependencies.config
     this.#queryFactory = dependencies.queryFactory ?? (params => claudeQuery(params))
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
@@ -544,20 +549,22 @@ export class ClaudeSupervisor {
       taskSnapshotTimer: undefined,
     } as SupervisorEntry
 
-    const canUseTool = createPermissionBridge(this.#approval, () => {
+    const activeInteraction = () => {
       const active = entry.active
       return active === undefined ? undefined : {
         agent: active.agent,
         cursor: active.cursor,
         markActivity: () => { active.sawActivity = true },
-        recordDenial: toolUseId => { active.deniedToolUseIds.add(toolUseId) },
+        recordDenial: (toolUseId: string) => { active.deniedToolUseIds.add(toolUseId) },
         hasFullAccess: async () => {
           await this.#syncPermissionMode(entry)
           return entry.permissionMode === 'bypassPermissions'
         },
-        appendActivity: activity => this.#appendActivity(active, activity),
+        appendActivity: (activity: ClaudeActivityInput) => this.#appendActivity(active, activity),
       }
-    })
+    }
+    const userQuestion = createUserQuestionBridge(this.#userQuestions, activeInteraction)
+    const canUseTool = createPermissionBridge(this.#approval, activeInteraction, userQuestion)
     const options: ClaudeOptions = {
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,
