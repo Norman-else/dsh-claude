@@ -1,7 +1,7 @@
 {
   "name": "@norman-else/dsh-claude",
   "description": "Run the local Claude Code CLI as a first-class main conversation inside DeepSeek Harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
@@ -13,7 +13,9 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "prepack": "pnpm run build"
+    "prepack": "pnpm run build",
+    "release": "node scripts/publish.mjs",
+    "release:check": "node scripts/publish.mjs --dry-run"
   },
   "exports": {
     ".": {

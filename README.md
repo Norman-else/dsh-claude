@@ -106,7 +106,7 @@ To configure a nonstandard path, edit the plugin row in the Web profile composit
 
 ```yaml
 - id: llm-claude
-  name: dsh-claude
+  name: @norman-else/dsh-claude
   config:
     executablePath: /absolute/path/to/claude
     model: default
@@ -135,6 +135,17 @@ To inspect the package that would be published:
 ```sh
 pnpm pack --pack-destination ./dist-pack
 ```
+
+### Release
+
+Update the version in `package.json`, commit it, and push the clean release commit first. Then verify and publish both npm and GitHub releases:
+
+```sh
+pnpm release:check
+pnpm release
+```
+
+The release script requires `HEAD` to match the current branch on `origin`. It runs the full project check and npm package preview, publishes the public npm package, verifies npm's `gitHead`, and creates a matching `v<version>` GitHub Release with generated notes. It is safe to rerun after a partial failure: an existing npm version or GitHub Release is accepted only when it points to the current commit.
 
 The project uses fixture/state-machine tests and a minimal SDK-level handshake probe (a tool-disabled, one-turn `query()` against the resolved local executable). Full DSH-linked live acceptance (native coexistence, Claude turn, permission allow/deny, cancel, resume, orphan-process check) is run after the Host restart per `INSTALL.md`. The Agent SDK is pinned to `0.3.233`; runtime execution is forced to the resolved local Claude executable through `pathToClaudeCodeExecutable`.
 

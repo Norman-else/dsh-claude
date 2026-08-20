@@ -2,4 +2,4 @@
 # and installs the small managed Agent Preset into the DSH user preset root.
 - insert:
     - id: llm-claude
-      name: dsh-claude
+      name: @norman-else/dsh-claude
