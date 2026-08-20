@@ -9,7 +9,7 @@ describe('published package contract', () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { name: string }
     const patch = await readFile(join(root, 'cordis.patch.yml'), 'utf8')
 
-    expect(patch).toContain(`name: ${packageJson.name}`)
-    expect(patch).not.toMatch(/^\s+name: dsh-claude\s*$/mu)
+    expect(patch).toContain(`name: '${packageJson.name}'`)
+    expect(patch).not.toMatch(/^\s+name: (?:dsh-claude|@\S+)\s*$/mu)
   })
 })

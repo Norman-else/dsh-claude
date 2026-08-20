@@ -57,13 +57,14 @@ async function managedContents(paths: ManagedPresetPaths): Promise<ManagedConten
   const routeEntry = join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')
   return await Promise.all(MANAGED_PRESET_FILES.map(async (file): Promise<ManagedContent> => {
     const source = await readFile(join(paths.sourceDir, file), 'utf8')
-    const nameRow = `name: ${PRESET_ROUTE_PACKAGE_SPECIFIER}`
+    const nameRow = `name: '${PRESET_ROUTE_PACKAGE_SPECIFIER}'`
+    const legacyNameRow = `name: ${PRESET_ROUTE_PACKAGE_SPECIFIER}`
     if (file !== 'agent.cordis.yml' || !source.includes(nameRow)) {
       return { file, content: source, legacy: [], isLegacy: () => false }
     }
     return {
       file,
-      content: source.replace(nameRow, `name: ${routeEntry}`),
+      content: source.replace(nameRow, `name: '${routeEntry}'`),
       legacy: [source],
       // Any earlier installer generation wrote this same entry id with the
       // route reference in either supported form (bare package specifier or
@@ -71,7 +72,9 @@ async function managedContents(paths: ManagedPresetPaths): Promise<ManagedConten
       // of comment or field drift in the template.
       isLegacy: current =>
         current.includes('id: claude-code-route')
-        && (current.includes(nameRow) || current.includes('lib/preset-route.mjs')),
+        && (current.includes(nameRow)
+          || current.includes(legacyNameRow)
+          || current.includes('lib/preset-route.mjs')),
     }
   }))
 }

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 const dryRun = process.argv.includes('--dry-run')
-const allowedArguments = new Set(['--dry-run'])
+const allowedArguments = new Set(['--dry-run', '--yes'])
 const unknownArguments = process.argv.slice(2).filter(argument => !allowedArguments.has(argument))
 if (unknownArguments.length > 0) {
   throw new Error(`Unknown argument: ${unknownArguments.join(', ')}`)
@@ -26,6 +26,31 @@ function run(command, args, options = {}) {
 
 function capture(command, args) {
   return run(command, args, { capture: true }).stdout.trim()
+}
+
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+
+async function waitForPublishedGitHead(packageVersion, expectedHead) {
+  const attempts = 12
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = run('npm', ['view', packageVersion, 'gitHead', '--json'], {
+      capture: true,
+      allowFailure: true,
+    })
+    if (result.status === 0) {
+      const publishedHead = JSON.parse(result.stdout.trim())
+      if (publishedHead !== expectedHead) {
+        throw new Error(`npm published gitHead ${publishedHead ?? 'unknown'} does not match ${expectedHead}`)
+      }
+      return
+    }
+    if (attempt === attempts) {
+      process.stderr.write(result.stderr)
+      throw new Error(`${packageVersion} was published but did not become readable from npm within 60 seconds`)
+    }
+    console.log(`npm metadata is not visible yet; retrying in 5 seconds (${attempt}/${attempts})...`)
+    await sleep(5_000)
+  }
 }
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -94,8 +119,7 @@ if (dryRun) {
 
 if (!alreadyPublished) {
   run('npm', ['publish', '--access', 'public'])
-  const publishedHead = JSON.parse(capture('npm', ['view', `${packageName}@${version}`, 'gitHead', '--json']))
-  if (publishedHead !== head) throw new Error(`npm published gitHead ${publishedHead} does not match ${head}`)
+  await waitForPublishedGitHead(`${packageName}@${version}`, head)
 }
 
 if (!releaseExists) {

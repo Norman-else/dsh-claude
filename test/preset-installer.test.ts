@@ -20,7 +20,7 @@ async function fixture() {
   const sourceDir = join(root, 'source')
   const targetDir = join(root, 'home', '.agent-presets', 'claude')
   await mkdir(sourceDir, { recursive: true })
-  await writeFile(join(sourceDir, 'agent.cordis.yml'), '# managed\n- name: @norman-else/dsh-claude/preset-route\n')
+  await writeFile(join(sourceDir, 'agent.cordis.yml'), "# managed\n- name: '@norman-else/dsh-claude/preset-route'\n")
   await writeFile(join(sourceDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
   return { sourceDir, targetDir }
 }
@@ -67,13 +67,13 @@ describe('managed Agent Preset installation', () => {
     const paths = await fixture()
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const installed = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
-    expect(installed).toContain(`name: ${join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')}`)
-    expect(installed).not.toContain('name: @norman-else/dsh-claude/preset-route')
+    expect(installed).toContain(`name: '${join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')}'`)
+    expect(installed).not.toContain("name: '@norman-else/dsh-claude/preset-route'")
   })
 
   it('upgrades legacy bare-specifier content left by older installers', async () => {
     const paths = await fixture()
-    const legacy = await readFile(join(paths.sourceDir, 'agent.cordis.yml'), 'utf8')
+    const legacy = '# managed\n- id: claude-code-route\n  name: @norman-else/dsh-claude/preset-route\n'
     await mkdir(paths.targetDir, { recursive: true })
     await writeFile(join(paths.targetDir, 'agent.cordis.yml'), legacy)
     await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
@@ -81,6 +81,7 @@ describe('managed Agent Preset installation', () => {
     const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
     expect(upgraded).toContain('lib')
     expect(upgraded).not.toContain('name: @norman-else/dsh-claude/preset-route')
+    expect(upgraded).toContain("name: '")
     await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
   })
 
