@@ -40,7 +40,6 @@ Ship an out-of-tree DSH bundle named `dsh-claude` that adds a `Claude Code CLI` 
 - Managing Claude login or credentials inside DSH.
 - Switching a non-empty conversation between native DSH and Claude Code presets.
 - Windows or Linux verification.
-- DSH attachments/images forwarded into Claude Code.
 - Plugin-owned background-agent execution or continuation after the top-level Claude result. Claude Code may continue Claude-owned tasks; the plugin only observes and presents their SDK lifecycle.
 - Publishing to npm before local installation and compatibility validation pass.
 - Modifying DeepSeek Harness core APIs.
@@ -150,9 +149,11 @@ A crash before the request is accepted may fail normally. A crash after any Clau
 
 ### 3.3 Prompt mapping
 
-For ordinary conversation calls, extract the newest DSH user text that entered the current step. Do not resend the whole DSH history because Claude's session is the context source of truth. Reject unsupported image-only input in v0.1 with an actionable error.
+For ordinary conversation calls, extract the newest direct DSH user message that entered the current step. Do not resend the whole DSH history because Claude's session is the context source of truth. Text-only input retains the existing string prompt path. Messages containing images become ordered Anthropic content blocks so pure-image, mixed text/image, and multiple-image input preserve the DSH block order.
 
-DSH system prompts and tool schemas are not forwarded. Claude Code receives its own `claude_code` system prompt preset and local configuration.
+DSH image blocks contain immutable attachment references, not paths or URLs. Resolve them only through the injected public `ctx.attachments.readImage(ref, signal)` service, which verifies stored bytes against the durable reference. Apply the deployment's authoritative `imageLimits` before and after reads: supported raster media types, per-image bytes, images per message, aggregate bytes, pixels, and dimensions where exposed by the compatible Host. Cancellation must settle promptly during resolution. Missing, unreadable, corrupt, unsupported, or over-limit images fail with bounded actionable errors that contain no attachment identity, path, raw bytes, base64, or underlying sensitive diagnostics.
+
+DSH system prompts and tool schemas are not forwarded. Claude Code receives its own `claude_code` system prompt preset and local configuration. Image bytes exist only in the transient SDK input message; they are never written to sidecars, activity records, or logs.
 
 Auxiliary DSH calls (`purpose: 'compaction' | 'session-title'`) are not routed through the Claude preset bridge unless they are explicitly agent-scoped ordinary conversation calls.
 
@@ -301,7 +302,8 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 ### 8.1 Automated
 
 - executable resolution and version parsing
-- prompt extraction and unsupported-input failures
+- newest-direct-message resolution for text-only, pure-image, interleaved text/image, and multiple-image input
+- attachment media/count/byte/pixel/dimension limits, verified reads, bounded errors, and cancellation
 - stream mapping without duplicate text
 - activity normalization, truncation, and redaction
 - sidecar binding persistence, legacy-event import, and resume selection
@@ -320,7 +322,8 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 - link-install into the current Web profile
 - verify existing native preset session still works
 - create a Claude preset session
-- run a read-only prompt
+- run text-only, pure-image, interleaved text/image, and multiple-image prompts
+- reject one unreadable or over-limit image without starting a Claude turn or exposing attachment data
 - run a file-edit prompt and approve once in DSH
 - deny a Bash prompt and confirm Claude receives the denial
 - cancel a running prompt and confirm no orphan process
@@ -342,7 +345,6 @@ Future work may:
 
 - replace the LLM-seam bridge with a keyed DSH AgentFactory if DSH adds that public contract
 - add explicit runtime state roots to DSH sandbox policy and enable kernel confinement
-- support attachments and image inputs
 - verify Linux and Windows
 - publish the bundle to npm
 

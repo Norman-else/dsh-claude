@@ -355,6 +355,30 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('forwards structured multimodal content without changing block order', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const content = [
+      { type: 'text' as const, text: 'inspect this' },
+      {
+        type: 'image' as const,
+        source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'AQID' },
+      },
+    ]
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: content })
+    const query = transport.queries[0]!
+    const iterator = query.input[Symbol.asyncIterator]()
+    const handshake = await iterator.next()
+    const input = await iterator.next()
+    expect(handshake.value?.message.content).toBe('/status')
+    expect(input.value?.message).toEqual({ role: 'user', content })
+    query.push(init())
+    query.push(result())
+    await collect(output)
+    await runtime.dispose()
+  })
+
   it('streams one complete turn and persists the Claude session binding', async () => {
     const transport = factory()
     const owner = fakeAgent()

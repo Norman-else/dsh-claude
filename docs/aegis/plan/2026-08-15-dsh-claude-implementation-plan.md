@@ -207,12 +207,13 @@ Expected evidence: Claude blocks on DSH's native question composer and resumes w
 ### Task 6 — Implement the DSH LLM bridge and preset route
 
 1. Implement an `LlmAdapter` advertising `default`, `sonnet`, `opus`, and `haiku` aliases.
-2. Extract only the newest direct human text from DSH messages; reject unsupported image-only requests.
-3. Call the supervisor and map Claude partial text, usage, finish, abort, and errors into valid DSH `StreamChunk` order.
-4. Ensure no Claude tool call becomes a DSH tool-call chunk.
-5. Implement the preset-scoped `agent/request` waterfall override to select the Claude route.
-6. Ensure auxiliary title/compaction calls and native presets are not intercepted.
-7. Test exact StreamChunk ordering, no duplicate text, empty reply, cancellation, usage, failure normalization, and route scope.
+2. Resolve the newest direct human DSH message through the public attachment service. Keep text-only prompts as strings; convert ordered text/image blocks into Agent SDK `MessageParam` content.
+3. Enforce the Host deployment's media, count, per-image byte, aggregate byte, pixel, and compatible dimension limits before and after verified reads; honor cancellation and keep errors bounded and attachment-free.
+4. Call the supervisor and map Claude partial text, usage, finish, abort, and errors into valid DSH `StreamChunk` order.
+5. Ensure no Claude tool call becomes a DSH tool-call chunk and no image bytes enter sidecars or activity records.
+6. Implement the preset-scoped `agent/request` waterfall override to select the Claude route.
+7. Ensure auxiliary title/compaction calls and native presets are not intercepted.
+8. Test exact StreamChunk ordering, text-only compatibility, pure/mixed/multiple images, limits, verified-read failures, cancellation, no duplicate text, empty reply, usage, failure normalization, and route scope.
 
 Expected evidence: adapter tests and DSH invariant/type checks pass.
 
@@ -301,6 +302,8 @@ Profile verification uses the packaged DSH command available from the app enviro
 | user preset drift | tiny managed preset, hash guard, refuse overwrite |
 | native DSH sessions affected | route override lives only in the Claude preset; native regression smoke |
 | leaked secrets in activity | recursive key redaction before persistence plus bounded fixtures |
+| image bytes or attachment identity leak | resolve only through `ctx.attachments`, use bounded index-only errors, and keep SDK input out of sidecar/activity persistence |
+| attachment policy drift across DSH versions | consume runtime `imageLimits`; require the rc.6 public baseline and feature-detect the rc.8 dimension field |
 | orphan Claude descendants | DSH managed subprocess tree ownership, terminate/join on cancel, eviction, unload, and smoke check |
 | misleading sandbox claims | README and UI state exact permission boundary; no kernel confinement claim |
 

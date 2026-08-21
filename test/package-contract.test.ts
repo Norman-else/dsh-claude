@@ -26,6 +26,18 @@ describe('published package contract', () => {
     expect(contents.join('\n')).not.toContain('claude-code-cli')
   })
 
+  it('declares the public DSH attachment service contract', async () => {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+      peerDependencies: Record<string, string>
+      devDependencies: Record<string, string>
+    }
+    const host = await readFile(join(root, 'src/index.ts'), 'utf8')
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-attachment']).toBe('*')
+    expect(packageJson.devDependencies['@deepseek-ai/dsh-attachment']).toBe('0.1.0-rc.6')
+    expect(host).toContain("'attachments'")
+    expect(host).toContain('ctx.attachments')
+  })
+
   it('uses the npm package name in the DSH host and browser bundles', async () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { name: string }
     const [patch, buildConfig] = await Promise.all([

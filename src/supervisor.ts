@@ -85,7 +85,7 @@ export function claudePermissionMode(events: readonly { type: string; data: unkn
 
 export interface ClaudeTurnRequest {
   agent: Agent
-  prompt: string
+  prompt: SDKUserMessage['message']['content']
   model?: string
   thinkingMode?: ClaudeThinkingMode
   signal?: AbortSignal
@@ -211,7 +211,7 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: s
   }
 }
 
-function sdkUserMessage(prompt: string, uuid: ReturnType<typeof randomUUID>): SDKUserMessage {
+function sdkUserMessage(prompt: SDKUserMessage['message']['content'], uuid: ReturnType<typeof randomUUID>): SDKUserMessage {
   return {
     type: 'user',
     message: { role: 'user', content: prompt },

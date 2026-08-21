@@ -10,6 +10,8 @@ import {
   type TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
+import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
@@ -47,21 +49,123 @@ const NO_RETRY_POLICY: ResolvedRetryPolicy = Object.freeze({
   jitterRatio: 0.1,
 })
 
-export function extractDirectUserText(messages: GenerateOptions['messages']): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message?.role !== 'user' || message.source.kind !== 'user') continue
+type ClaudePrompt = SDKUserMessage['message']['content']
+type ClaudePromptBlock = Exclude<ClaudePrompt, string>[number]
+type AttachmentReader = Pick<AttachmentStore, 'imageLimits' | 'readImage'>
+
+function abortIfRequested(signal: AbortSignal | undefined): void {
+  if (signal?.aborted !== true) return
+  if (signal.reason instanceof Error) throw signal.reason
+  const error = new Error('Claude Code input resolution aborted')
+  error.name = 'AbortError'
+  throw error
+}
+
+function finiteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+function validateImageRef(ref: ImageAttachmentRef, attachments: AttachmentReader, imageIndex: number): void {
+  const limits = attachments.imageLimits
+  if (!limits.mediaTypes.includes(ref.mediaType)) {
+    throw new Error(`dsh-claude: image ${imageIndex} has an unsupported media type`)
+  }
+  if (!finiteNonNegative(ref.bytes) || ref.bytes > limits.maxImageBytes) {
+    throw new Error(`dsh-claude: image ${imageIndex} exceeds the configured byte limit`)
+  }
+  const maxDimension = 'maxImageDimension' in limits && finiteNonNegative(limits.maxImageDimension)
+    ? limits.maxImageDimension
+    : undefined
+  if (!finiteNonNegative(ref.width) || !finiteNonNegative(ref.height)
+    || ref.width * ref.height > limits.maxImagePixels
+    || (maxDimension !== undefined && (ref.width > maxDimension || ref.height > maxDimension))) {
+    throw new Error(`dsh-claude: image ${imageIndex} exceeds the configured dimension limit`)
+  }
+}
+
+function imageBlock(data: Uint8Array, mediaType: ImageMediaType): ClaudePromptBlock {
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: mediaType,
+      data: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64'),
+    },
+  }
+}
+
+/** Resolve only the newest direct human message; Claude's session owns history. */
+export async function resolveDirectUserPrompt(
+  messages: GenerateOptions['messages'],
+  attachments: AttachmentReader,
+  signal?: AbortSignal,
+): Promise<ClaudePrompt> {
+  const message = [...messages].reverse().find(candidate => (
+    candidate.role === 'user' && candidate.source.kind === 'user'
+  ))
+  if (message === undefined) {
+    throw new Error('dsh-claude: no direct human input was present in this model step')
+  }
+
+  const imageRefs = message.content
+    .filter((block): block is Extract<typeof block, { type: 'image' }> => block.type === 'image')
+    .map(block => block.attachment)
+  const limits = attachments.imageLimits
+  if (imageRefs.length > limits.maxImagesPerMessage) {
+    throw new Error('dsh-claude: prompt exceeds the configured image-count limit')
+  }
+  let declaredBytes = 0
+  imageRefs.forEach((ref, index) => {
+    validateImageRef(ref, attachments, index + 1)
+    declaredBytes += ref.bytes
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > limits.maxMessageImageBytes) {
+      throw new Error('dsh-claude: prompt exceeds the configured aggregate image-byte limit')
+    }
+  })
+
+  if (imageRefs.length === 0) {
     const text = message.content
       .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
       .map(block => block.text)
       .join('\n')
       .trim()
     if (text.length > 0) return text
-    if (message.content.some(block => block.type === 'image')) {
-      throw new Error('dsh-claude: image-only prompts are not supported in v0.1; include a text prompt')
-    }
+    throw new Error('dsh-claude: the newest direct human message has no supported content')
   }
-  throw new Error('dsh-claude: no direct human text was present in this model step')
+
+  const content: ClaudePromptBlock[] = []
+  let imageIndex = 0
+  let verifiedBytes = 0
+  for (const block of message.content) {
+    abortIfRequested(signal)
+    if (block.type === 'text') {
+      content.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type !== 'image') continue
+    imageIndex += 1
+    let stored: Awaited<ReturnType<AttachmentStore['readImage']>>
+    try {
+      stored = await attachments.readImage(block.attachment, signal)
+    } catch {
+      abortIfRequested(signal)
+      throw new Error(`dsh-claude: image ${imageIndex} could not be read or verified`)
+    }
+    abortIfRequested(signal)
+    validateImageRef(stored.ref, attachments, imageIndex)
+    if (stored.data.byteLength !== stored.ref.bytes || stored.ref.mediaType !== block.attachment.mediaType) {
+      throw new Error(`dsh-claude: image ${imageIndex} failed attachment verification`)
+    }
+    verifiedBytes += stored.data.byteLength
+    if (!Number.isSafeInteger(verifiedBytes) || verifiedBytes > limits.maxMessageImageBytes) {
+      throw new Error('dsh-claude: prompt exceeds the configured aggregate image-byte limit')
+    }
+    content.push(imageBlock(stored.data, stored.ref.mediaType))
+  }
+  if (content.length === 0) {
+    throw new Error('dsh-claude: the newest direct human message has no supported content')
+  }
+  return content
 }
 
 function tokenUsage(usage: ClaudeUsage): TokenUsage {
@@ -87,16 +191,19 @@ function resolveAgent(agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>, o
 export class ClaudeCodeAdapter extends LlmAdapter {
   readonly #supervisor: ClaudeSupervisor
   readonly #agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>
+  readonly #attachments: AttachmentReader
   readonly #presetIdFor: (agent: Agent) => string | undefined
 
   constructor(
     supervisor: ClaudeSupervisor,
     agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>,
+    attachments: AttachmentReader,
     presetIdFor: (agent: Agent) => string | undefined,
   ) {
     super()
     this.#supervisor = supervisor
     this.#agents = agents
+    this.#attachments = attachments
     this.#presetIdFor = presetIdFor
   }
 
@@ -114,7 +221,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       id: model.id,
       name: model.name,
       description: model.description,
-      inputModalities: ['text'],
+      inputModalities: ['text', 'image'],
     }))
   }
 
@@ -128,7 +235,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       name: known?.name ?? `Claude Code ${model}`,
       ...(known === undefined ? {} : { description: known.description }),
       ...(contextWindow === undefined ? {} : { context: { contextWindow } }),
-      inputModalities: ['text'],
+      inputModalities: ['text', 'image'],
       reasoning: {
         efforts: THINKING_MODES.map(mode => ({
           id: ReasoningEffortId(mode.id),
@@ -148,7 +255,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new Error(`dsh-claude: provider ${CLAUDE_CODE_PROVIDER} is available only to the ${CLAUDE_CODE_PRESET_ID} preset`)
     }
     const thinkingMode = thinkingModeFor(options.reasoningEffort)
-    const prompt = extractDirectUserText(options.messages)
+    let prompt: ClaudePrompt
+    try {
+      prompt = await resolveDirectUserPrompt(options.messages, this.#attachments, options.signal)
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') throw error
+      yield {
+        type: 'finish',
+        reason: {
+          kind: 'aborted',
+          failure: { code: 'aborted', message: error instanceof Error ? error.message : 'Claude Code input resolution aborted' },
+        },
+      }
+      return
+    }
     const events = await this.#supervisor.runTurn({
       agent,
       prompt,
@@ -206,7 +326,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 export function createClaudeCodeAdapter(
   supervisor: ClaudeSupervisor,
   agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>,
+  attachments: AttachmentReader,
   presetIdFor: (agent: Agent) => string | undefined,
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, presetIdFor)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor)
 }

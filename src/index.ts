@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-attachment'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
@@ -20,7 +21,7 @@ import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 
 export const name = 'llm-claude'
-export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions']
+export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
 
 export interface Config {
   executablePath?: string
@@ -217,7 +218,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, agent => ctx.agentPresets.composedPreset(agent.ctx)),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx)),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()

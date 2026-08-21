@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
-import { ClaudeCodeAdapter, extractDirectUserText } from '../src/adapter.ts'
+import { ClaudeCodeAdapter, resolveDirectUserPrompt } from '../src/adapter.ts'
 import { CLAUDE_CODE_PROVIDER_IDS } from '../src/constants.ts'
 import type { ClaudeSupervisor, ClaudeTurnStreamEvent } from '../src/supervisor.ts'
 
@@ -14,6 +15,39 @@ const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
 
 const agent = { id: 'session-1' } as unknown as Agent
 const claudePreset = () => 'claude'
+
+const imageLimits = {
+  maxImageBytes: 10,
+  maxImagesPerMessage: 2,
+  maxMessageImageBytes: 16,
+  maxImagePixels: 1_000_000,
+  mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const,
+}
+
+const imageRef = (overrides: Partial<ImageAttachmentRef> = {}): ImageAttachmentRef => ({
+  attachmentId: 'sha256:test-image' as ImageAttachmentRef['attachmentId'],
+  mediaType: 'image/png',
+  bytes: 3,
+  width: 1,
+  height: 1,
+  ...overrides,
+})
+
+function attachmentStore(
+  readImage: Pick<AttachmentStore, 'readImage'>['readImage'] = async ref => ({
+    ref,
+    data: Uint8Array.from([1, 2, 3]),
+  }),
+): Pick<AttachmentStore, 'imageLimits' | 'readImage'> {
+  return { imageLimits, readImage }
+}
+
+const imageMessage = (content: Message['content']) => ({
+  id: crypto.randomUUID(),
+  role: 'user',
+  content,
+  source: { kind: 'user' },
+}) as Message
 
 function options(messages: Message[] = [user('hello')]): GenerateOptions {
   return {
@@ -35,7 +69,7 @@ function supervisorEvents(events: ClaudeTurnStreamEvent[], error?: unknown, cont
 }
 
 function capturingSupervisor(events: ClaudeTurnStreamEvent[] = [{ type: 'complete', text: 'ok' }]) {
-  const calls: Array<{ prompt: string; model?: string; thinkingMode?: string }> = []
+  const calls: Array<{ prompt: unknown; model?: string; thinkingMode?: string }> = []
   const supervisor = {
     contextWindow: () => undefined,
     runTurn: (request: { prompt: string; model?: string; thinkingMode?: string }) => {
@@ -48,22 +82,98 @@ function capturingSupervisor(events: ClaudeTurnStreamEvent[] = [{ type: 'complet
   return { supervisor, calls }
 }
 
-describe('direct prompt extraction', () => {
-  it('uses the newest direct human text and ignores injected plugin context', () => {
-    expect(extractDirectUserText([
+describe('direct prompt resolution', () => {
+  it('uses the newest direct human text and ignores injected plugin context', async () => {
+    await expect(resolveDirectUserPrompt([
       user('human prompt'),
       user('injected notice', 'plugin'),
-    ])).toBe('human prompt')
+    ], attachmentStore())).resolves.toBe('human prompt')
   })
 
-  it('rejects an image-only prompt', () => {
-    const message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: [{ type: 'image', attachment: {} }],
-      source: { kind: 'user' },
-    } as unknown as Message
-    expect(() => extractDirectUserText([message])).toThrow(/image-only/)
+  it('resolves an image-only prompt through the verified attachment store', async () => {
+    await expect(resolveDirectUserPrompt([
+      imageMessage([{ type: 'image', attachment: imageRef() }]),
+    ], attachmentStore())).resolves.toEqual([{
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'AQID' },
+    }])
+  })
+
+  it('preserves interleaved text and multiple-image ordering', async () => {
+    const second = imageRef({ attachmentId: 'sha256:second' as ImageAttachmentRef['attachmentId'], mediaType: 'image/jpeg' })
+    const readImage = vi.fn(async (ref: ImageAttachmentRef) => ({ ref, data: Uint8Array.from([1, 2, 3]) }))
+    await expect(resolveDirectUserPrompt([
+      imageMessage([
+        { type: 'text', text: 'before' },
+        { type: 'image', attachment: imageRef() },
+        { type: 'text', text: 'between' },
+        { type: 'image', attachment: second },
+      ]),
+    ], attachmentStore(readImage))).resolves.toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+      { type: 'text', text: 'between' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AQID' } },
+    ])
+    expect(readImage.mock.calls.map(([ref]) => ref.attachmentId)).toEqual([
+      'sha256:test-image',
+      'sha256:second',
+    ])
+  })
+
+  it('rejects declared limits before reading any bytes', async () => {
+    const readImage = vi.fn(attachmentStore().readImage)
+    await expect(resolveDirectUserPrompt([
+      imageMessage([
+        { type: 'image', attachment: imageRef() },
+        { type: 'image', attachment: imageRef() },
+        { type: 'image', attachment: imageRef() },
+      ]),
+    ], attachmentStore(readImage))).rejects.toThrow(/image-count limit/)
+    expect(readImage).not.toHaveBeenCalled()
+
+    await expect(resolveDirectUserPrompt([
+      imageMessage([{ type: 'image', attachment: imageRef({ bytes: 11 }) }]),
+    ], attachmentStore(readImage))).rejects.toThrow(/byte limit/)
+    expect(readImage).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsupported media and aggregate bytes without exposing attachment identity', async () => {
+    const maliciousId = 'secret/local/path/token' as ImageAttachmentRef['attachmentId']
+    const unsupported = imageRef({ attachmentId: maliciousId, mediaType: 'image/svg+xml' as ImageAttachmentRef['mediaType'] })
+    const mediaError = await resolveDirectUserPrompt([
+      imageMessage([{ type: 'image', attachment: unsupported }]),
+    ], attachmentStore()).catch((error: unknown) => error as Error)
+    expect(mediaError.message).toMatch(/unsupported media type/)
+    expect(mediaError.message).not.toContain(maliciousId)
+
+    await expect(resolveDirectUserPrompt([
+      imageMessage([
+        { type: 'image', attachment: imageRef({ bytes: 9 }) },
+        { type: 'image', attachment: imageRef({ bytes: 9 }) },
+      ]),
+    ], attachmentStore())).rejects.toThrow(/aggregate image-byte limit/)
+  })
+
+  it('bounds unreadable attachment errors and preserves cancellation', async () => {
+    const unreadable = attachmentStore(async () => {
+      throw new Error('sensitive /private/path bearer-token-value')
+    })
+    const readError = await resolveDirectUserPrompt([
+      imageMessage([{ type: 'image', attachment: imageRef() }]),
+    ], unreadable).catch((error: unknown) => error as Error)
+    expect(readError.message).toBe('dsh-claude: image 1 could not be read or verified')
+
+    const controller = new AbortController()
+    const aborted = attachmentStore(async (_ref, signal) => {
+      controller.abort(new DOMException('cancelled', 'AbortError'))
+      signal?.throwIfAborted()
+      throw new Error('unreachable')
+    })
+    const abortError = await resolveDirectUserPrompt([
+      imageMessage([{ type: 'image', attachment: imageRef() }]),
+    ], aborted, controller.signal).catch((error: unknown) => error as Error)
+    expect(abortError.name).toBe('AbortError')
   })
 })
 
@@ -74,7 +184,7 @@ describe('DSH stream mapping', () => {
       { type: 'text-delta', text: 'lo' },
       { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1 } },
       { type: 'complete', text: 'hello' },
-    ]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([
@@ -90,7 +200,7 @@ describe('DSH stream mapping', () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'usage', usage: { inputTokens: 1, outputTokens: 0 } },
       { type: 'complete', text: '' },
-    ]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks.some(chunk => chunk.type === 'block-start')).toBe(false)
@@ -101,7 +211,7 @@ describe('DSH stream mapping', () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'done' },
       { type: 'complete', text: 'done' },
-    ]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks.some(chunk => chunk.type === 'tool-call-delta')).toBe(false)
@@ -113,7 +223,7 @@ describe('DSH stream mapping', () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([{ type: 'text-delta', text: 'partial' }], abort), {
       currentInitiator: () => agent,
       get: () => agent,
-    }, claudePreset)
+    }, attachmentStore(), claudePreset)
     const chunks = []
     for await (const chunk of adapter.stream(options())) chunks.push(chunk)
     expect(chunks).toEqual([
@@ -125,14 +235,35 @@ describe('DSH stream mapping', () => {
   })
 
   it('rejects a native or recomposed session even if the global provider is selected', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, () => 'standard')
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), () => 'standard')
     await expect(async () => {
       for await (const _chunk of adapter.stream(options())) { /* no chunks expected */ }
     }).rejects.toThrow(/available only to the claude preset/)
   })
 
+  it('maps cancellation during image resolution without starting Claude', async () => {
+    const controller = new AbortController()
+    const { supervisor, calls } = capturingSupervisor()
+    const store = attachmentStore(async (_ref, signal) => {
+      controller.abort(new DOMException('cancelled', 'AbortError'))
+      signal?.throwIfAborted()
+      throw new Error('unreachable')
+    })
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, store, claudePreset)
+    const chunks = []
+    for await (const chunk of adapter.stream({
+      ...options([imageMessage([{ type: 'image', attachment: imageRef() }])]),
+      signal: controller.signal,
+    })) chunks.push(chunk)
+    expect(chunks).toEqual([{
+      type: 'finish',
+      reason: { kind: 'aborted', failure: { code: 'aborted', message: 'cancelled' } },
+    }])
+    expect(calls).toHaveLength(0)
+  })
+
   it('disables outer DSH retries', () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     expect(adapter.providerRetryPolicy('claude')).toMatchObject({ mode: 'normal', maxRetries: 0 })
   })
 })
@@ -143,8 +274,9 @@ describe('Claude Code model catalog', () => {
   })
 
   it('advertises the five native Claude Code choices and aliases in CLI order', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const models = await adapter.listModels('claude')
+    expect(models.every(model => model.inputModalities?.join(',') === 'text,image')).toBe(true)
     expect(models.map(model => ({ id: model.id, name: model.name }))).toEqual([
       { id: 'default', name: 'Default (recommended)' },
       { id: 'opus[1m]', name: 'Opus (1M context)' },
@@ -155,28 +287,28 @@ describe('Claude Code model catalog', () => {
   })
 
   it('publishes the explicit 1M alias capacity through the native DSH model contract', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     await expect(adapter.resolveModel('claude', 'opus[1m]')).resolves.toMatchObject({
       context: { contextWindow: 1_000_000 },
     })
   })
 
   it('publishes an SDK-observed capacity for dynamic Claude aliases', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([], undefined, 272_000), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([], undefined, 272_000), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     await expect(adapter.resolveModel('claude', 'default')).resolves.toMatchObject({
       context: { contextWindow: 272_000 },
     })
   })
 
   it('omits unverified capacity until Claude reports it', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const model = await adapter.resolveModel('claude', 'sonnet')
     expect(model.context).toBeUndefined()
   })
 
   it('forwards the selected native alias unchanged to the supervisor', async () => {
     const { supervisor, calls } = capturingSupervisor()
-    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     for await (const _chunk of adapter.stream({ ...options(), model: 'opus[1m]' })) { /* drain */ }
     expect(calls[0]).toMatchObject({ model: 'opus[1m]' })
   })
@@ -184,7 +316,7 @@ describe('Claude Code model catalog', () => {
 
 describe('reasoning effort', () => {
   it('advertises the seven Claude thinking modes for selector surfaces', async () => {
-    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const info = await adapter.resolveModel('claude', 'sonnet')
     expect(info.reasoning?.efforts.map(effort => effort.id)).toEqual(['off', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(info.reasoning?.defaultEffort).toBeUndefined()
@@ -192,7 +324,7 @@ describe('reasoning effort', () => {
 
   it('forwards the selected thinking mode to the supervisor', async () => {
     const { supervisor, calls } = capturingSupervisor()
-    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     for await (const _chunk of adapter.stream({ ...options(), reasoningEffort: ReasoningEffortId('max') })) { /* drain */ }
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ prompt: 'hello', thinkingMode: 'max' })
@@ -200,14 +332,14 @@ describe('reasoning effort', () => {
 
   it('omits the thinking mode when no effort is selected', async () => {
     const { supervisor, calls } = capturingSupervisor()
-    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     for await (const _chunk of adapter.stream(options())) { /* drain */ }
     expect(calls[0]).not.toHaveProperty('thinkingMode')
   })
 
   it('rejects an unknown reasoning effort before touching the Claude session', async () => {
     const { supervisor, calls } = capturingSupervisor()
-    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, claudePreset)
+    const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     await expect(async () => {
       for await (const _chunk of adapter.stream({ ...options(), reasoningEffort: ReasoningEffortId('turbo') })) { /* no chunks expected */ }
     }).rejects.toThrow(/unsupported reasoning effort/)
