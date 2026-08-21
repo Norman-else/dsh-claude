@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandDefinition } from '@deepseek-ai/dsh-commands'
 import { ClaudeCommandBridge } from '../src/command-bridge.ts'
 
@@ -81,14 +82,15 @@ describe('Claude command bridge', () => {
     expect(owner.definitions.has('claude-model')).toBe(true)
   })
 
-  it('forwards the exact Claude slash line through the injected DSH turn owner', async () => {
+  it('forwards the exact Claude slash line through the receiving DSH agent', async () => {
     const owner = target()
     const bridge = new ClaudeCommandBridge(owner.value)
+    const receivingAgent = { id: 'receiving-session' } as Agent
     bridge.refresh(catalog)
-    await owner.definitions.get('review')!.handler({ rawInput: ' src/index.ts' } as never)
-    await owner.definitions.get('inspect')!.handler({ rawInput: '' } as never)
-    expect(owner.forward).toHaveBeenNthCalledWith(1, '/review src/index.ts')
-    expect(owner.forward).toHaveBeenNthCalledWith(2, '/inspect')
+    await owner.definitions.get('review')!.handler({ agent: receivingAgent, rawInput: ' src/index.ts' } as never)
+    await owner.definitions.get('inspect')!.handler({ agent: receivingAgent, rawInput: '' } as never)
+    expect(owner.forward).toHaveBeenNthCalledWith(1, receivingAgent, '/review src/index.ts')
+    expect(owner.forward).toHaveBeenNthCalledWith(2, receivingAgent, '/inspect')
   })
 
   it('drops invalid names and skips a second prefixed collision', () => {
@@ -111,8 +113,9 @@ describe('Claude command bridge', () => {
     }])).toEqual([
       { publicName: 'ci-deploy', claudeName: 'awesome-skills:ci-deploy', prefixed: false },
     ])
-    await owner.definitions.get('ci-deploy')!.handler({ rawInput: ' sat' } as never)
-    expect(owner.forward).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
+    const receivingAgent = { id: 'receiving-session' } as Agent
+    await owner.definitions.get('ci-deploy')!.handler({ agent: receivingAgent, rawInput: ' sat' } as never)
+    expect(owner.forward).toHaveBeenCalledWith(receivingAgent, '/awesome-skills:ci-deploy sat')
   })
 
   it('prefixes a qualified skill whose short name is already reserved', () => {

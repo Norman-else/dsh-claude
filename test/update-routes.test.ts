@@ -148,6 +148,39 @@ describe('plugin update execution', () => {
     expect(status).toMatchObject({ currentVersion: '1.1.0', latestVersion: '1.1.0', state: 'current', restartRequired: true })
   })
 
+  it('requests a Desktop restart only after the exact installed version is verified', async () => {
+    vi.useFakeTimers()
+    try {
+      const { home, packageDir } = await fixture('1.0.0')
+      const profileDir = await profile(home, 'desktop', '1.0.0', packageDir)
+      const requestRestart = vi.fn()
+      const spawn = vi.fn(() => ({
+        ...handle(),
+        done: Promise.all([
+          writeFile(join(profileDir, 'package.json'), JSON.stringify({ dependencies: { [PLUGIN_PACKAGE_NAME]: '1.1.0' } })),
+          writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: PLUGIN_PACKAGE_NAME, version: '1.1.0' })),
+        ]).then(() => ({ exitCode: 0, signal: null })),
+      })) as unknown as SubprocessRuntime['spawn']
+
+      const status = await updatePlugin({
+        dshHome: home,
+        packageDir,
+        fetchLatest: async () => '1.1.0',
+        resolveExecutable: async () => 'dsh',
+        spawn,
+        requestRestart,
+      })
+
+      expect(status).toMatchObject({ currentVersion: '1.1.0', restartRequired: false })
+      expect(status.message).toContain('restarting')
+      expect(requestRestart).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(requestRestart).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects a successful command that leaves the exact dependency pinned to the old version', async () => {
     const { home, packageDir } = await fixture('1.0.0')
     await profile(home, 'desktop', '1.0.0', packageDir)

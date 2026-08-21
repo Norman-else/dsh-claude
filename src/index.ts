@@ -75,8 +75,8 @@ export function mountClaudeMetadata(
   const bridge = new ClaudeCommandBridge({
     list: () => scopedCommands().list(agent),
     register: definition => scopedCommands().register(definition),
-    forward: line => {
-      agent.followup(createUserMessage({
+    forward: (receivingAgent, line) => {
+      receivingAgent.followup(createUserMessage({
         content: [{ type: 'text', text: line }],
         source: { kind: 'user' },
       }))
@@ -289,7 +289,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.inject(['webServer'], webCtx => {
     registerClaudeDoctorRoutes(webCtx, webCtx.subprocess, supervisor, supervisorConfig, resolutionError)
-    registerClaudeUpdateRoutes(webCtx, webCtx.subprocess)
+    const desktopActions = webCtx.get('desktopActions') as { requestRestart?: () => void } | undefined
+    registerClaudeUpdateRoutes(webCtx, webCtx.subprocess, {
+      ...(typeof desktopActions?.requestRestart === 'function'
+        ? { requestRestart: desktopActions.requestRestart.bind(desktopActions) }
+        : {}),
+    })
     registerClaudeGlobalSettingsRoute(webCtx)
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)

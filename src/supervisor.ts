@@ -614,6 +614,7 @@ export class ClaudeSupervisor {
       // streaming-input mode (e.g. the auth-error path). Treat it idempotently:
       // refresh the session id/version and negotiated state, and only reject a
       // genuine identity/cwd mismatch.
+      const firstInitialization = !entry.initialized
       if (entry.expectedResume !== undefined && message.sessionId !== entry.expectedResume) {
         throw new ClaudeProtocolError(`Claude Code resumed unexpected session ${message.sessionId}; expected ${entry.expectedResume}`)
       }
@@ -628,9 +629,10 @@ export class ClaudeSupervisor {
       entry.claudeSessionId = message.sessionId
       entry.state = entry.active === undefined ? 'idle' : 'running'
       for (const waiter of entry.initWaiters.splice(0)) waiter(undefined)
-      // The SDK emits no background-task level at startup; reset the board on
-      // every (re)start and let membership changes repopulate it.
-      if (entry.tasks.size > 0) {
+      // A newly created Query cannot retain tasks from the previous process,
+      // but repeated init messages from this same long-lived Query are only
+      // protocol refreshes and must not erase background work still running.
+      if (firstInitialization && entry.tasks.size > 0) {
         entry.tasks.clear()
         await this.#flushTasksSnapshot(entry)
       }

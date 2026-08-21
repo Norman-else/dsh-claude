@@ -275,7 +275,7 @@ Persist plugin runtime settings through the plugin's own settings namespace if t
 
 The initial global field is `outputStyle`. Read its current value from `~/.claude/settings.json`, enumerate built-in styles plus bounded names from `~/.claude/output-styles/*.md`, and update only that field while preserving all unknown settings. Selecting Default removes the override. Serialize updates, reject malformed or unlisted values, limit settings/style/request sizes, and replace the settings file atomically with user-only permissions. Never return style prompt bodies or unrelated settings. Output-style changes apply only to newly created Claude sessions.
 
-Plugin updates must install the registry's validated latest version explicitly rather than relying on the profile's existing semver range, then verify both the profile dependency and installed package manifests before reporting success. Linked, ambiguous, and unsupported sources remain non-updatable.
+Plugin updates must install the registry's validated latest version explicitly rather than relying on the profile's existing semver range, then verify both the profile dependency and installed package manifests before reporting success. When the public Desktop actions service is available, a verified update schedules a controlled Desktop restart so both Host and Client reload the installed package; other Hosts require a manual restart. Linked, ambiguous, and unsupported sources remain non-updatable.
 
 ## 6. Failure and Recovery
 

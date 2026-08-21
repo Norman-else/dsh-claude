@@ -421,6 +421,42 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('preserves running tasks when the long-lived query re-emits system/init', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'deploy' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'task-1',
+      description: 'Deploy service',
+      task_type: 'local_bash',
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    query.push(result('Deployment continues in the background'))
+    await collect(output)
+
+    const revisionBeforeInit = (await projection(runtime)).revision
+    query.push(init()) // protocol refresh from the same Query, not a process restart
+    await vi.waitFor(async () => {
+      const current = await projection(runtime)
+      expect(current.revision).toBeGreaterThan(revisionBeforeInit)
+      expect(current).toMatchObject({
+        tasks: { tasks: [{
+          taskId: 'task-1',
+          description: 'Deploy service',
+          status: 'running',
+          originTurn: 1,
+          taskType: 'local_bash',
+        }] },
+      })
+    })
+    await runtime.dispose()
+  })
+
   it('surfaces the terminal reason for an is_error failure result', async () => {
     const transport = factory()
     const owner = fakeAgent()

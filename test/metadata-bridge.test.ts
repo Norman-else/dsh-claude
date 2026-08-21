@@ -41,6 +41,58 @@ function createAgent() {
 }
 
 describe('metadata bridge', () => {
+  it('forwards a registered Claude skill to the exact receiving session', async () => {
+    const host = createHostContext()
+    const { agent: catalogAgent } = createAgent()
+    const receivingAgent = {
+      id: 'agent-2',
+      followup: vi.fn(),
+    } as unknown as Agent
+    let definition: Parameters<ClaudeAgentCommandService['register']>[0] | undefined
+    const service: ClaudeAgentCommandService = {
+      list: () => [],
+      register: value => {
+        definition = value
+        return () => { definition = undefined }
+      },
+    }
+    const supervisor = {
+      supportedCommands: vi.fn(async () => [{
+        name: 'awesome-skills:ci-deploy',
+        description: 'Deploy through CI',
+        argumentHint: '<env>',
+      }]),
+      contextUsage: vi.fn(async () => ({
+        model: 'claude-test',
+        totalTokens: 1,
+        maxTokens: 200_000,
+        percentage: 0.5,
+        categories: [],
+      })),
+    } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+    const sidecar = {
+      writeContextUsage: vi.fn(async () => undefined),
+    } as unknown as ClaudeSidecarRepository
+    const dispose = mountClaudeMetadata(
+      host,
+      supervisor,
+      catalogAgent,
+      'default',
+      sidecar,
+      () => service,
+    )
+
+    await vi.waitFor(() => expect(definition?.name).toBe('ci-deploy'))
+    await definition!.handler({ agent: receivingAgent, rawInput: ' sat' } as never)
+
+    expect(catalogAgent.followup).not.toHaveBeenCalled()
+    expect(receivingAgent.followup).toHaveBeenCalledWith(expect.objectContaining({
+      content: [{ type: 'text', text: '/awesome-skills:ci-deploy sat' }],
+      source: { kind: 'user' },
+    }))
+    await dispose?.()
+  })
+
   it('retries command registration when the preset service becomes available later', async () => {
     const host = createHostContext()
     const { agent } = createAgent()

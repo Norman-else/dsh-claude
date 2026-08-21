@@ -238,8 +238,8 @@ Expected evidence: the DSH preset roster discovers the package-contained preset,
 6. Register a Settings section that calls same-origin Doctor endpoints and never renders secrets.
 7. Provide one extensible Claude Code global-settings registry and trusted same-origin API whose descriptors explicitly validate fields, enumerate bounded public options, and declare whether changes require a new session or restart.
 8. Register `outputStyle` first: merge only that key into `~/.claude/settings.json`, remove it for Default, discover only bounded names from user output-style frontmatter, serialize updates, atomically replace with user-only permissions, and never expose unrelated settings or prompt bodies.
-9. For registry installs, update by adding the validated exact latest package version and verify both profile and installed manifests before reporting success; never replace linked or ambiguous installs.
-10. Add route, global-settings, update execution, polling, projection/selector, and focused component tests.
+9. For registry installs, update by adding the validated exact latest package version and verify both profile and installed manifests before reporting success; after verification, request a controlled restart through the optional public Desktop actions service so the running Host and Client load the new package, while retaining manual-restart behavior for other Hosts; never replace linked or ambiguous installs.
+10. Add route, global-settings, update execution and restart, polling, projection/selector, and focused component tests.
 
 Expected evidence: Client typecheck/build passes; real assembler regression demonstrates activity 1, assistant 1, activity 2, assistant 2 ordering, while native turns render no Claude activity node.
 

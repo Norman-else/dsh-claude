@@ -49,6 +49,7 @@ export interface UpdateDependencies {
   fetchLatest?: (signal: AbortSignal) => Promise<string>
   resolveExecutable?: (name: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal) => Promise<string>
   spawn?: SubprocessRuntime['spawn']
+  requestRestart?: () => void
 }
 
 function safeMessage(error: unknown): string {
@@ -238,7 +239,18 @@ export async function updatePlugin(deps: UpdateDependencies = {}): Promise<Plugi
     throw new Error(`DSH plugin update failed (${outcome.exitCode ?? outcome.signal ?? 'unknown exit'}): ${safeMessage(detail)}`)
   }
   await verifyInstalledVersion(installation, latest)
-  return { currentVersion: latest, latestVersion: latest, source: 'registry', state: 'current', canUpdate: false, restartRequired: true, message: 'Update installed; restart DSH Desktop to load it' }
+  if (deps.requestRestart !== undefined) setTimeout(() => deps.requestRestart?.(), 100).unref?.()
+  return {
+    currentVersion: latest,
+    latestVersion: latest,
+    source: 'registry',
+    state: 'current',
+    canUpdate: false,
+    restartRequired: deps.requestRestart === undefined,
+    message: deps.requestRestart === undefined
+      ? 'Update installed; restart DSH Desktop to load it'
+      : 'Update installed; DSH Desktop is restarting to load it',
+  }
 }
 
 export function registerClaudeUpdateRoutes(ctx: Context, runtime: Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>, deps: UpdateDependencies = {}): void {

@@ -1,4 +1,5 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandDefinition, CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { redactText } from './events.ts'
 
@@ -30,7 +31,7 @@ const CLIENT_CONTRIBUTION_NAMES: ReadonlySet<string> = new Set(['model'])
 export interface ClaudeCommandTarget {
   list(): readonly Pick<CommandDescriptor, 'name'>[]
   register(definition: CommandDefinition): () => void
-  forward(line: string): void
+  forward(agent: Agent, line: string): void
 }
 
 /**
@@ -83,7 +84,7 @@ function bounded(value: string, maxChars: number): string {
 function desiredCommands(
   catalog: readonly SlashCommand[],
   reservedNames: ReadonlySet<string>,
-  forward: (line: string) => void,
+  forward: (agent: Agent, line: string) => void,
 ): Map<string, DesiredCommand> {
   const desired = new Map<string, DesiredCommand>()
   const assigned = new Set<string>()
@@ -112,8 +113,10 @@ function desiredCommands(
           description,
           ...(hint.length === 0 ? {} : { input: { hint } }),
           recordInput: false,
-          handler: ({ rawInput }) => {
-            forward(`/${claudeName}${rawInput}`)
+          handler: ({ agent, rawInput }) => {
+            // The invocation owns the exact session that received the command.
+            // Never route through an agent captured during catalog refresh.
+            forward(agent, `/${claudeName}${rawInput}`)
             return { kind: 'success' }
           },
         },
@@ -145,7 +148,7 @@ export class ClaudeCommandBridge {
     // command collides with a contribution. Reserve those names so Claude's
     // same-named commands take the claude- prefix instead.
     for (const name of CLIENT_CONTRIBUTION_NAMES) reserved.add(name)
-    const desired = desiredCommands(catalog, reserved, line => this.#target.forward(line))
+    const desired = desiredCommands(catalog, reserved, (agent, line) => this.#target.forward(agent, line))
 
     for (const [name, live] of [...this.#live]) {
       const next = desired.get(name)
