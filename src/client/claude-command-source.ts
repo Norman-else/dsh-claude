@@ -25,34 +25,25 @@ function findCommand(
   return commandsFor(store, session).find(command => command.publicName === publicName)
 }
 
-function claimFor(command: ClaudeCommandView): CommandClaim {
+function claimFor(ctx: ClientContext, session: ClientSessionContext, command: ClaudeCommandView): CommandClaim {
   return {
     token: `/${command.publicName} `,
     ...(command.hint === undefined ? {} : { hint: command.hint }),
-    async submit(args, actx) {
-      const line = `/${command.claudeName}${args.length === 0 ? '' : ` ${args}`}`
-      try {
-        await actx.conversation.send(line)
-        return { kind: 'success' }
-      } catch (error) {
-        return {
-          kind: 'error',
-          text: error instanceof Error ? error.message : String(error),
-        }
-      }
+    async submit(args) {
+      return await submitClaudeCommand(ctx, session, command, args)
     },
   }
 }
 
-function pickCommand(store: ClaudeProjectionStore, pick: InputTriggerPick): PickOutcome {
+function pickCommand(ctx: ClientContext, store: ClaudeProjectionStore, pick: InputTriggerPick): PickOutcome {
   const command = findCommand(store, pick.session, pick.candidate.name)
   if (command === undefined) return undefined
-  return { claim: claimFor(command) }
+  return { claim: claimFor(ctx, pick.session, command) }
 }
 
 /** Build a client-owned slash source. It never calls command.execute, so
  * Claude Skill submission creates only the ordinary user-message turn. */
-export function createClaudeCommandSource(store: ClaudeProjectionStore): InputTriggerSource {
+export function createClaudeCommandSource(ctx: ClientContext, store: ClaudeProjectionStore): InputTriggerSource {
   return {
     trigger: '/',
     name: SOURCE_NAME,
@@ -69,19 +60,19 @@ export function createClaudeCommandSource(store: ClaudeProjectionStore): InputTr
         }))
     },
     onPick(pick) {
-      return pickCommand(store, pick)
+      return pickCommand(ctx, store, pick)
     },
     matchSpace(session, token) {
       if (!token.startsWith('/')) return undefined
       const command = findCommand(store, session, token.slice(1))
-      return command === undefined ? undefined : { claim: claimFor(command) }
+      return command === undefined ? undefined : { claim: claimFor(ctx, session, command) }
     },
     async matchEnter(session, line) {
       if (!line.startsWith('/')) return undefined
       const separator = line.indexOf(' ')
       const publicName = line.slice(1, separator === -1 ? undefined : separator)
       const command = findCommand(store, session, publicName)
-      return command === undefined ? undefined : { claim: claimFor(command) }
+      return command === undefined ? undefined : { claim: claimFor(ctx, session, command) }
     },
     lexicon(session) {
       return commandsFor(store, session).map(command => command.publicName)
@@ -92,12 +83,24 @@ export function createClaudeCommandSource(store: ClaudeProjectionStore): InputTr
   }
 }
 
-/** Execute a claim through a session-scoped Client context. Exported for
- * focused regression tests proving the normal conversation send path. */
+/** Execute through this plugin's injected services rebound to the target
+ * session scope; the input-trigger action context does not inject them. */
 export async function submitClaudeCommand(
+  ctx: ClientContext,
+  session: ClientSessionContext,
   command: ClaudeCommandView,
   args: string,
-  actx: ClientContext,
 ): Promise<{ kind: 'success' | 'error'; text?: string }> {
-  return await claimFor(command).submit(args, actx)
+  const scoped = ctx.sessions.scope(session.sessionId)
+  if (scoped === undefined) return { kind: 'error', text: 'Claude session is unavailable' }
+  const line = `/${command.claudeName}${args.length === 0 ? '' : ` ${args}`}`
+  try {
+    await scoped.conversation.send(line)
+    return { kind: 'success' }
+  } catch (error) {
+    return {
+      kind: 'error',
+      text: error instanceof Error ? error.message : String(error),
+    }
+  }
 }

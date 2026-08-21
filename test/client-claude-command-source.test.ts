@@ -36,9 +36,15 @@ function store(value: ClaudeClientProjection = projection): ClaudeProjectionStor
   return { source: () => source, dispose: () => {} } as unknown as ClaudeProjectionStore
 }
 
+function context(send = vi.fn(async () => undefined)): { ctx: ClientContext; send: typeof send } {
+  const scoped = { conversation: { send } }
+  const ctx = { sessions: { scope: vi.fn(() => scoped) } } as unknown as ClientContext
+  return { ctx, send }
+}
+
 describe('Claude client slash source', () => {
   it('filters owned commands by the case-insensitive public-name query', async () => {
-    const source = createClaudeCommandSource(store())
+    const source = createClaudeCommandSource(context().ctx, store())
     const session = { sessionId: 'session-1' } as never
     const signal = new AbortController().signal
 
@@ -61,25 +67,25 @@ describe('Claude client slash source', () => {
       position: 'embedded',
       signal,
     })).resolves.toEqual([])
-    await expect(createClaudeCommandSource(store({ ...projection, owned: false })).candidates(
+    await expect(createClaudeCommandSource(context().ctx, store({ ...projection, owned: false })).candidates(
       { sessionId: 'session-2' } as never,
       { query: '', position: 'leading', signal },
     )).resolves.toEqual([])
   })
 
-  it('submits the exact qualified Skill as an ordinary conversation message', async () => {
-    const send = vi.fn(async () => undefined)
-    const executeHostCommand = vi.fn()
-    const actx = { conversation: { send }, executeHostCommand } as unknown as ClientContext
+  it('submits the exact qualified Skill through the source-owned session scope', async () => {
+    const { ctx, send } = context()
+    const session = { sessionId: 'session-1' } as never
 
-    await expect(submitClaudeCommand(projection.commands[1]!, 'sat', actx)).resolves.toEqual({ kind: 'success' })
+    await expect(submitClaudeCommand(ctx, session, projection.commands[1]!, 'sat')).resolves.toEqual({ kind: 'success' })
 
+    expect(ctx.sessions.scope).toHaveBeenCalledWith('session-1')
     expect(send).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
-    expect(executeHostCommand).not.toHaveBeenCalled()
   })
 
-  it('claims bare Enter and argument-bearing lines without executing on pick', async () => {
-    const source = createClaudeCommandSource(store())
+  it('claims bare Enter and submits without reading the input-trigger action context', async () => {
+    const { ctx, send } = context()
+    const source = createClaudeCommandSource(ctx, store())
     const session = { sessionId: 'session-1' } as never
     const bare = await source.matchEnter?.(session, '/ci-deploy', new AbortController().signal)
     const argued = await source.matchEnter?.(session, '/ci-deploy sat', new AbortController().signal)
@@ -88,5 +94,11 @@ describe('Claude client slash source', () => {
     expect(bare).toMatchObject({ claim: { token: '/ci-deploy ', hint: '<env>' } })
     expect(argued).toMatchObject({ claim: { token: '/ci-deploy ', hint: '<env>' } })
     expect(miss).toBeUndefined()
+    if (bare === undefined || bare === 'handled' || !('claim' in bare)) throw new Error('expected command claim')
+    const actionContext = new Proxy({}, {
+      get: () => { throw new Error('input-trigger context must not be read') },
+    }) as ClientContext
+    await expect(bare.claim.submit('sat', actionContext)).resolves.toEqual({ kind: 'success' })
+    expect(send).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
   })
 })

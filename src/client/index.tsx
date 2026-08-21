@@ -41,7 +41,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   const projections = new ClaudeProjectionStore()
-  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(projections)), 'dsh-claude: Claude slash source')
+  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   if (sessions !== undefined) {
     ctx.effect(() => sessions.provide({
