@@ -29,6 +29,15 @@ export interface ClaudeActivityStepMarker {
   readonly step: number
 }
 
+export interface ClaudeActiveTasksMarker {
+  readonly turn: number
+}
+
+interface ClaudeActiveTasksState extends ClaudeActiveTasksMarker {
+  readonly active: boolean
+  readonly anchorSeq: number
+}
+
 interface ClaudeTurnProjectionState extends ClaudeTurnMarker {
   readonly claude: boolean
 }
@@ -42,6 +51,7 @@ declare module '@deepseek-ai/dsh-client-runtime/client' {
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ChatNodeDataMap {
     'claude-activity-step': ClaudeActivityStepMarker
+    'claude-active-tasks': ClaudeActiveTasksMarker
   }
 }
 
@@ -204,6 +214,41 @@ export const claudeActivityStepDefinition: ConversationNodeDefinition<ClaudeActi
       location: context.start?.location ?? { kind: 'unresolved' },
       visibility: 'visible',
       data: { turn: state.turn, step: state.step },
+    }
+  },
+}
+
+/** Keep one sidecar-backed task launcher mounted only while its DSH turn is open. */
+export const claudeActiveTasksDefinition: ConversationNodeDefinition<ClaudeActiveTasksState> = {
+  kind: 'claude-active-tasks',
+  target: 'chat',
+  match(event) {
+    if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
+    if (event.type === 'turn/end' || event.type === 'step/start' || event.type === 'assistant/message') {
+      return { id: String(event.data.turn), role: 'update' }
+    }
+    return null
+  },
+  start(_context, match) {
+    if (match.event.type !== 'turn/start') throw new Error('Claude active tasks require turn/start')
+    return { turn: match.event.data.turn, active: true, anchorSeq: match.event.seq + 0.1 }
+  },
+  update(context, match) {
+    if (match.event.type === 'turn/end') return { ...context.state, active: false }
+    return { ...context.state, anchorSeq: match.event.seq + 0.1 }
+  },
+  buildViewNode(context): ChatConversationViewNode | null {
+    const state = context.state
+    if (state?.active !== true) return null
+    return {
+      key: context.key,
+      kind: 'claude-active-tasks',
+      id: context.id,
+      target: 'chat',
+      anchorSeq: state.anchorSeq,
+      location: context.start?.location ?? { kind: 'unresolved' },
+      visibility: 'visible',
+      data: { turn: state.turn },
     }
   },
 }

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeTurnMarker } from './conversation-sidecar.ts'
@@ -16,11 +17,15 @@ export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
 }
 
-export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
-  const projection = useClaudeProjection(value => value)
+export interface ClaudeTaskLauncherProps extends ClaudeActivityTailInjected {
+  turn: number
+  tasks: readonly ClaudeTaskInfo[]
+}
+
+export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLauncherProps) {
   const summary = useMemo(
-    () => summarizeTurnTasks(tasksForTurn(projection.tasks?.tasks ?? [], matched.turn)),
-    [projection.tasks, matched.turn],
+    () => summarizeTurnTasks(tasksForTurn(tasks, turn)),
+    [tasks, turn],
   )
   if (summary === undefined) return null
   const label = summary.state === 'running'
@@ -30,8 +35,8 @@ export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks 
       : t('tasksTurnCompleted', { count: summary.completed })
   const glyph = summary.state === 'running' ? '●' : summary.state === 'failed' ? '×' : '✓'
   return (
-    <div data-claude-activity-tail={matched.turn}>
-      <button type="button" style={styles.tasksTurnLauncher} onClick={() => openTasks(matched.turn)}>
+    <div data-claude-task-launcher={turn}>
+      <button type="button" style={styles.tasksTurnLauncher} onClick={() => openTasks(turn)}>
         <span
           className={summary.state === 'running' ? 'dsh-claude-act-running' : undefined}
           style={{
@@ -46,4 +51,9 @@ export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks 
       </button>
     </div>
   )
+}
+
+export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
+  const tasks = useClaudeProjection(value => value.tasks?.tasks ?? [])
+  return <ClaudeTaskLauncher turn={matched.turn} tasks={tasks} t={t} openTasks={openTasks} />
 }

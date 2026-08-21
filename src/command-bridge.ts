@@ -80,9 +80,11 @@ export function projectClaudeCommands(
   const views: ClaudeCommandView[] = []
   for (const command of catalog) {
     const names = [command.name, ...(command.aliases ?? [])]
+    const commandBases = new Set<string>()
     for (const claudeName of names) {
       const base = registryName(claudeName)
-      if (base === undefined) continue
+      if (base === undefined || commandBases.has(base)) continue
+      commandBases.add(base)
       let publicName = base
       let prefixed = false
       if (reservedNames.has(publicName) || assigned.has(publicName)) {

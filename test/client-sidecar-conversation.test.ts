@@ -12,6 +12,7 @@ import type { ClaudeActivityEvent } from '../src/events.ts'
 import {
   activityRowsForStep,
   activityRowsForTurn,
+  claudeActiveTasksDefinition,
   claudeActivityStepDefinition,
   claudeTurnDefinition,
   selectClaudeTurn,
@@ -24,6 +25,7 @@ import {
   visibleTaskGroups,
 } from '../src/client/ClaudeTasksPanel.tsx'
 import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
+import { ClaudeActiveTasksNode } from '../src/client/ClaudeActiveTasksNode.tsx'
 
 const taskCall: ClaudeActivityEvent = {
   turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
@@ -126,7 +128,7 @@ async function projectConversation(events: readonly unknown[]): Promise<TestProj
   }
   const assembler = new ConversationNodeAssembler(
     {
-      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, assistantTestDefinition],
+      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, assistantTestDefinition],
       fallbackEntry: () => undefined,
     },
     { entries: () => [timelineView, chatView] },
@@ -248,6 +250,35 @@ describe('Claude sidecar conversation projection', () => {
     expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2 }])).toContain('tasksTurnFailed')
   })
 
+  it('renders the active task node reactively for the owning turn', () => {
+    const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActiveTasksNode, {
+      node: { data: { turn } },
+      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
+      openTasks: () => {},
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
+    } as never))
+    expect(render([])).toBe('')
+    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3 }])).toBe('')
+    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2 }])).toContain('tasksTurnRunning')
+    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2 }])).toContain('tasksTurnCompleted')
+  })
+
+  it('mounts the active task node at turn/start and removes it at turn/end', async () => {
+    const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
+    const stepStart = { type: 'step/start', seq: 2, time: 2, data: { turn: 2, step: 1 } }
+    const active = await projectConversation([turnStart, stepStart])
+    expect(active.chat.map(node => [node.kind, node.data])).toEqual([
+      ['claude-active-tasks', { turn: 2 }],
+    ])
+
+    const completed = await projectConversation([
+      turnStart,
+      stepStart,
+      { type: 'turn/end', seq: 3, time: 3, data: { turn: 2 } },
+    ])
+    expect(completed.chat).toEqual([])
+  })
+
   it('renders only the selected turn in the Tasks details panel', () => {
     const markup = renderToStaticMarkup(createElement(ClaudeTasksPanel, {
       turn: 2,
@@ -308,7 +339,9 @@ describe('Claude sidecar conversation projection', () => {
       assistant(3, 1, 'native'),
     ])
     expect(native.timeline.turns.get(2)?.data.get('claudeCode')).toBeUndefined()
-    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant'])
+    // The generic active-turn anchor exists, but its renderer remains null
+    // because a native turn has no Claude sidecar tasks.
+    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant', 'claude-active-tasks'])
   })
 
   it('selects the turn tail from engine-owned turn data', () => {

@@ -42,6 +42,7 @@ describe('Claude command projection', () => {
       name: 'awesome-skills:ci-deploy',
       description: 'Deploy through CI',
       argumentHint: '<env>',
+      aliases: ['ci-deploy'],
     }], target())).toEqual([
       {
         publicName: 'ci-deploy',

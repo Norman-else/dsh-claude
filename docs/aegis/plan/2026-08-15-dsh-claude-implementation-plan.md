@@ -111,9 +111,10 @@ Parent spec: `docs/aegis/spec/2026-08-15-dsh-claude-spec.md`
 
 - `src/client/index.tsx` — client entry and registrations.
 - `src/client/projection.ts` — session-scoped validated sidecar polling source.
-- `src/client/conversation-sidecar.ts` — Claude turn marker, per-step in-flow chat-node Definition, and sidecar activity fold.
+- `src/client/conversation-sidecar.ts` — Claude turn marker, per-step activity nodes, active-turn task node, and sidecar activity fold.
 - `src/client/ClaudeActivityNode.tsx` — native-style keyed chat renderer for step-scoped activity.
-- `src/client/ClaudeActivityTail.tsx` — task-launcher-only turn-tail contribution.
+- `src/client/ClaudeActiveTasksNode.tsx` — reactive task launcher for an open DSH turn.
+- `src/client/ClaudeActivityTail.tsx` — shared launcher presentation and completed-turn tail contribution.
 - `src/client/ClaudeCodeSettings.tsx` — Doctor panel and configuration guidance.
 - `src/client/locales.ts` — zh/en copy.
 - `src/client/styles.ts` — DSH-token-based inline styles.
@@ -233,7 +234,7 @@ Expected evidence: the DSH preset roster discovers the package-contained preset,
 1. Register a session-scoped projection hook backed by the trusted Host endpoint.
 2. Load immediately on first subscription, poll only while mounted, validate responses, and abort on cleanup.
 3. Derive Claude turn ownership with one `turn/start` Context and Claude assistant-message updates; replay a multi-step turn in regression coverage so duplicate Context starts cannot recur.
-4. Materialize one step-scoped keyed chat node immediately before each Claude assistant message and render matching sidecar activity with native DSH disclosure, icon, status, typography, and spacing primitives. Keep the turn tail task-launcher-only.
+4. Materialize one step-scoped keyed chat node immediately before each Claude assistant message and render matching sidecar activity with native DSH disclosure, icon, status, typography, and spacing primitives. Keep task launchers separate from activity rows.
 5. Add localized zh/en copy and accessible controls.
 6. Register a Settings section that calls same-origin Doctor endpoints and never renders secrets.
 7. Provide one extensible Claude Code global-settings registry and trusted same-origin API whose descriptors explicitly validate fields, enumerate bounded public options, and declare whether changes require a new session or restart.
@@ -249,13 +250,13 @@ Expected evidence: Client typecheck/build passes; real assembler regression demo
 2. Group the DSH details panel into Running and Finished cards with duration, token, tool-use, type, last-tool, and summary metadata.
 3. Implement Finished collapse and mounted-Client-only Clear; do not mutate canonical sidecar truth.
 4. Expose only already-redacted matching sidecar activity as “View activity”; never read Claude transcript paths or resume identity.
-5. Add a matching-turn launcher for running, completed, and failed tasks; remove the permanent session-header utility and do not create a detached entry for tasks without a known origin.
+5. Add a matching-turn launcher for running, completed, and failed tasks; mount it as a reactive plugin-owned chat node while the turn is open, remove it at `turn/end`, and hand off to the completed-turn tail without duplication. Remove the permanent session-header utility and do not create a detached entry for tasks without a known origin.
 6. Scope the details panel to the selected origin turn so historical launchers do not open the latest session-wide task list.
 7. Do not expose per-task Stop because the public SDK and DSH contracts only support whole-turn cancellation.
 8. When the primary Claude result leaves tasks running, keep the same DSH stream open, flush that primary text as a completed block, and submit exactly one hidden follow-up input after all owned tasks settle so Claude writes a final completion/failure report before the terminal finish.
 9. Add normalization, sidecar, supervisor, adapter, and pure Client-selection regressions, including multiple-task coalescing and mixed completion/failure outcomes.
 
-Expected evidence: grouped interaction tests pass, the panel and turn-tail share one details controller, background settlements produce one Claude-authored final report in the original DSH turn, and no unsupported task mutation surface exists.
+Expected evidence: grouped interaction tests pass, active and completed launchers share one details controller, the active launcher updates before `turn/end` and hands off without duplication, background settlements produce one Claude-authored final report in the original DSH turn, and no unsupported task mutation surface exists.
 
 ### Task 9 — Documentation and package verification
 

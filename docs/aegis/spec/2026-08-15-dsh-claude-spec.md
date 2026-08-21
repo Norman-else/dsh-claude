@@ -226,7 +226,7 @@ Register one session-scoped projection source through the public Client session 
 
 The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, context usage, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
 
-A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. The `conversation.chat.turnTail` contribution is task-launcher-only and never renders activity after the closing answer. When a task is first observed during an active turn, its bounded task snapshot retains that origin turn so the matching tail shows a running, completed, or failed launcher for as long as that task remains in the canonical snapshot. Tasks without a known origin turn are not given a detached global UI entry.
+A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. A third Definition mounts a plugin-owned active-turn task node from `turn/start`, keeps its anchor near the latest step or assistant event, and removes it at `turn/end`; its renderer stays null until the sidecar owns tasks for that origin turn and then updates the running, completed, or failed launcher without waiting for the turn to close. The completed-only `conversation.chat.turnTail` contribution uses the same launcher after `turn/end`, so active and historical launchers never overlap. Tasks without a known origin turn are not given a detached global UI entry.
 
 ### 5.2 Activity card
 
@@ -244,7 +244,7 @@ Do not render raw JSON by default. An expand control may show already-redacted d
 
 ### 5.3 Background tasks panel
 
-Register a Claude turn-tail launcher only when that turn owns tasks in the latest sidecar snapshot; do not keep a permanent session-header Tasks control. The launcher reflects running, completed, or failed state and opens the DSH details column scoped to that origin turn. The panel groups that turn's tasks into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
+Register an active-turn chat-node launcher and a completed-turn tail launcher only when that turn owns tasks in the latest sidecar snapshot; do not keep a permanent session-header Tasks control. The active launcher is reactive while the DSH turn remains open, disappears at `turn/end`, and hands off to the completed-turn tail without duplication. Both launchers reflect running, completed, or failed state and open the DSH details column scoped to that origin turn. The panel groups that turn's tasks into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
 
 Finished tasks may be collapsed and cleared from the mounted Client view. Clear is deliberately local presentation state: it does not mutate or falsify the canonical sidecar snapshot, and a newly observed settled task remains visible. “View activity” filters only already-redacted sidecar activity by the bounded task id; it never reads Claude transcript paths or exposes the resume identity.
 
@@ -320,7 +320,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 - SDK message fixtures for init, partial text, tool use/result, permission, usage, success, failure, and malformed input
 - command catalog projection, aliases, DSH/Client-name collision prefixing, ordinary-message delivery, and absence of Host command lifecycle events
 - context-usage normalization, safe-field sidecar persistence, latest-sample projection, and meter rendering
-- trusted projection route, Client initial load/polling/cleanup/failure degradation, per-step chat-node ordering, and task-launcher turn-tail selectors
+- trusted projection route, Client initial load/polling/cleanup/failure degradation, per-step chat-node ordering, active task-node lifecycle, and completed turn-tail handoff
 - Desktop cold-load of a newly produced session with no `claude-code/*` events
 - typecheck Host and Client builds
 - bundle build and package contents check

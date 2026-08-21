@@ -4,8 +4,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { claudeActivityStepDefinition, claudeTurnDefinition, selectClaudeTurn } from './conversation-sidecar.ts'
+import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDefinition, selectClaudeTurn } from './conversation-sidecar.ts'
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
+import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
@@ -52,6 +53,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => () => projections.dispose(), 'dsh-claude: sidecar projection lifecycle')
   ctx.effect(() => ctx.conversationEvents.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
   ctx.effect(() => ctx.conversationEvents.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
+  ctx.effect(() => ctx.conversationEvents.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-activity-step',
@@ -105,6 +107,14 @@ export function apply(ctx: ClientContext): void {
       closeTasksPanel()
     }
   }, 'dsh-claude: tasks panel lifecycle')
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+    name: 'conversation.chat.node',
+    key: 'claude-active-tasks',
+    locale: namespace,
+    inject: (sessionId: string) => ({
+      openTasks: (turn: number) => openTasksPanel(sessionId, turn),
+    }),
+  }, ClaudeActiveTasksNode))
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
     select: selectClaudeTurn,
