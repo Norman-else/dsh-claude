@@ -35,6 +35,7 @@ export interface ClaudeActiveTasksMarker {
 
 interface ClaudeActiveTasksState extends ClaudeActiveTasksMarker {
   readonly active: boolean
+  readonly anchored: boolean
   readonly anchorSeq: number
 }
 
@@ -231,11 +232,20 @@ export const claudeActiveTasksDefinition: ConversationNodeDefinition<ClaudeActiv
   },
   start(_context, match) {
     if (match.event.type !== 'turn/start') throw new Error('Claude active tasks require turn/start')
-    return { turn: match.event.data.turn, active: true, anchorSeq: match.event.seq + 0.1 }
+    // A user/message has no turn coordinate in the public event payload, so it
+    // cannot update this turn-keyed Context directly. Keep the launcher at the
+    // live chat tail until assistant output provides a concrete later anchor.
+    return {
+      turn: match.event.data.turn,
+      active: true,
+      anchored: false,
+      anchorSeq: Number.MAX_SAFE_INTEGER,
+    }
   },
   update(context, match) {
     if (match.event.type === 'turn/end') return { ...context.state, active: false }
-    return { ...context.state, anchorSeq: match.event.seq + 0.1 }
+    if (match.event.type === 'step/start' && !context.state.anchored) return context.state
+    return { ...context.state, anchored: true, anchorSeq: match.event.seq + 0.1 }
   },
   buildViewNode(context): ChatConversationViewNode | null {
     const state = context.state

@@ -68,6 +68,34 @@ async function loadConversationNodeAssembler(): Promise<typeof ConversationNodeA
   return loadedConversationNodeAssembler
 }
 
+const userTestDefinition: ConversationNodeDefinition<{ readonly seq: number }> = {
+  kind: 'test-user',
+  target: 'chat',
+  match(event) {
+    if (event.type !== 'user/message' || event.data.source.kind !== 'user') return null
+    return { id: String(event.data.id), role: 'start' }
+  },
+  start(_context, match) {
+    return { seq: match.event.seq }
+  },
+  update(context) {
+    return context.state
+  },
+  buildViewNode(context): ChatConversationViewNode | null {
+    if (context.state === undefined) return null
+    return {
+      key: context.key,
+      kind: 'test-user',
+      id: context.id,
+      target: 'chat',
+      anchorSeq: context.state.seq,
+      location: context.start?.location ?? { kind: 'unresolved' },
+      visibility: 'visible',
+      data: {},
+    }
+  },
+}
+
 const assistantTestDefinition: ConversationNodeDefinition<{ readonly seq: number; readonly turn: number; readonly step: number }> = {
   kind: 'test-assistant',
   target: 'chat',
@@ -141,7 +169,7 @@ async function conversationAssembler(): Promise<InstanceType<typeof Conversation
   }
   return new ConversationNodeAssembler(
     {
-      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, assistantTestDefinition],
+      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, userTestDefinition, assistantTestDefinition],
       fallbackEntry: () => undefined,
     },
     { entries: () => [timelineView, chatView] },
@@ -294,6 +322,56 @@ describe('Claude sidecar conversation projection', () => {
       { type: 'turn/end', seq: 3, time: 3, data: { turn: 2 } },
     ])
     expect(completed.chat).toEqual([])
+  })
+
+  it('keeps an active turn task launcher after its direct user message before assistant output', async () => {
+    const assembler = await conversationAssembler()
+    const events = [
+      { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
+      {
+        type: 'assistant/message',
+        seq: 3,
+        time: 3,
+        data: {
+          turn: 1,
+          step: 1,
+          message: { role: 'assistant', content: [], source: { provider: 'claude', model: 'default' } },
+        },
+      },
+      { type: 'step/end', seq: 4, time: 4, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 5, time: 5, data: { turn: 1 } },
+      { type: 'turn/start', seq: 6, time: 6, data: { turn: 2 } },
+      { type: 'step/start', seq: 7, time: 7, data: { turn: 2, step: 1 } },
+      {
+        type: 'user/message',
+        seq: 8,
+        time: 8,
+        data: {
+          id: 'turn-2-user',
+          role: 'user',
+          content: [{ type: 'text', text: 'Handle the PR comments' }],
+          source: { kind: 'user' },
+        },
+      },
+    ]
+
+    for (const event of events) {
+      assembler.append({ event, view: undefined } as never)
+      expect(() => assembler.flush()).not.toThrow()
+    }
+
+    const chat = assembler.snapshot('chat') as readonly ChatConversationViewNode[]
+    expect(chat.slice(-2).map(node => node.kind)).toEqual([
+      'test-user',
+      'claude-active-tasks',
+    ])
+    expect(chat.at(-2)?.anchorSeq).toBeLessThan(chat.at(-1)?.anchorSeq ?? 0)
+    expect(chat.at(-1)).toMatchObject({
+      kind: 'claude-active-tasks',
+      visibility: 'visible',
+      data: { turn: 2 },
+    })
   })
 
   it('keeps incremental projection alive for a second turn after the first turn ends', async () => {
