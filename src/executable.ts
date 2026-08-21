@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, win32 } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { redactText } from './events.ts'
 
@@ -67,7 +67,7 @@ export async function resolveClaudeExecutable(
   const candidates = configuredPath === undefined
     ? ['claude', ...fallbackCandidates()]
     : [configuredPath]
-  if (configuredPath !== undefined && !isAbsolute(configuredPath)) {
+  if (configuredPath !== undefined && !isAbsolute(configuredPath) && !win32.isAbsolute(configuredPath)) {
     throw new Error(`Claude Code executable path must be absolute: ${configuredPath}`)
   }
 
