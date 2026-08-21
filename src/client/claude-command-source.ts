@@ -91,8 +91,9 @@ export async function submitClaudeCommand(
   command: ClaudeCommandView,
   args: string,
 ): Promise<{ kind: 'success' | 'error'; text?: string }> {
-  const scoped = ctx.sessions.scope(session.sessionId)
-  if (scoped === undefined) return { kind: 'error', text: 'Claude session is unavailable' }
+  const sessionCtx = ctx.sessions.scope(session.sessionId)
+  if (sessionCtx === undefined) return { kind: 'error', text: 'Claude session is unavailable' }
+  const scoped = ctx.extend(sessionCtx)
   const line = `/${command.claudeName}${args.length === 0 ? '' : ` ${args}`}`
   try {
     await scoped.conversation.send(line)

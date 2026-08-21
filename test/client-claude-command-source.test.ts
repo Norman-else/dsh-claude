@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ClaudeClientProjection, ClaudeProjectionSource, ClaudeProjectionStore } from '../src/client/projection.ts'
 import { createClaudeCommandSource, submitClaudeCommand } from '../src/client/claude-command-source.ts'
@@ -37,8 +38,11 @@ function store(value: ClaudeClientProjection = projection): ClaudeProjectionStor
 }
 
 function context(send = vi.fn(async () => undefined)): { ctx: ClientContext; send: typeof send } {
-  const scoped = { conversation: { send } }
-  const ctx = { sessions: { scope: vi.fn(() => scoped) } } as unknown as ClientContext
+  const sessionCtx = { sessionTag: 'session-1' }
+  const ctx = {
+    sessions: { scope: vi.fn(() => sessionCtx) },
+    extend: vi.fn((meta: object) => ({ ...ctx, ...meta, conversation: { send } })),
+  } as unknown as ClientContext
   return { ctx, send }
 }
 
@@ -80,7 +84,42 @@ describe('Claude client slash source', () => {
     await expect(submitClaudeCommand(ctx, session, projection.commands[1]!, 'sat')).resolves.toEqual({ kind: 'success' })
 
     expect(ctx.sessions.scope).toHaveBeenCalledWith('session-1')
+    expect(ctx.extend).toHaveBeenCalledWith({ sessionTag: 'session-1' })
     expect(send).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
+  })
+
+  it('combines the plugin fiber inject with the target session scope', async () => {
+    const root = new Context()
+    const send = vi.fn(async () => undefined)
+    const conversationProvider = Object.assign(
+      (ctx: Context) => ctx.provide('conversation', { send }),
+      { provide: 'conversation' },
+    )
+    const conversationFiber = root.plugin(conversationProvider)
+    await conversationFiber
+    const sessionFiber = root.plugin(() => {})
+    await sessionFiber
+    const sessionCtx = sessionFiber.ctx.extend({ sessionTag: 'session-1' })
+    root.provide('sessions', { scope: () => sessionCtx })
+    let pluginCtx: ClientContext | undefined
+    const plugin = Object.assign((ctx: ClientContext) => { pluginCtx = ctx }, {
+      inject: ['conversation', 'sessions'],
+    })
+    const fiber = root.plugin(plugin)
+    await fiber
+    if (pluginCtx === undefined) throw new Error('plugin did not load')
+
+    expect(() => sessionCtx.conversation).toThrow('without inject')
+    await expect(submitClaudeCommand(
+      pluginCtx,
+      { sessionId: 'session-1' } as never,
+      projection.commands[1]!,
+      'sat',
+    )).resolves.toEqual({ kind: 'success' })
+    expect(send).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
+    await fiber.dispose()
+    await sessionFiber.dispose()
+    await conversationFiber.dispose()
   })
 
   it('claims bare Enter and submits without reading the input-trigger action context', async () => {
