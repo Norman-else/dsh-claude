@@ -102,7 +102,7 @@ interface TestProjection {
   readonly chat: readonly ChatConversationViewNode[]
 }
 
-async function projectConversation(events: readonly unknown[]): Promise<TestProjection> {
+async function conversationAssembler(): Promise<InstanceType<typeof ConversationNodeAssemblerType>> {
   const ConversationNodeAssembler = await loadConversationNodeAssembler()
   const timelineView: ConversationViewDefinition = {
     target: 'test-timeline',
@@ -118,21 +118,38 @@ async function projectConversation(events: readonly unknown[]): Promise<TestProj
   const chatView: ConversationViewDefinition<ChatConversationViewNode, readonly ChatConversationViewNode[]> = {
     target: 'chat',
     create() {
-      const sort = (nodes: readonly ChatConversationViewNode[]) => [...nodes].sort((left, right) => left.anchorSeq - right.anchorSeq)
+      let current: readonly ChatConversationViewNode[] = []
+      const visible = (nodes: readonly ChatConversationViewNode[]) => nodes
+        .filter(node => node.visibility !== 'hidden')
+        .sort((left, right) => left.anchorSeq - right.anchorSeq)
       return {
         empty: [],
-        replace: input => sort(input.nodes),
-        apply: input => sort(input.upserts),
+        replace: input => {
+          current = input.nodes
+          return visible(current)
+        },
+        apply: input => {
+          const upserts = new Map(input.upserts.map(node => [node.key, node]))
+          current = [
+            ...current.map(node => upserts.get(node.key) ?? node),
+            ...input.upserts.filter(node => !current.some(existing => existing.key === node.key)),
+          ]
+          return visible(current)
+        },
       }
     },
   }
-  const assembler = new ConversationNodeAssembler(
+  return new ConversationNodeAssembler(
     {
       entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, assistantTestDefinition],
       fallbackEntry: () => undefined,
     },
     { entries: () => [timelineView, chatView] },
   )
+}
+
+async function projectConversation(events: readonly unknown[]): Promise<TestProjection> {
+  const assembler = await conversationAssembler()
   assembler.replaceWindow(events.map(event => ({ event, view: undefined })) as never, false)
   assembler.flush()
   return {
@@ -263,7 +280,7 @@ describe('Claude sidecar conversation projection', () => {
     expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2 }])).toContain('tasksTurnCompleted')
   })
 
-  it('mounts the active task node at turn/start and removes it at turn/end', async () => {
+  it('mounts the active task node at turn/start and hides it at turn/end', async () => {
     const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
     const stepStart = { type: 'step/start', seq: 2, time: 2, data: { turn: 2, step: 1 } }
     const active = await projectConversation([turnStart, stepStart])
@@ -277,6 +294,47 @@ describe('Claude sidecar conversation projection', () => {
       { type: 'turn/end', seq: 3, time: 3, data: { turn: 2 } },
     ])
     expect(completed.chat).toEqual([])
+  })
+
+  it('keeps incremental projection alive for a second turn after the first turn ends', async () => {
+    const assembler = await conversationAssembler()
+    const assistant = (seq: number, turn: number) => ({
+      type: 'assistant/message',
+      seq,
+      time: seq,
+      data: {
+        turn,
+        step: 1,
+        message: { role: 'assistant', content: [], source: { provider: 'claude', model: 'default' } },
+      },
+    })
+    const events = [
+      { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
+      assistant(3, 1),
+      { type: 'step/end', seq: 4, time: 4, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 5, time: 5, data: { turn: 1 } },
+      { type: 'turn/start', seq: 6, time: 6, data: { turn: 2 } },
+      { type: 'step/start', seq: 7, time: 7, data: { turn: 2, step: 1 } },
+      assistant(8, 2),
+      { type: 'step/end', seq: 9, time: 9, data: { turn: 2, step: 1 } },
+      { type: 'turn/end', seq: 10, time: 10, data: { turn: 2 } },
+    ]
+
+    for (const event of events) {
+      assembler.append({ event, view: undefined } as never)
+      expect(() => assembler.flush()).not.toThrow()
+    }
+
+    const timeline = assembler.snapshot('test-timeline') as ConversationTimelineSnapshot
+    expect(timeline.turnOrder).toEqual([1, 2])
+    expect(timeline.turns.get(1)?.data.get('claudeCode')).toEqual({ turn: 1 })
+    expect(timeline.turns.get(2)?.data.get('claudeCode')).toEqual({ turn: 2 })
+    const chat = assembler.snapshot('chat') as readonly ChatConversationViewNode[]
+    expect(chat.filter(node => node.kind === 'test-assistant').map(node => node.data)).toEqual([
+      { turn: 1, step: 1 },
+      { turn: 2, step: 1 },
+    ])
   })
 
   it('renders only the selected turn in the Tasks details panel', () => {

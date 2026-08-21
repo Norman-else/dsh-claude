@@ -239,7 +239,7 @@ export const claudeActiveTasksDefinition: ConversationNodeDefinition<ClaudeActiv
   },
   buildViewNode(context): ChatConversationViewNode | null {
     const state = context.state
-    if (state?.active !== true) return null
+    if (state === undefined) return null
     return {
       key: context.key,
       kind: 'claude-active-tasks',
@@ -247,7 +247,9 @@ export const claudeActiveTasksDefinition: ConversationNodeDefinition<ClaudeActiv
       target: 'chat',
       anchorSeq: state.anchorSeq,
       location: context.start?.location ?? { kind: 'unresolved' },
-      visibility: 'visible',
+      // Incremental assemblers forbid withdrawing a materialized node. Keep
+      // its key stable after turn/end and hide it while the turn tail takes over.
+      visibility: state.active ? 'visible' : 'hidden',
       data: { turn: state.turn },
     }
   },
