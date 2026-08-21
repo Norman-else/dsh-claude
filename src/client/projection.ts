@@ -1,6 +1,7 @@
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent, ClaudeContextUsageEvent, ClaudeTasksEvent } from '../events.ts'
 import type { ClaudeCommandView } from '../command-bridge.ts'
+import type { RepositoryStatus } from '../repository-status.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
 
 export interface ClaudeClientProjection {
@@ -11,6 +12,7 @@ export interface ClaudeClientProjection {
   readonly activities: readonly ClaudeActivityEvent[]
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
+  readonly repository?: RepositoryStatus
 }
 
 export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
@@ -24,6 +26,8 @@ export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
 const POLL_INTERVAL_MS = 2_000
 const MAX_ACTIVITIES = 10_000
 const MAX_COMMANDS = 2_000
+const MAX_REPOSITORY_TEXT_CHARS = 1_024
+const MAX_DIFF_CHARS = 256 * 1024
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -33,6 +37,56 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function nonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function optionalBoundedString(value: unknown): boolean {
+  return value === undefined || (typeof value === 'string' && value.length <= MAX_REPOSITORY_TEXT_CHARS)
+}
+
+function validateRepository(value: unknown): value is RepositoryStatus {
+  const repository = record(value)
+  if (repository === undefined
+    || !['ready', 'not-repository', 'unavailable'].includes(String(repository.status))
+    || typeof repository.cwd !== 'string'
+    || repository.cwd.length > MAX_REPOSITORY_TEXT_CHARS
+    || !optionalBoundedString(repository.root)
+    || !optionalBoundedString(repository.branch)
+    || !optionalBoundedString(repository.remote)
+    || (repository.detached !== undefined && typeof repository.detached !== 'boolean')
+    || (repository.worktree !== undefined && typeof repository.worktree !== 'boolean')
+    || (repository.dirty !== undefined && typeof repository.dirty !== 'boolean')) return false
+  if (repository.diff !== undefined) {
+    const diff = record(repository.diff)
+    if (diff === undefined
+      || !nonNegativeInteger(diff.additions)
+      || !nonNegativeInteger(diff.deletions)
+      || !nonNegativeInteger(diff.files)
+      || typeof diff.truncated !== 'boolean'
+      || (diff.patch !== undefined && (typeof diff.patch !== 'string' || diff.patch.length > MAX_DIFF_CHARS))) return false
+  }
+  if (repository.pullRequest === undefined) return true
+  const pullRequest = record(repository.pullRequest)
+  if (pullRequest === undefined
+    || !Number.isSafeInteger(pullRequest.number)
+    || Number(pullRequest.number) <= 0
+    || typeof pullRequest.title !== 'string'
+    || pullRequest.title.length > MAX_REPOSITORY_TEXT_CHARS
+    || typeof pullRequest.url !== 'string'
+    || pullRequest.url.length > MAX_REPOSITORY_TEXT_CHARS
+    || !['open', 'closed', 'merged'].includes(String(pullRequest.state))
+    || typeof pullRequest.draft !== 'boolean'
+    || !['approved', 'changes-requested', 'review-required', 'none'].includes(String(pullRequest.review))
+    || !['passing', 'pending', 'failing', 'none'].includes(String(pullRequest.checks))
+    || !optionalBoundedString(pullRequest.mergeState)
+    || !optionalBoundedString(pullRequest.author)
+    || !optionalBoundedString(pullRequest.baseBranch)
+    || (pullRequest.createdAt !== undefined && (typeof pullRequest.createdAt !== 'string' || !Number.isFinite(Date.parse(pullRequest.createdAt))))) return false
+  try {
+    const url = new URL(pullRequest.url)
+    return url.protocol === 'https:' && url.hostname === 'github.com'
+  } catch {
+    return false
+  }
 }
 
 /** Validate the public route envelope before publishing it to UI components. */
@@ -70,6 +124,9 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
   }
   const tasks = input.tasks === undefined ? undefined : record(input.tasks)
   if (tasks !== undefined && !Array.isArray(tasks.tasks)) throw new Error('invalid Claude tasks projection')
+  if (input.repository !== undefined && !validateRepository(input.repository)) {
+    throw new Error('invalid Claude repository projection')
+  }
   return input as unknown as ClaudeClientProjection
 }
 
@@ -105,15 +162,15 @@ export function createClaudeProjectionSource(
       if (!response.ok) throw new Error(`Claude projection request failed (${response.status})`)
       const next = parseClaudeClientProjection(await response.json())
       const commandCatalogChanged = JSON.stringify(next.commands) !== JSON.stringify(snapshot.commands)
-      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged) {
+      const repositoryChanged = JSON.stringify(next.repository) !== JSON.stringify(snapshot.repository)
+      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged || repositoryChanged) {
         snapshot = next
         for (const listener of [...listeners]) listener()
       }
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'AbortError') && snapshot !== EMPTY_CLAUDE_PROJECTION) {
-        snapshot = EMPTY_CLAUDE_PROJECTION
-        for (const listener of [...listeners]) listener()
-      }
+      // A polling or validation failure is transient. Keep the last verified
+      // snapshot visible and retry instead of making mounted UI disappear.
+      if (error instanceof DOMException && error.name === 'AbortError') return
     } finally {
       controller = undefined
       schedule()

@@ -4,6 +4,7 @@ import { CLAUDE_PROJECTION_PATH } from './constants.ts'
 import { json, trustedRequest } from './http.ts'
 import type { ClaudeSidecarRepository } from './sidecar.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
+import type { RepositoryStatus } from './repository-status.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
 
@@ -28,6 +29,7 @@ export function registerClaudeProjectionRoute(
   sidecar: ClaudeSidecarRepository,
   ownsSession: (sessionId: string) => boolean,
   commandsForSession: (sessionId: string) => readonly ClaudeCommandView[] = () => [],
+  repositoryForSession: (sessionId: string) => Promise<RepositoryStatus | undefined> = async () => undefined,
 ): void {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -39,14 +41,17 @@ export function registerClaudeProjectionRoute(
       if (sessionId === undefined) return json(res, 400, { error: 'invalid session id' })
       try {
         const projection = await sidecar.read(sessionId)
+        const owned = ownsSession(sessionId)
+        const repository = owned ? await repositoryForSession(sessionId) : undefined
         return json(res, 200, {
           schemaVersion: projection.schemaVersion,
           revision: projection.revision,
-          owned: ownsSession(sessionId),
+          owned,
           commands: commandsForSession(sessionId),
           activities: projection.activities,
           ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
           ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
+          ...(repository === undefined ? {} : { repository }),
         })
       } catch {
         return json(res, 500, { error: 'projection unavailable' })

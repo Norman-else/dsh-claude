@@ -65,7 +65,15 @@ describe('Claude sidecar projection route', () => {
       claudeName: 'awesome-skills:ci-deploy',
       description: 'Deploy through CI',
       prefixed: false,
-    }])
+    }], async () => ({
+      status: 'ready',
+      cwd: '/tmp',
+      root: '/tmp',
+      branch: 'feature/status',
+      detached: false,
+      worktree: false,
+      dirty: true,
+    }))
     const res = response()
     await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent('session/a')}`), res)
     expect(res.statusCode).toBe(200)
@@ -76,6 +84,7 @@ describe('Claude sidecar projection route', () => {
       owned: true,
       commands: [{ publicName: 'ci-deploy', claudeName: 'awesome-skills:ci-deploy' }],
       activities: [{ kind: 'warning' }],
+      repository: { status: 'ready', branch: 'feature/status', dirty: true },
     })
     expect(body).not.toHaveProperty('binding')
     expect(JSON.stringify(body)).not.toContain('private-resume-id')

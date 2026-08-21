@@ -267,24 +267,33 @@ export const primaryButton: CSSProperties = {
 export const tasksPanel: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  height: '100%',
+  width: 'calc(100% - 16px)',
+  height: 'calc(100% - 16px)',
   minWidth: 0,
-  background: 'var(--dsw-alias-bg-base)',
+  margin: 8,
+  overflow: 'hidden',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
 }
 
 export const tasksHeader: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 58,
+  flex: 'none',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 8,
-  padding: '12px 14px',
+  gap: 10,
+  padding: '9px 12px',
   borderBottom: '1px solid var(--dsw-alias-border-l2)',
 }
 
 export const tasksHeading: CSSProperties = {
   display: 'block',
   color: 'var(--dsw-alias-label-primary)',
-  fontSize: 14,
+  fontSize: 15,
   lineHeight: '20px',
   fontWeight: 600,
 }
@@ -293,8 +302,8 @@ export const tasksTurnMeta: CSSProperties = {
   display: 'block',
   marginTop: 1,
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 11,
-  lineHeight: '16px',
+  fontSize: 12,
+  lineHeight: '17px',
 }
 
 export const tasksClose: CSSProperties = {
@@ -315,7 +324,8 @@ export const tasksBody: CSSProperties = {
   flex: 1,
   minHeight: 0,
   overflowY: 'auto',
-  padding: '10px 12px 20px',
+  padding: '12px 14px 20px',
+  background: 'var(--dsw-alias-bg-base)',
 }
 
 export const tasksGroupHeading: CSSProperties = {
@@ -331,7 +341,7 @@ export const tasksGroupTitle: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '20px',
   fontWeight: 600,
 }
@@ -345,7 +355,7 @@ export const tasksGroupToggle: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '20px',
   fontWeight: 600,
   cursor: 'pointer',
@@ -357,8 +367,8 @@ export const tasksGroupCount: CSSProperties = {
   borderRadius: 999,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 10,
-  lineHeight: '17px',
+  fontSize: 11,
+  lineHeight: '18px',
   textAlign: 'center',
   fontVariantNumeric: 'tabular-nums',
 }
@@ -384,10 +394,11 @@ export const taskCardList: CSSProperties = {
 }
 
 export const taskCard: CSSProperties = {
-  padding: '10px 11px',
+  padding: '11px 12px',
   border: '1px solid var(--dsw-alias-border-l2)',
   borderRadius: 10,
   background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 1px 3px color-mix(in srgb, #000 7%, transparent)',
 }
 
 export const taskCardRunning: CSSProperties = {
@@ -420,8 +431,8 @@ export const taskCardBody: CSSProperties = {
 export const taskTitle: CSSProperties = {
   margin: 0,
   color: 'var(--dsw-alias-label-primary)',
-  fontSize: 13,
-  lineHeight: '19px',
+  fontSize: 14,
+  lineHeight: '20px',
   fontWeight: 550,
   overflowWrap: 'anywhere',
 }
@@ -565,4 +576,434 @@ export const tasksTurnLauncherDot: CSSProperties = {
 
 export const tasksTurnLauncherDone: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary, var(--dsw-alias-label-tertiary))',
+}
+
+/* Claude repository readout and details panel. */
+
+export const repositoryBarFrame: CSSProperties = {
+  width: 'calc(100% - 64px)',
+  maxWidth: 'var(--dsh-conversation-composer-max-width, 782px)',
+  minWidth: 0,
+  margin: '0 auto',
+  boxSizing: 'border-box',
+}
+
+export const repositoryBar: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  minHeight: 42,
+  boxSizing: 'border-box',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 9,
+  padding: '7px 11px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 11,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+  textAlign: 'left',
+}
+
+export const repositoryPrIcon: CSSProperties = {
+  width: 20,
+  height: 20,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  borderRadius: 6,
+  color: 'var(--dsw-alias-state-success-primary, var(--dsw-static-blue-450))',
+}
+
+export const repositoryPrimary: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 13,
+  fontWeight: 600,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryPrLinkFrame: CSSProperties = {
+  position: 'relative',
+  flex: 'none',
+}
+
+export const repositoryPrLink: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary)',
+  fontSize: 13,
+  fontWeight: 650,
+  textDecoration: 'none',
+  cursor: 'pointer',
+}
+
+export const repositoryPrHoverCard: CSSProperties = {
+  position: 'absolute',
+  zIndex: 30,
+  left: -34,
+  bottom: 'calc(100% + 14px)',
+  width: 340,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10,
+  padding: '13px 14px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 14px 38px color-mix(in srgb, #000 34%, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+  pointerEvents: 'auto',
+}
+
+export const repositoryPrHoverTop: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 7,
+  minWidth: 0,
+}
+
+export const repositoryPrStateBadge: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  padding: '2px 8px',
+  borderRadius: 999,
+  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent)',
+  color: 'var(--dsw-alias-state-success-primary)',
+  fontSize: 11,
+  fontWeight: 650,
+}
+
+export const repositoryPrHoverRepo: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryPrHoverAge: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+}
+
+export const repositoryPrHoverTitle: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 14,
+  lineHeight: '20px',
+  fontWeight: 650,
+  textDecoration: 'underline',
+  textUnderlineOffset: 2,
+  cursor: 'pointer',
+}
+
+export const repositoryPrHoverBottom: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+}
+
+export const repositoryPrAuthor: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+}
+
+export const repositoryPrAvatar: CSSProperties = {
+  width: 18,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  borderRadius: 999,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 9,
+  fontWeight: 700,
+}
+
+export const repositoryPrHoverStats: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 11,
+  fontWeight: 650,
+}
+
+export const repositoryPrFiles: CSSProperties = {
+  padding: '2px 7px',
+  borderRadius: 6,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontWeight: 500,
+}
+export const repositoryRemote: CSSProperties = {
+  minWidth: 0,
+  maxWidth: 116,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryBranch: CSSProperties = {
+  minWidth: 0,
+  maxWidth: 125,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  fontWeight: 550,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryWorktree: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+}
+
+export const repositoryStatusItems: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 8,
+  overflow: 'hidden',
+}
+
+export const repositoryItem: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  fontWeight: 550,
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryItemDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  flex: 'none',
+  borderRadius: 999,
+  background: 'currentColor',
+}
+
+export const repositoryItemSuccess: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary)',
+}
+
+export const repositoryItemWarning: CSSProperties = {
+  color: 'var(--dsw-alias-state-warning-primary, #d69e2e)',
+}
+
+export const repositoryItemError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const diffTrigger: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  minHeight: 26,
+  padding: '3px 8px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 650,
+  cursor: 'pointer',
+}
+
+export const diffAdd: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary)',
+}
+
+export const diffDelete: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const diffPanel: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  width: 'calc(100% - 16px)',
+  height: 'calc(100% - 16px)',
+  minWidth: 0,
+  margin: 8,
+  overflow: 'hidden',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
+}
+
+export const diffHeader: CSSProperties = {
+  boxSizing: 'border-box',
+  height: 49,
+  flex: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  padding: '9px 12px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+}
+
+export const diffHeaderTitle: CSSProperties = {
+  minWidth: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 15,
+  fontWeight: 650,
+}
+
+export const diffHeaderBranch: CSSProperties = {
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  fontWeight: 500,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const diffSummary: CSSProperties = {
+  minHeight: 34,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 7,
+  padding: '6px 12px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+}
+
+export const diffBody: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  background: 'var(--dsw-alias-bg-base)',
+}
+
+export const diffFile: CSSProperties = {
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+}
+
+export const diffFileHeader: CSSProperties = {
+  width: '100%',
+  minHeight: 38,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 7,
+  padding: '7px 10px',
+  border: 'none',
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const diffFilePath: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const diffFileStats: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  gap: 4,
+  fontSize: 12,
+  fontWeight: 650,
+}
+
+export const diffCode: CSSProperties = {
+  minWidth: 'max-content',
+  padding: '4px 0 8px',
+  background: 'var(--dsw-alias-bg-base)',
+  fontFamily: 'var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace)',
+  fontSize: 13,
+  lineHeight: '20px',
+}
+
+export const diffLine: CSSProperties = {
+  minHeight: 17,
+  display: 'flex',
+  whiteSpace: 'pre',
+}
+
+export const diffLineNumber: CSSProperties = {
+  width: 38,
+  flex: 'none',
+  paddingRight: 8,
+  color: 'var(--dsw-alias-label-tertiary)',
+  textAlign: 'right',
+  userSelect: 'none',
+}
+
+export const diffLineMarker: CSSProperties = {
+  width: 16,
+  flex: 'none',
+  color: 'inherit',
+  textAlign: 'center',
+  userSelect: 'none',
+}
+
+export const diffLineAdd: CSSProperties = {
+  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent)',
+  color: 'var(--dsw-alias-state-success-primary)',
+}
+
+export const diffLineDelete: CSSProperties = {
+  background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 13%, transparent)',
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const diffLineHunk: CSSProperties = {
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontStyle: 'italic',
+}
+
+export const diffLineContext: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+export const diffNotice: CSSProperties = {
+  margin: 10,
+  padding: '9px 10px',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 11,
+  lineHeight: '17px',
+}
+
+export const diffEmpty: CSSProperties = {
+  margin: 16,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
 }

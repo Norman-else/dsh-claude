@@ -432,6 +432,11 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('Task for selected turn')
     expect(markup).not.toContain('Task for other turn')
     expect(markup).toContain('tasksPanelTurn')
+    expect(markup).toContain('width:calc(100% - 16px)')
+    expect(markup).toContain('height:calc(100% - 16px)')
+    expect(markup).toContain('margin:8px')
+    expect(markup).toContain('border-radius:12px')
+    expect(markup).toContain('box-shadow:0 4px 16px')
   })
 
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {

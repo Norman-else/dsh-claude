@@ -29,6 +29,41 @@ describe('Claude client sidecar projection', () => {
     expect(() => parseClaudeClientProjection({ ...valid, commands: [{ publicName: 'bad' }] })).toThrow()
     expect(() => parseClaudeClientProjection({ ...valid, activities: [{ turn: 1 }] })).toThrow()
     expect(() => parseClaudeClientProjection({ ...valid, tasks: { tasks: 'not-an-array' } })).toThrow()
+    expect(parseClaudeClientProjection({
+      ...valid,
+      repository: {
+        status: 'ready', cwd: '/repo', root: '/repo', branch: 'main', detached: false, worktree: false, dirty: false,
+        diff: { additions: 2, deletions: 1, files: 1, patch: 'diff --git a/a b/a\n+new\n', truncated: false },
+        pullRequest: {
+          number: 1,
+          title: 'Status',
+          url: 'https://github.com/owner/repo/pull/1',
+          state: 'open',
+          draft: false,
+          review: 'approved',
+          checks: 'passing',
+        },
+      },
+    }).repository).toMatchObject({ branch: 'main', diff: { additions: 2, deletions: 1 }, pullRequest: { number: 1 } })
+    for (const diff of [
+      { additions: -1, deletions: 0, files: 1, truncated: false },
+      { additions: 1, deletions: 0, files: 1, truncated: 'false' },
+      { additions: 1, deletions: 0, files: 1, patch: 'x'.repeat(256 * 1024 + 1), truncated: false },
+    ]) {
+      expect(() => parseClaudeClientProjection({
+        ...valid,
+        repository: { status: 'ready', cwd: '/repo', diff },
+      })).toThrow()
+    }
+    expect(() => parseClaudeClientProjection({
+      ...valid,
+      repository: {
+        status: 'ready', cwd: '/repo',
+        pullRequest: {
+          number: 1, title: 'bad', url: 'javascript:alert(1)', state: 'open', draft: false, review: 'none', checks: 'none',
+        },
+      },
+    })).toThrow()
   })
 
   it('loads immediately, polls while subscribed, and stops after unsubscribe', async () => {
@@ -104,6 +139,26 @@ describe('Claude client sidecar projection', () => {
     source.dispose()
   })
 
+  it('publishes a repository change even when the sidecar revision is unchanged', async () => {
+    vi.useFakeTimers()
+    let branch = 'main'
+    const fetchProjection = vi.fn(async () => new Response(JSON.stringify({
+      ...valid,
+      revision: 0,
+      repository: { status: 'ready', cwd: '/repo', root: '/repo', branch, detached: false, worktree: false, dirty: false },
+    }), { status: 200 })) as unknown as typeof fetch
+    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const listener = vi.fn()
+    const unsubscribe = source.subscribe(listener)
+    await flush()
+    branch = 'feature/status'
+    await vi.advanceTimersByTimeAsync(100)
+    expect(source.getSnapshot().repository?.branch).toBe('feature/status')
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    source.dispose()
+  })
+
   it('publishes a preset ownership change even when the sidecar revision is unchanged', async () => {
     vi.useFakeTimers()
     let owned = false
@@ -121,7 +176,7 @@ describe('Claude client sidecar projection', () => {
     source.dispose()
   })
 
-  it('publishes empty state when a non-abort refresh fails', async () => {
+  it('keeps the last verified state when a non-abort refresh fails', async () => {
     vi.useFakeTimers()
     let calls = 0
     const fetchProjection = vi.fn(async () => {
@@ -134,8 +189,8 @@ describe('Claude client sidecar projection', () => {
     const unsubscribe = source.subscribe(listener)
     await flush()
     await vi.advanceTimersByTimeAsync(100)
-    expect(source.getSnapshot()).toBe(EMPTY_CLAUDE_PROJECTION)
-    expect(listener).toHaveBeenCalledTimes(2)
+    expect(source.getSnapshot()).toEqual(valid)
+    expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
     source.dispose()
   })

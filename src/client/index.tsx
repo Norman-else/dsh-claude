@@ -10,8 +10,11 @@ import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
+import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
+import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
 import { ClaudeProjectionStore } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
+import { enableExpandedDetailsResize } from './details-resize.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
 /** The right-side details column slot declared by dsh-client-ui-layout
@@ -60,53 +63,65 @@ export function apply(ctx: ClientContext): void {
     locale: namespace,
   }, ClaudeActivityNode))
   const layout = ctx.get('layout') as LayoutFace | undefined
-  // Conditional switching for the details column: the tasks panel registration
-  // exists only while the panel is open. While closed, the built-in tool
-  // details view (priority 0) owns the single slot again.
-  let disposeTasksDetails: (() => void) | undefined
-  let tasksPanelTarget: { sessionId: string; turn: number } | undefined
-  const closeTasksPanel = (): void => {
-    if (disposeTasksDetails === undefined) return
-    disposeTasksDetails()
-    disposeTasksDetails = undefined
-    tasksPanelTarget = undefined
+  // Only one plugin-owned details surface exists at a time. While closed, the
+  // built-in tool details view (priority 0) owns the single slot again.
+  let disposePluginDetails: (() => void) | undefined
+  let disposeExpandedDetailsResize: (() => void) | undefined
+  let detailsSessionId: string | undefined
+  const closePluginDetails = (): void => {
+    if (disposePluginDetails === undefined) return
+    disposeExpandedDetailsResize?.()
+    disposeExpandedDetailsResize = undefined
+    disposePluginDetails()
+    disposePluginDetails = undefined
+    detailsSessionId = undefined
     layout?.closeDetails()
   }
   const openTasksPanel = (sessionId: string, turn: number): void => {
-    closeTasksPanel()
-    // The details column is a single slot and the built-in conversation UI
-    // already occupies priority 0, so register below it (lowest renders) to
-    // shadow it until the panel closes.
+    closePluginDetails()
     try {
-      disposeTasksDetails = ctx.slots.register({
+      disposePluginDetails = ctx.slots.register({
         name: 'details',
         priority: -10,
         locale: namespace,
-        inject: (): ClaudeTasksPanelInjected => ({
-          t,
-          turn,
-          closeDetails: closeTasksPanel,
-        }),
+        inject: (): ClaudeTasksPanelInjected => ({ t, turn, closeDetails: closePluginDetails }),
       }, ClaudeTasksPanel)
     } catch {
       return
     }
-    tasksPanelTarget = { sessionId, turn }
+    detailsSessionId = sessionId
     layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  }
+  const openDiffPanel = (sessionId: string): void => {
+    closePluginDetails()
+    try {
+      disposePluginDetails = ctx.slots.register({
+        name: 'details',
+        priority: -10,
+        locale: namespace,
+        inject: (): ClaudeDiffPanelInjected => ({ t, closeDetails: closePluginDetails }),
+      }, ClaudeDiffPanel)
+    } catch {
+      return
+    }
+    detailsSessionId = sessionId
+    layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
   ctx.effect(() => {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closeTasksPanel()
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closePluginDetails()
     const observer = new MutationObserver(() => {
-      if (tasksPanelTarget !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
-        closeTasksPanel()
+      if (detailsSessionId !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
+        closePluginDetails()
       }
     })
     observer.observe(document.body, { attributes: true, attributeFilter: ['data-details-collapsed'], subtree: true })
     return () => {
       observer.disconnect()
-      closeTasksPanel()
+      closePluginDetails()
     }
-  }, 'dsh-claude: tasks panel lifecycle')
+  }, 'dsh-claude: details panel lifecycle')
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-active-tasks',
@@ -123,12 +138,22 @@ export function apply(ctx: ClientContext): void {
       openTasks: turn => openTasksPanel(sessionId, turn),
     }),
   }, ClaudeActivityTail))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock',
+    id: 'claude-repository-status',
+    order: 20,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeRepositoryStatusInjected => ({
+      t,
+      openDiff: () => openDiffPanel(sessionId),
+    }),
+  }, ClaudeRepositoryStatus))
   if (sessions !== undefined) {
     // The layout closes the column on session switch; mirror that here so the
     // next session's native details view is not shadowed.
     ctx.effect(() => sessions.list.subscribe(() => {
-      if (tasksPanelTarget !== undefined && sessions.list.getSnapshot().current !== tasksPanelTarget.sessionId) closeTasksPanel()
-    }), 'dsh-claude: tasks panel session tracking')
+      if (detailsSessionId !== undefined && sessions.list.getSnapshot().current !== detailsSessionId) closePluginDetails()
+    }), 'dsh-claude: details panel session tracking')
   }
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
