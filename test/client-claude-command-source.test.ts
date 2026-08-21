@@ -8,10 +8,20 @@ const projection: ClaudeClientProjection = {
   revision: 1,
   owned: true,
   commands: [{
+    publicName: 'agents-sdk',
+    claudeName: 'agents-sdk',
+    description: 'Build an agent',
+    prefixed: false,
+  }, {
     publicName: 'ci-deploy',
     claudeName: 'awesome-skills:ci-deploy',
     description: 'Deploy through CI',
     hint: '<env>',
+    prefixed: false,
+  }, {
+    publicName: 'cloudflare',
+    claudeName: 'cloudflare',
+    description: 'Manage Cloudflare',
     prefixed: false,
   }],
   activities: [],
@@ -27,20 +37,33 @@ function store(value: ClaudeClientProjection = projection): ClaudeProjectionStor
 }
 
 describe('Claude client slash source', () => {
-  it('discovers only commands owned by the current Claude session', async () => {
+  it('filters owned commands by the case-insensitive public-name query', async () => {
     const source = createClaudeCommandSource(store())
-    await expect(source.candidates({ sessionId: 'session-1' } as never, {
-      query: 'ci',
+    const session = { sessionId: 'session-1' } as never
+    const signal = new AbortController().signal
+
+    await expect(source.candidates(session, {
+      query: 'CI-',
       position: 'leading',
-      signal: new AbortController().signal,
+      signal,
     })).resolves.toEqual([{
       name: 'ci-deploy',
       description: 'Deploy through CI',
       hint: '<env>',
     }])
+    await expect(source.candidates(session, {
+      query: '',
+      position: 'leading',
+      signal,
+    })).resolves.toHaveLength(3)
+    await expect(source.candidates(session, {
+      query: 'ci',
+      position: 'embedded',
+      signal,
+    })).resolves.toEqual([])
     await expect(createClaudeCommandSource(store({ ...projection, owned: false })).candidates(
       { sessionId: 'session-2' } as never,
-      { query: '', position: 'leading', signal: new AbortController().signal },
+      { query: '', position: 'leading', signal },
     )).resolves.toEqual([])
   })
 
@@ -49,7 +72,7 @@ describe('Claude client slash source', () => {
     const executeHostCommand = vi.fn()
     const actx = { conversation: { send }, executeHostCommand } as unknown as ClientContext
 
-    await expect(submitClaudeCommand(projection.commands[0]!, 'sat', actx)).resolves.toEqual({ kind: 'success' })
+    await expect(submitClaudeCommand(projection.commands[1]!, 'sat', actx)).resolves.toEqual({ kind: 'success' })
 
     expect(send).toHaveBeenCalledWith('/awesome-skills:ci-deploy sat')
     expect(executeHostCommand).not.toHaveBeenCalled()

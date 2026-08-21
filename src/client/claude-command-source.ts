@@ -59,11 +59,14 @@ export function createClaudeCommandSource(store: ClaudeProjectionStore): InputTr
     order: 10,
     async candidates(session, request): Promise<readonly InputTriggerCandidate[]> {
       if (request.position !== 'leading') return []
-      return commandsFor(store, session).map(command => ({
-        name: command.publicName,
-        description: command.description,
-        ...(command.hint === undefined ? {} : { hint: command.hint }),
-      }))
+      const query = request.query.toLocaleLowerCase()
+      return commandsFor(store, session)
+        .filter(command => command.publicName.toLocaleLowerCase().includes(query))
+        .map(command => ({
+          name: command.publicName,
+          description: command.description,
+          ...(command.hint === undefined ? {} : { hint: command.hint }),
+        }))
     },
     onPick(pick) {
       return pickCommand(store, pick)
