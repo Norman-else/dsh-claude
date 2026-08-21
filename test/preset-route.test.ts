@@ -57,12 +57,12 @@ describe('Claude preset route', () => {
     ])
   })
 
-  it('provides the agent-scope commands service for the host bridge', () => {
+  it('provides only the agent-scope command directory for collision checks', () => {
     const captured = capture()
     apply(captured.ctx)
     const service = captured.provided()
     expect(service?.name).toBe('claudeCommands')
-    expect(typeof (service?.value as { register?: unknown }).register).toBe('function')
     expect(typeof (service?.value as { list?: unknown }).list).toBe('function')
+    expect((service?.value as { register?: unknown }).register).toBeUndefined()
   })
 })

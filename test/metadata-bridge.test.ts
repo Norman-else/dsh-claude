@@ -41,20 +41,12 @@ function createAgent() {
 }
 
 describe('metadata bridge', () => {
-  it('forwards a registered Claude skill to the exact receiving session', async () => {
+  it('publishes the Claude catalog without registering a Host command', async () => {
     const host = createHostContext()
     const { agent: catalogAgent } = createAgent()
-    const receivingAgent = {
-      id: 'agent-2',
-      followup: vi.fn(),
-    } as unknown as Agent
-    let definition: Parameters<ClaudeAgentCommandService['register']>[0] | undefined
+    const published = vi.fn()
     const service: ClaudeAgentCommandService = {
       list: () => [],
-      register: value => {
-        definition = value
-        return () => { definition = undefined }
-      },
     }
     const supervisor = {
       supportedCommands: vi.fn(async () => [{
@@ -79,24 +71,25 @@ describe('metadata bridge', () => {
       catalogAgent,
       'default',
       sidecar,
+      published,
       () => service,
     )
 
-    await vi.waitFor(() => expect(definition?.name).toBe('ci-deploy'))
-    await definition!.handler({ agent: receivingAgent, rawInput: ' sat' } as never)
-
+    await vi.waitFor(() => expect(published).toHaveBeenCalledWith([{
+      publicName: 'ci-deploy',
+      claudeName: 'awesome-skills:ci-deploy',
+      description: 'Deploy through CI',
+      hint: '<env>',
+      prefixed: false,
+    }]))
     expect(catalogAgent.followup).not.toHaveBeenCalled()
-    expect(receivingAgent.followup).toHaveBeenCalledWith(expect.objectContaining({
-      content: [{ type: 'text', text: '/awesome-skills:ci-deploy sat' }],
-      source: { kind: 'user' },
-    }))
     await dispose?.()
   })
 
-  it('retries command registration when the preset service becomes available later', async () => {
+  it('retries command projection when the preset service becomes available later', async () => {
     const host = createHostContext()
     const { agent } = createAgent()
-    const registered: string[] = []
+    const published = vi.fn()
 
     let service: ClaudeAgentCommandService | undefined
     const resolveCommands = vi.fn(() => service)
@@ -125,6 +118,7 @@ describe('metadata bridge', () => {
       agent,
       'default',
       sidecar,
+      published,
       resolveCommands,
     )
     expect(dispose).toBeDefined()
@@ -132,20 +126,11 @@ describe('metadata bridge', () => {
     // Provide the service only after the first metadata refresh, mimicking
     // the preset subtree's isolate-realm service landing late.
     setTimeout(() => {
-      service = {
-        list: () => registered.map(name => ({ name })),
-        register: definition => {
-          registered.push(definition.name)
-          return () => {
-            const index = registered.indexOf(definition.name)
-            if (index >= 0) registered.splice(index, 1)
-          }
-        },
-      }
+      service = { list: () => [] }
     }, 100)
 
     await vi.waitFor(() => {
-      expect(registered).toContain('review')
+      expect(published).toHaveBeenCalledWith([expect.objectContaining({ publicName: 'review' })])
     }, {
       timeout: 6_000,
       interval: 50,
@@ -154,7 +139,7 @@ describe('metadata bridge', () => {
     await dispose?.()
 
     expect(supervisor.supportedCommands).toHaveBeenCalled()
-    expect(registered).toEqual([])
+    expect(published).toHaveBeenLastCalledWith([])
     expect((supervisor.contextUsage as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1)
   })
 })

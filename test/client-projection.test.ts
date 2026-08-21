@@ -9,6 +9,7 @@ const valid = {
   schemaVersion: 1 as const,
   revision: 1,
   owned: true,
+  commands: [],
   activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'warning' }],
 }
 
@@ -25,6 +26,7 @@ describe('Claude client sidecar projection', () => {
     expect(parseClaudeClientProjection(valid)).toEqual(valid)
     expect(() => parseClaudeClientProjection({ ...valid, revision: -1 })).toThrow()
     expect(() => parseClaudeClientProjection({ ...valid, owned: undefined })).toThrow()
+    expect(() => parseClaudeClientProjection({ ...valid, commands: [{ publicName: 'bad' }] })).toThrow()
     expect(() => parseClaudeClientProjection({ ...valid, activities: [{ turn: 1 }] })).toThrow()
     expect(() => parseClaudeClientProjection({ ...valid, tasks: { tasks: 'not-an-array' } })).toThrow()
   })
@@ -79,6 +81,27 @@ describe('Claude client sidecar projection', () => {
     expect(aborted).toBe(true)
     expect(source.getSnapshot()).toEqual(valid)
     unsubscribe()
+  })
+
+  it('publishes a command catalog change even when the sidecar revision is unchanged', async () => {
+    vi.useFakeTimers()
+    let commands = valid.commands
+    const fetchProjection = vi.fn(async () => new Response(JSON.stringify({ ...valid, revision: 0, commands }), { status: 200 })) as unknown as typeof fetch
+    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const listener = vi.fn()
+    const unsubscribe = source.subscribe(listener)
+    await flush()
+    commands = [{
+      publicName: 'review',
+      claudeName: 'review',
+      description: 'Review changes',
+      prefixed: false,
+    }]
+    await vi.advanceTimersByTimeAsync(100)
+    expect(source.getSnapshot().commands).toEqual(commands)
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    source.dispose()
   })
 
   it('publishes a preset ownership change even when the sidecar revision is unchanged', async () => {

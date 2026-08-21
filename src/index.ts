@@ -3,14 +3,13 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
-import { CLAUDE_COMMANDS_SERVICE, ClaudeCommandBridge, type ClaudeAgentCommandService } from './command-bridge.ts'
+import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
 import { ClaudeSupervisor } from './supervisor.ts'
@@ -50,6 +49,7 @@ export function mountClaudeMetadata(
   agent: Agent,
   model: string,
   sidecar: ClaudeSidecarRepository,
+  publishCommands: (commands: readonly ClaudeCommandView[]) => void = () => {},
   // IMPORTANT: call through the injected agentPresets SERVICE, never an
   // imported serviceForAgent() — a linked plugin resolves peer packages from
   // its own node_modules, which creates a second module instance with empty
@@ -72,16 +72,9 @@ export function mountClaudeMetadata(
     return scoped
   }
 
-  const bridge = new ClaudeCommandBridge({
+  const commandTarget = {
     list: () => scopedCommands().list(agent),
-    register: definition => scopedCommands().register(definition),
-    forward: (receivingAgent, line) => {
-      receivingAgent.followup(createUserMessage({
-        content: [{ type: 'text', text: line }],
-        source: { kind: 'user' },
-      }))
-    },
-  })
+  }
 
   const warn = (area: string, error: unknown) => {
     ctx.logger.warn(`dsh-claude: ${area} refresh failed for ${String(agent.id)}: ${error instanceof Error ? error.message : String(error)}`)
@@ -137,7 +130,9 @@ export function mountClaudeMetadata(
       if (stopped || catalog === undefined) return
 
       try {
-        diagnostic.registered = bridge.refresh(catalog).map(view => view.publicName)
+        const commands = projectClaudeCommands(catalog, commandTarget)
+        publishCommands(commands)
+        diagnostic.registered = commands.map(view => view.publicName)
         if (!stopped) scopeRetries = 0
       } catch (error) {
         diagnostic.lastError = error instanceof Error ? error.message : String(error)
@@ -167,10 +162,10 @@ export function mountClaudeMetadata(
 
     return async () => {
       stopped = true
+      publishCommands([])
       if (retryTimer !== undefined) clearTimeout(retryTimer)
       stopStatus()
       await pending
-      bridge.dispose()
     }
   }, 'dsh-claude: agent metadata bridge')
 }
@@ -200,6 +195,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     maxProcesses: config.maxProcesses ?? 4,
   }
   const sidecar = new ClaudeSidecarRepository()
+  const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
   const supervisor = new ClaudeSupervisor({
     runtime: ctx.subprocess,
     approval: ctx.approval,
@@ -228,7 +224,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const MOUNT_RETRY_LIMIT = 50
       const mount = (agent: Agent) => {
         if (mounted.has(agent)) return
-        const dispose = mountClaudeMetadata(ctx, supervisor, agent, supervisorConfig.defaultModel, sidecar)
+        const sessionId = agent.id as string
+        const dispose = mountClaudeMetadata(
+          ctx,
+          supervisor,
+          agent,
+          supervisorConfig.defaultModel,
+          sidecar,
+          commands => {
+            if (commands.length === 0) commandCatalogs.delete(sessionId)
+            else commandCatalogs.set(sessionId, commands)
+          },
+        )
         if (dispose !== undefined) mounted.set(agent, dispose)
         pending.delete(agent)
       }
@@ -299,6 +306,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
-    })
+    }, sessionId => commandCatalogs.get(sessionId) ?? [])
   })
 }

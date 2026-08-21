@@ -1,11 +1,13 @@
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent, ClaudeContextUsageEvent, ClaudeTasksEvent } from '../events.ts'
+import type { ClaudeCommandView } from '../command-bridge.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
 
 export interface ClaudeClientProjection {
   readonly schemaVersion: 1
   readonly revision: number
   readonly owned: boolean
+  readonly commands: readonly ClaudeCommandView[]
   readonly activities: readonly ClaudeActivityEvent[]
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
@@ -15,11 +17,13 @@ export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
   schemaVersion: 1,
   revision: 0,
   owned: false,
+  commands: [],
   activities: [],
 }
 
 const POLL_INTERVAL_MS = 2_000
 const MAX_ACTIVITIES = 10_000
+const MAX_COMMANDS = 2_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -38,9 +42,20 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
     || input.schemaVersion !== 1
     || !nonNegativeInteger(input.revision)
     || typeof input.owned !== 'boolean'
+    || !Array.isArray(input.commands)
+    || input.commands.length > MAX_COMMANDS
     || !Array.isArray(input.activities)
     || input.activities.length > MAX_ACTIVITIES) {
     throw new Error('invalid Claude sidecar projection')
+  }
+  for (const item of input.commands) {
+    const command = record(item)
+    if (command === undefined
+      || typeof command.publicName !== 'string'
+      || typeof command.claudeName !== 'string'
+      || typeof command.description !== 'string'
+      || (command.hint !== undefined && typeof command.hint !== 'string')
+      || typeof command.prefixed !== 'boolean') throw new Error('invalid Claude command projection')
   }
   for (const item of input.activities) {
     const activity = record(item)
@@ -89,7 +104,8 @@ export function createClaudeProjectionSource(
       })
       if (!response.ok) throw new Error(`Claude projection request failed (${response.status})`)
       const next = parseClaudeClientProjection(await response.json())
-      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned) {
+      const commandCatalogChanged = JSON.stringify(next.commands) !== JSON.stringify(snapshot.commands)
+      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged) {
         snapshot = next
         for (const listener of [...listeners]) listener()
       }

@@ -2,7 +2,7 @@
 
 **Goal:** Discover and execute Claude Code Skills/Commands through DSH’s native slash-command surface and show authoritative Claude context-window usage beside model selection.
 
-**Architecture:** Claude Agent SDK Query remains the metadata and execution source of truth. DSH’s public per-agent command registry owns discovery/presentation and queues slash invocations back through `Agent.followup()` so the ordinary DSH turn remains the sole execution owner. The SDK `getContextUsage()` result is normalized into the plugin-owned sidecar; a session-scoped Client projection supplies the latest sample to an additive `conversation.input.right` meter.
+**Architecture:** Claude Agent SDK Query remains the metadata and execution source of truth. A bounded per-session catalog is projected to DSH’s public Client input-trigger registry; slash invocations submit through session-scoped `conversation.send()` so the ordinary DSH turn remains the sole execution owner without Host command lifecycle events. The SDK `getContextUsage()` result is normalized into the plugin-owned sidecar; a session-scoped Client projection supplies the latest sample to an additive `conversation.input.right` meter.
 
 **Amendment:** The custom-event persistence and event-view steps below are historical and superseded by `src/sidecar.ts`, `src/projection-routes.ts`, and `src/client/projection.ts`. Current runtime appends no `claude-code/*` session events.
 
@@ -134,9 +134,9 @@
 **Steps:**
 1. Add the public commands package to peer/dev dependencies.
 2. Implement name validation, collision prefixing, alias reconciliation, and stale-registration disposal.
-3. Build handlers with `createUserMessage({ source: { kind: 'user' } })` and `agent.followup()` using the exact Claude slash line.
-4. Wire initial reconciliation for Claude-preset agents and refresh after successful turns/metadata refresh.
-5. Test native names, DSH collisions, aliases, invalid names, exact raw input, disposal, and catalog replacement.
+3. Project the bounded per-session catalog without registering Host command handlers.
+4. Register a Client `/` input-trigger source whose command claim submits the exact Claude slash line through session-scoped `conversation.send()`.
+5. Test native and Client contribution collisions, aliases, invalid names, exact qualified input, catalog replacement, and that submission emits no Host command lifecycle.
 6. Run `PATH=/opt/homebrew/bin:$PATH pnpm exec vitest run test/command-bridge.test.ts test/supervisor.test.ts`.
 
 ### Task 4 — Latest context projection and meter UI

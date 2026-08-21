@@ -1,6 +1,5 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { CommandDefinition, CommandDescriptor } from '@deepseek-ai/dsh-commands'
+import type { CommandDescriptor } from '@deepseek-ai/dsh-commands'
 import { redactText } from './events.ts'
 
 const COMMAND_NAME = /^[a-z][a-z0-9_-]*$/u
@@ -30,21 +29,17 @@ const CLIENT_CONTRIBUTION_NAMES: ReadonlySet<string> = new Set(['model'])
 
 export interface ClaudeCommandTarget {
   list(): readonly Pick<CommandDescriptor, 'name'>[]
-  register(definition: CommandDefinition): () => void
-  forward(agent: Agent, line: string): void
 }
 
 /**
- * Agent-scope command service contract. The commands service is unreachable
+ * Agent-scope command-directory contract. The commands service is unreachable
  * from the host plugin's view of `agent.ctx` ("without inject"), but the
- * preset route plugin runs INSIDE the agent's preset composition with
- * `commands` injected. Registrations made through the provided service land
- * in the agent's scope layer, which the command registry inherits into
- * `list(agent)` for exactly that agent — invisible to every other session.
+ * preset route plugin runs inside the agent's preset composition with
+ * `commands` injected. The Host reads only the exact agent's effective names
+ * for collision checks; Claude catalog entries are never registered there.
  */
 export interface ClaudeAgentCommandService {
   list(agent: unknown): readonly Pick<CommandDescriptor, 'name'>[]
-  register(definition: CommandDefinition): () => void
 }
 
 /**
@@ -64,30 +59,25 @@ declare module '@deepseek-ai/cordis' {
 export interface ClaudeCommandView {
   publicName: string
   claudeName: string
+  description: string
+  hint?: string
   prefixed: boolean
-}
-
-interface DesiredCommand extends ClaudeCommandView {
-  signature: string
-  definition: CommandDefinition
-}
-
-interface LiveCommand {
-  signature: string
-  dispose: () => void
 }
 
 function bounded(value: string, maxChars: number): string {
   return redactText(value, maxChars)
 }
 
-function desiredCommands(
+export function projectClaudeCommands(
   catalog: readonly SlashCommand[],
-  reservedNames: ReadonlySet<string>,
-  forward: (agent: Agent, line: string) => void,
-): Map<string, DesiredCommand> {
-  const desired = new Map<string, DesiredCommand>()
+  target: ClaudeCommandTarget,
+): readonly ClaudeCommandView[] {
+  const reservedNames = new Set(target.list().map(command => command.name))
+  // Client contributions are absent from the Host directory but share the
+  // same slash menu, so reserve their public names explicitly.
+  for (const name of CLIENT_CONTRIBUTION_NAMES) reservedNames.add(name)
   const assigned = new Set<string>()
+  const views: ClaudeCommandView[] = []
   for (const command of catalog) {
     const names = [command.name, ...(command.aliases ?? [])]
     for (const claudeName of names) {
@@ -102,76 +92,15 @@ function desiredCommands(
       if (!COMMAND_NAME.test(publicName) || reservedNames.has(publicName) || assigned.has(publicName)) continue
       const description = bounded(command.description || `Claude Code /${command.name}`, MAX_DESCRIPTION_CHARS)
       const hint = bounded(command.argumentHint ?? '', MAX_HINT_CHARS)
-      const signature = JSON.stringify({ publicName, claudeName, description, hint })
-      desired.set(publicName, {
+      views.push({
         publicName,
         claudeName,
+        description,
+        ...(hint.length === 0 ? {} : { hint }),
         prefixed,
-        signature,
-        definition: {
-          name: publicName,
-          description,
-          ...(hint.length === 0 ? {} : { input: { hint } }),
-          recordInput: false,
-          handler: ({ agent, rawInput }) => {
-            // The invocation owns the exact session that received the command.
-            // Never route through an agent captured during catalog refresh.
-            forward(agent, `/${claudeName}${rawInput}`)
-            return { kind: 'success' }
-          },
-        },
       })
       assigned.add(publicName)
     }
   }
-  return desired
-}
-
-export class ClaudeCommandBridge {
-  readonly #target: ClaudeCommandTarget
-  readonly #live = new Map<string, LiveCommand>()
-
-  constructor(target: ClaudeCommandTarget) {
-    this.#target = target
-  }
-
-  refresh(catalog: readonly SlashCommand[]): readonly ClaudeCommandView[] {
-    const owned = new Set(this.#live.keys())
-    const reserved = new Set(
-      this.#target.list()
-        .map(command => command.name)
-        .filter(name => !owned.has(name)),
-    )
-    // Client-side commandUi contributions (e.g. /model from
-    // dsh-client-ui-model-selection) are invisible to the host registry, but
-    // the web palette throws away its ENTIRE command group when a host
-    // command collides with a contribution. Reserve those names so Claude's
-    // same-named commands take the claude- prefix instead.
-    for (const name of CLIENT_CONTRIBUTION_NAMES) reserved.add(name)
-    const desired = desiredCommands(catalog, reserved, (agent, line) => this.#target.forward(agent, line))
-
-    for (const [name, live] of [...this.#live]) {
-      const next = desired.get(name)
-      if (next?.signature === live.signature) continue
-      live.dispose()
-      this.#live.delete(name)
-    }
-    for (const [name, next] of desired) {
-      if (this.#live.has(name)) continue
-      this.#live.set(name, {
-        signature: next.signature,
-        dispose: this.#target.register(next.definition),
-      })
-    }
-    return [...desired.values()].map(({ publicName, claudeName, prefixed }) => ({
-      publicName,
-      claudeName,
-      prefixed,
-    }))
-  }
-
-  dispose(): void {
-    for (const command of this.#live.values()) command.dispose()
-    this.#live.clear()
-  }
+  return views
 }

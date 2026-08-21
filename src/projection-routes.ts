@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_PROJECTION_PATH } from './constants.ts'
 import { json, trustedRequest } from './http.ts'
 import type { ClaudeSidecarRepository } from './sidecar.ts'
+import type { ClaudeCommandView } from './command-bridge.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
 
@@ -26,6 +27,7 @@ export function registerClaudeProjectionRoute(
   ctx: Context,
   sidecar: ClaudeSidecarRepository,
   ownsSession: (sessionId: string) => boolean,
+  commandsForSession: (sessionId: string) => readonly ClaudeCommandView[] = () => [],
 ): void {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -41,6 +43,7 @@ export function registerClaudeProjectionRoute(
           schemaVersion: projection.schemaVersion,
           revision: projection.revision,
           owned: ownsSession(sessionId),
+          commands: commandsForSession(sessionId),
           activities: projection.activities,
           ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
           ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),

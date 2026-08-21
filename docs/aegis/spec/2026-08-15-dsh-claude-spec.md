@@ -185,12 +185,13 @@ For migration only, readable historical `claude-code/session-bound`, `claude-cod
 
 ### 3.6 Claude command bridge
 
-For agents composed with the Claude preset, initialize the owned Query on the first metadata or turn request and read its authoritative `supportedCommands()` catalog. Reconcile per-agent DSH command registrations whenever the catalog is first loaded or refreshed.
+For agents composed with the Claude preset, initialize the owned Query on the first metadata or turn request and read its authoritative `supportedCommands()` catalog. Project the bounded per-session catalog to the Client whenever it is first loaded or refreshed. The Client registers a public `/` input-trigger source rather than Host commands.
 
 - A non-conflicting Claude command keeps its native name and argument hint.
-- Existing effective DSH commands remain authoritative. A colliding Claude command is exposed as `claude-<name>`; a further collision fails that entry loud rather than replacing another owner.
+- Existing effective DSH commands and known Client contributions remain authoritative. A colliding Claude command is exposed as `claude-<name>`; a further collision excludes that entry rather than replacing another owner.
 - Claude aliases follow the same rules and never replace DSH commands.
-- A registered handler does not drive the Query directly. It creates a user-sourced DSH follow-up containing the exact Claude slash-command line, so the ordinary DSH turn, status, cancellation, persistence, approval, and adapter path remain the sole execution owner.
+- Selecting or entering a Claude command creates a composer command claim whose submit callback sends the exact Claude slash-command line through the session-scoped `conversation.send()` service. This is an ordinary user message and turn, so status, cancellation, persistence, approval, and adapter behavior remain unchanged.
+- Claude catalog entries are never registered with the Host command executor. Therefore Skill submission emits no standalone `command/run` or `command/done` lifecycle node and cannot attach a completion row to the preceding response.
 - Invalid command names are excluded with a bounded diagnostic; command metadata is never treated as trusted HTML.
 - Catalog discovery failure is non-fatal to ordinary prompts and is retried on the next metadata refresh.
 
@@ -317,7 +318,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 - permission allow/deny/cancel/unavailable mapping
 - process supervisor serialization, cancellation, idle eviction, process cap, crash classification, and disposal
 - SDK message fixtures for init, partial text, tool use/result, permission, usage, success, failure, and malformed input
-- command catalog reconciliation, aliases, DSH-name collision prefixing, follow-up delivery, and disposal
+- command catalog projection, aliases, DSH/Client-name collision prefixing, ordinary-message delivery, and absence of Host command lifecycle events
 - context-usage normalization, safe-field sidecar persistence, latest-sample projection, and meter rendering
 - trusted projection route, Client initial load/polling/cleanup/failure degradation, per-step chat-node ordering, and task-launcher turn-tail selectors
 - Desktop cold-load of a newly produced session with no `claude-code/*` events
@@ -338,7 +339,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 - restart DSH and resume the persisted Claude session
 - idle-evict and resume
 - type `/` and verify Claude Skills/Commands are discoverable with DSH collisions prefixed
-- execute one Claude Skill and confirm it runs as an ordinary DSH turn with activity and approval behavior intact
+- execute one Claude Skill and confirm it runs as an ordinary DSH turn with activity and approval behavior intact, with no command status row under the preceding response
 - verify the context meter beside model selection initializes, updates after a turn, opens its aggregate breakdown, and survives refresh
 - run Doctor with the detected `~/.local/bin/claude` path
 

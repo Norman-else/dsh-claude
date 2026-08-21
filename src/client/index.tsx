@@ -1,5 +1,6 @@
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -9,6 +10,7 @@ import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
 import { ClaudeProjectionStore } from './projection.ts'
+import { createClaudeCommandSource } from './claude-command-source.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
 /** The right-side details column slot declared by dsh-client-ui-layout
@@ -32,13 +34,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const name = 'dsh-claude-client'
-export const inject = ['slots', 'locale', 'conversationEvents', 'sessions']
+export const inject = ['slots', 'locale', 'conversationEvents', 'sessions', 'inputTriggers', 'conversation']
 
 export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   const projections = new ClaudeProjectionStore()
+  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   if (sessions !== undefined) {
     ctx.effect(() => sessions.provide({

@@ -22,13 +22,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       model: config.model ?? upstream.model ?? 'default',
     }
   })
-  // Provide this agent-scope commands service so the host-side command
-  // bridge can register Claude's catalog into exactly this agent's scope
-  // layer. The preset row isolates the service per entry (per session); the
-  // host reads it via serviceForAgent(ctx, agent, CLAUDE_COMMANDS_SERVICE).
+  // Expose the effective Host command names for collision-safe projection.
+  // Claude Skills are not registered as Host commands: the Client slash source
+  // submits them as ordinary messages, so no command lifecycle row is created.
   ctx.provide(CLAUDE_COMMANDS_SERVICE, {
     list: agent => ctx.commands.list(agent as never),
-    register: definition => ctx.commands.register(definition),
   })
   // Presentation-only tool mirrors, scoped to this preset's agents: they let
   // the host compute native render intents for the mirrored Claude tool

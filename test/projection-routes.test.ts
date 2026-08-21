@@ -60,13 +60,23 @@ describe('Claude sidecar projection route', () => {
         tasks: { tasks: [] },
       }),
     } as unknown as ClaudeSidecarRepository
-    registerClaudeProjectionRoute(ctx, sidecar, sessionId => sessionId === 'session/a')
+    registerClaudeProjectionRoute(ctx, sidecar, sessionId => sessionId === 'session/a', () => [{
+      publicName: 'ci-deploy',
+      claudeName: 'awesome-skills:ci-deploy',
+      description: 'Deploy through CI',
+      prefixed: false,
+    }])
     const res = response()
     await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent('session/a')}`), res)
     expect(res.statusCode).toBe(200)
     expect(res.headers['cache-control']).toBe('no-store')
     const body = JSON.parse(res.body)
-    expect(body).toMatchObject({ revision: 3, owned: true, activities: [{ kind: 'warning' }] })
+    expect(body).toMatchObject({
+      revision: 3,
+      owned: true,
+      commands: [{ publicName: 'ci-deploy', claudeName: 'awesome-skills:ci-deploy' }],
+      activities: [{ kind: 'warning' }],
+    })
     expect(body).not.toHaveProperty('binding')
     expect(JSON.stringify(body)).not.toContain('private-resume-id')
   })
@@ -77,7 +87,7 @@ describe('Claude sidecar projection route', () => {
     const res = response()
     await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/unknown`), res)
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ schemaVersion: 1, revision: 0, owned: false, activities: [] })
+    expect(JSON.parse(res.body)).toEqual({ schemaVersion: 1, revision: 0, owned: false, commands: [], activities: [] })
   })
 
   it('rejects malformed, forbidden, and non-GET requests', async () => {
