@@ -124,6 +124,105 @@ export const diagnosticValue: CSSProperties = {
   overflowWrap: 'anywhere',
 }
 
+export const settingSelect: CSSProperties = {
+  position: 'relative',
+  minWidth: 0,
+}
+
+export const settingSelectTrigger: CSSProperties = {
+  width: '100%',
+  minHeight: 38,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '7px 11px 7px 13px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 10,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+  textAlign: 'left',
+  cursor: 'pointer',
+  transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
+}
+
+export const settingSelectTriggerOpen: CSSProperties = {
+  borderColor: 'var(--dsw-static-blue-450)',
+  boxShadow: '0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-450) 15%, transparent)',
+}
+
+export const settingSelectValue: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontWeight: 550,
+}
+
+export const settingSelectChevron: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 16,
+  lineHeight: 1,
+  transform: 'translateY(-1px)',
+  transition: 'transform 120ms ease',
+}
+
+export const settingSelectChevronOpen: CSSProperties = {
+  transform: 'translateY(1px) rotate(180deg)',
+}
+
+export const settingSelectMenu: CSSProperties = {
+  position: 'absolute',
+  zIndex: 20,
+  top: 'calc(100% + 6px)',
+  left: 0,
+  right: 0,
+  maxHeight: 240,
+  overflowY: 'auto',
+  padding: 5,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 11,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent), 0 2px 8px color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)',
+}
+
+export const settingSelectOption: CSSProperties = {
+  width: '100%',
+  minHeight: 34,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '6px 9px',
+  border: 'none',
+  borderRadius: 7,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const settingSelectOptionActive: CSSProperties = {
+  background: 'var(--dsw-alias-bg-layer-2)',
+}
+
+export const settingSelectCheck: CSSProperties = {
+  width: 14,
+  flex: 'none',
+  color: 'var(--dsw-static-blue-450)',
+  fontSize: 12,
+  fontWeight: 700,
+  textAlign: 'center',
+}
+
 export const settingsActions: CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',

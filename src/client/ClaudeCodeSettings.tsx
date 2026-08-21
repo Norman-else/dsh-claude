@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from '../constants.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
@@ -34,13 +34,13 @@ export function isPluginUpdateStatus(value: unknown): value is PluginUpdateStatu
     && (status.message === undefined || typeof status.message === 'string')
 }
 
-interface GlobalSettingOption {
+export interface GlobalSettingOption {
   value: string
   label: string
   source: 'built-in' | 'user' | 'configured'
 }
 
-interface GlobalSettingView {
+export interface GlobalSettingView {
   key: string
   kind: 'select'
   value: string
@@ -76,6 +76,118 @@ export interface ClaudeCodeSettingsInjected {
 
 function value(status: string, detail?: string): string {
   return detail === undefined ? status : `${status} · ${detail}`
+}
+
+interface GlobalSettingSelectProps {
+  setting: GlobalSettingView
+  disabled: boolean
+  onChange: (value: string) => void
+}
+
+export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSettingSelectProps) {
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listboxId = useId()
+  const selectedIndex = Math.max(0, setting.options.findIndex(option => option.value === setting.value))
+  const selectedOption = setting.options[selectedIndex]
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsidePointer = (event: MouseEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsidePointer)
+    return () => document.removeEventListener('mousedown', closeOnOutsidePointer)
+  }, [open])
+
+  const openMenu = (index = selectedIndex): void => {
+    setActiveIndex(index)
+    setOpen(true)
+  }
+
+  const choose = (index: number): void => {
+    const option = setting.options[index]
+    if (option === undefined) return
+    setOpen(false)
+    triggerRef.current?.focus()
+    if (option.value !== setting.value) onChange(option.value)
+  }
+
+  const move = (offset: number): void => {
+    const count = setting.options.length
+    if (count === 0) return
+    setActiveIndex(current => (current + offset + count) % count)
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      style={styles.settingSelect}
+      onBlur={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-activedescendant={open ? `${listboxId}-${activeIndex}` : undefined}
+        disabled={disabled || setting.options.length === 0}
+        style={{ ...styles.settingSelectTrigger, ...(open ? styles.settingSelectTriggerOpen : {}) }}
+        onClick={() => { if (open) setOpen(false); else openMenu() }}
+        onKeyDown={event => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault()
+            if (!open) openMenu(event.key === 'ArrowDown' ? selectedIndex : Math.max(0, setting.options.length - 1))
+            else move(event.key === 'ArrowDown' ? 1 : -1)
+          } else if (event.key === 'Home' && open) {
+            event.preventDefault()
+            setActiveIndex(0)
+          } else if (event.key === 'End' && open) {
+            event.preventDefault()
+            setActiveIndex(Math.max(0, setting.options.length - 1))
+          } else if ((event.key === 'Enter' || event.key === ' ') && open) {
+            event.preventDefault()
+            choose(activeIndex)
+          } else if (event.key === 'Escape' && open) {
+            event.preventDefault()
+            setOpen(false)
+          }
+        }}
+      >
+        <span style={styles.settingSelectValue}>{selectedOption?.label ?? setting.value}</span>
+        <span aria-hidden="true" style={{ ...styles.settingSelectChevron, ...(open ? styles.settingSelectChevronOpen : {}) }}>⌄</span>
+      </button>
+      {open ? (
+        <div id={listboxId} role="listbox" aria-activedescendant={`${listboxId}-${activeIndex}`} style={styles.settingSelectMenu}>
+          {setting.options.map((option, index) => {
+            const selected = option.value === setting.value
+            const active = index === activeIndex
+            return (
+              <button
+                id={`${listboxId}-${index}`}
+                key={`${option.source}:${option.value}`}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                style={{ ...styles.settingSelectOption, ...(active ? styles.settingSelectOptionActive : {}) }}
+                onMouseEnter={() => setActiveIndex(index)}
+                onMouseDown={event => event.preventDefault()}
+                onClick={() => choose(index)}
+              >
+                <span style={styles.settingSelectCheck} aria-hidden="true">{selected ? '✓' : ''}</span>
+                <span>{option.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
@@ -206,17 +318,14 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           <p style={styles.settingsBody}>{t('globalSettingsBody')}</p>
         </div>
         {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => (
-          <label key={setting.key} style={styles.diagnosticGrid}>
+          <div key={setting.key} style={styles.diagnosticGrid}>
             <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle' ? t('outputStyle') : setting.key}</span>
-            <select
-              value={setting.value}
+            <GlobalSettingSelect
+              setting={setting}
               disabled={globalSettingsBusy}
-              onChange={event => { void requestGlobalSettings({ [setting.key]: event.target.value }) }}
-              style={styles.diagnosticValue}
-            >
-              {setting.options.map(option => <option key={`${option.source}:${option.value}`} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
+              onChange={nextValue => { void requestGlobalSettings({ [setting.key]: nextValue }) }}
+            />
+          </div>
         ))}
         {globalSettings?.settings.some(setting => setting.effect === 'new-session') === true
           ? <p style={styles.notice}>{t('globalSettingsNewSession')}</p>
