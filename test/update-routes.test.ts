@@ -122,10 +122,16 @@ describe('plugin update discovery', () => {
 })
 
 describe('plugin update execution', () => {
-  it('uses fixed public DSH CLI arguments for the discovered profile', async () => {
+  it('installs the exact latest version and verifies the resulting manifests', async () => {
     const { home, packageDir } = await fixture('1.0.0')
-    const profileDir = await profile(home, 'desktop', '^1.0.0', packageDir)
-    const spawn = vi.fn(() => handle()) as unknown as SubprocessRuntime['spawn']
+    const profileDir = await profile(home, 'desktop', '1.0.0', packageDir)
+    const spawn = vi.fn(() => ({
+      ...handle(),
+      done: Promise.all([
+        writeFile(join(profileDir, 'package.json'), JSON.stringify({ dependencies: { [PLUGIN_PACKAGE_NAME]: '1.1.0' } })),
+        writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: PLUGIN_PACKAGE_NAME, version: '1.1.0' })),
+      ]).then(() => ({ exitCode: 0, signal: null })),
+    })) as unknown as SubprocessRuntime['spawn']
     const status = await updatePlugin({
       dshHome: home,
       packageDir,
@@ -135,11 +141,23 @@ describe('plugin update execution', () => {
     })
     expect(spawn).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
-      argv: ['C:/bin/dsh.cmd', 'plugin', '--profile', 'desktop', 'update', PLUGIN_PACKAGE_NAME],
+      argv: ['C:/bin/dsh.cmd', 'plugin', '--profile', 'desktop', 'add', `${PLUGIN_PACKAGE_NAME}@1.1.0`],
       cwd: profileDir,
       env: {},
     }))
-    expect(status).toMatchObject({ state: 'current', restartRequired: true })
+    expect(status).toMatchObject({ currentVersion: '1.1.0', latestVersion: '1.1.0', state: 'current', restartRequired: true })
+  })
+
+  it('rejects a successful command that leaves the exact dependency pinned to the old version', async () => {
+    const { home, packageDir } = await fixture('1.0.0')
+    await profile(home, 'desktop', '1.0.0', packageDir)
+    await expect(updatePlugin({
+      dshHome: home,
+      packageDir,
+      fetchLatest: async () => '1.1.0',
+      resolveExecutable: async () => 'dsh',
+      spawn: (() => handle()) as SubprocessRuntime['spawn'],
+    })).rejects.toThrow('without updating the profile dependency')
   })
 
   it('refuses to update linked installations', async () => {

@@ -260,7 +260,7 @@ Register an additive `conversation.input.right` entry so the meter appears betwe
 
 The session-owned sidecar projection supplies the latest context sample, so refresh and Host restart preserve the last known meter. Refresh usage after Query initialization and after each completed Claude turn. While no sample exists, render nothing; metadata or projection failure must not block prompting. The component must not display excluded paths, tool identities, prompt content, or secrets.
 
-### 5.5 Settings and Doctor
+### 5.5 Settings, Doctor, and updates
 
 Add a settings section with:
 
@@ -269,8 +269,9 @@ Add a settings section with:
 - idle timeout
 - maximum live processes
 - redacted Doctor output and rerun action
+- npm release discovery and an in-place update action for uniquely identified registry installations
 
-Persist settings through the plugin's own settings namespace if the DSH public settings seam supports out-of-tree schemas. If not, keep v0.1 configuration in the bundle row and expose Doctor read-only; do not invent an unmanaged credentials file.
+Persist settings through the plugin's own settings namespace if the DSH public settings seam supports out-of-tree schemas. If not, keep v0.1 configuration in the bundle row and expose Doctor read-only; do not invent an unmanaged credentials file. Plugin updates must install the registry's validated latest version explicitly rather than relying on the profile's existing semver range, then verify both the profile dependency and installed package manifests before reporting success. Linked, ambiguous, and unsupported sources remain non-updatable.
 
 ## 6. Failure and Recovery
 
@@ -302,6 +303,7 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 ### 8.1 Automated
 
 - executable resolution and version parsing
+- exact-version plugin updates, post-install manifest verification, and no-op update rejection
 - newest-direct-message resolution for text-only, pure-image, interleaved text/image, and multiple-image input
 - attachment media/count/byte/pixel/dimension limits, verified reads, bounded errors, and cancellation
 - stream mapping without duplicate text

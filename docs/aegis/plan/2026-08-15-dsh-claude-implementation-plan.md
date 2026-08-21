@@ -236,7 +236,8 @@ Expected evidence: the DSH preset roster discovers the package-contained preset,
 4. Materialize one step-scoped keyed chat node immediately before each Claude assistant message and render matching sidecar activity with native DSH disclosure, icon, status, typography, and spacing primitives. Keep the turn tail task-launcher-only.
 5. Add localized zh/en copy and accessible controls.
 6. Register a Settings section that calls same-origin Doctor endpoints and never renders secrets.
-7. Add route, polling, projection/selector, and focused component tests.
+7. For registry installs, update by adding the validated exact latest package version and verify both profile and installed manifests before reporting success; never replace linked or ambiguous installs.
+8. Add route, update execution, polling, projection/selector, and focused component tests.
 
 Expected evidence: Client typecheck/build passes; real assembler regression demonstrates activity 1, assistant 1, activity 2, assistant 2 ordering, while native turns render no Claude activity node.
 

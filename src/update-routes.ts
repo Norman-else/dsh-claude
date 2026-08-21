@@ -198,6 +198,22 @@ export async function checkPluginUpdate(deps: UpdateDependencies = {}): Promise<
   }
 }
 
+async function verifyInstalledVersion(installation: Installation, expectedVersion: string): Promise<void> {
+  const profileManifest = await readManifest(join(installation.profileDir, 'package.json'))
+  if (dependencySpec(profileManifest) !== expectedVersion) {
+    throw new Error('DSH plugin update completed without updating the profile dependency')
+  }
+  const installedManifest = await readManifest(join(
+    installation.profileDir,
+    'node_modules',
+    ...PLUGIN_PACKAGE_NAME.split('/'),
+    'package.json',
+  ))
+  if (installedManifest.name !== PLUGIN_PACKAGE_NAME || installedManifest.version !== expectedVersion) {
+    throw new Error('DSH plugin update completed without installing the requested version')
+  }
+}
+
 export async function updatePlugin(deps: UpdateDependencies = {}): Promise<PluginUpdateStatus> {
   const { version, installation } = await packageContext(deps)
   if (installation === undefined || installation.source !== 'registry') throw new Error('Plugin update is unavailable for this installation')
@@ -209,7 +225,7 @@ export async function updatePlugin(deps: UpdateDependencies = {}): Promise<Plugi
   const signal = AbortSignal.timeout(UPDATE_TIMEOUT_MS)
   const executable = await resolveExecutable('dsh', {}, signal)
   const handle = spawn({
-    argv: [executable, 'plugin', '--profile', installation.profile, 'update', PLUGIN_PACKAGE_NAME],
+    argv: [executable, 'plugin', '--profile', installation.profile, 'add', `${PLUGIN_PACKAGE_NAME}@${latest}`],
     cwd: installation.profileDir,
     env: {},
     stdio: { stdin: 'ignore', stdout: { maxBytes: MAX_UPDATE_OUTPUT_BYTES }, stderr: { maxBytes: MAX_UPDATE_OUTPUT_BYTES } },
@@ -221,7 +237,8 @@ export async function updatePlugin(deps: UpdateDependencies = {}): Promise<Plugi
     const detail = handle.collected.stderr?.readFrom(0).text ?? ''
     throw new Error(`DSH plugin update failed (${outcome.exitCode ?? outcome.signal ?? 'unknown exit'}): ${safeMessage(detail)}`)
   }
-  return { currentVersion: version, latestVersion: latest, source: 'registry', state: 'current', canUpdate: false, restartRequired: true, message: 'Update installed; restart DSH Desktop to load it' }
+  await verifyInstalledVersion(installation, latest)
+  return { currentVersion: latest, latestVersion: latest, source: 'registry', state: 'current', canUpdate: false, restartRequired: true, message: 'Update installed; restart DSH Desktop to load it' }
 }
 
 export function registerClaudeUpdateRoutes(ctx: Context, runtime: Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>, deps: UpdateDependencies = {}): void {
