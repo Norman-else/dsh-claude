@@ -90,6 +90,35 @@ describe('direct prompt resolution', () => {
     ], attachmentStore())).resolves.toBe('human prompt')
   })
 
+  it('never forwards DSH system, tool, or plugin context to the Claude turn', async () => {
+    const { supervisor, calls } = capturingSupervisor()
+    const adapter = new ClaudeCodeAdapter(supervisor, {
+      currentInitiator: () => agent,
+      get: () => agent,
+    }, attachmentStore(), claudePreset)
+    const dshSystemPrompt = 'You are an AI agent powered by DeepSeek Harness at a private installation path.'
+    const pluginContext = 'Current DSH file policy and approval policy.'
+
+    for await (const _chunk of adapter.stream({
+      ...options([
+        user('send only this human message'),
+        user(pluginContext, 'plugin'),
+      ]),
+      system: dshSystemPrompt,
+      tools: [{
+        name: 'PrivateDshTool',
+        description: 'DSH-only tool metadata',
+        parameters: { type: 'object', properties: {} },
+      }],
+    })) { /* drain */ }
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.prompt).toBe('send only this human message')
+    expect(JSON.stringify(calls[0])).not.toContain(dshSystemPrompt)
+    expect(JSON.stringify(calls[0])).not.toContain(pluginContext)
+    expect(JSON.stringify(calls[0])).not.toContain('PrivateDshTool')
+  })
+
   it('resolves an image-only prompt through the verified attachment store', async () => {
     await expect(resolveDirectUserPrompt([
       imageMessage([{ type: 'image', attachment: imageRef() }]),
