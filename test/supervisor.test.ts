@@ -524,6 +524,76 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('keeps the turn open and asks Claude for one report after all background tasks settle', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'deploy both services' })
+    const collected = collect(output)
+    const query = transport.queries[0]!
+    const input = query.input[Symbol.asyncIterator]()
+    await input.next() // startup handshake
+    await input.next() // direct user prompt
+    query.push(init())
+    for (const taskId of ['task-1', 'task-2']) {
+      query.push({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: taskId,
+        description: `Deploy ${taskId}`,
+        task_type: 'local_bash',
+        session_id: 'claude-session-1',
+      } as SDKMessage)
+    }
+    query.push({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [
+        { task_id: 'task-1', task_type: 'local_bash', description: 'Deploy task-1' },
+        { task_id: 'task-2', task_type: 'local_bash', description: 'Deploy task-2' },
+      ],
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    query.push(result('Both deployments are running in the background.'))
+    await vi.waitFor(() => expect(runtime.snapshots()[0]?.state).toBe('running'))
+
+    query.push({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task-1',
+      status: 'completed',
+      summary: 'first deployed',
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    let followUpReceived = false
+    const followUpPromise = input.next().then(value => {
+      followUpReceived = !value.done
+      return value
+    })
+    await Promise.resolve()
+    expect(followUpReceived).toBe(false)
+
+    query.push({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'task-2',
+      status: 'failed',
+      summary: 'second failed',
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    const followUp = await followUpPromise
+    expect(followUp.value?.message.content).toContain('all settled')
+    expect(followUp.value?.message.content).toContain('completed or failed')
+    query.push(result('Service one deployed; service two failed.'))
+
+    await expect(collected).resolves.toEqual(expect.arrayContaining([
+      { type: 'segment-complete', text: 'Both deployments are running in the background.' },
+      { type: 'complete', text: 'Service one deployed; service two failed.' },
+    ]))
+    expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle' })
+    await runtime.dispose()
+  })
+
   it('folds the background tasks level signal into the board', async () => {
     const transport = factory()
     const owner = fakeAgent()
@@ -543,7 +613,7 @@ describe('Claude supervisor', () => {
       })
     })
     query.push(result())
-    await collect(output)
+    const collected = collect(output)
 
     // Membership leaving the level marks the task settled (REPLACE semantics).
     query.push({
@@ -557,6 +627,8 @@ describe('Claude supervisor', () => {
         tasks: { tasks: [{ taskId: 'bg-1', status: 'completed' }] },
       })
     })
+    query.push(result('Background task completed.'))
+    await collected
     await runtime.dispose()
   })
 

@@ -252,9 +252,10 @@ Expected evidence: Client typecheck/build passes; real assembler regression demo
 5. Add a matching-turn launcher for running, completed, and failed tasks; remove the permanent session-header utility and do not create a detached entry for tasks without a known origin.
 6. Scope the details panel to the selected origin turn so historical launchers do not open the latest session-wide task list.
 7. Do not expose per-task Stop because the public SDK and DSH contracts only support whole-turn cancellation.
-8. Add normalization, sidecar, supervisor, and pure Client-selection regressions.
+8. When the primary Claude result leaves tasks running, keep the same DSH stream open, flush that primary text as a completed block, and submit exactly one hidden follow-up input after all owned tasks settle so Claude writes a final completion/failure report before the terminal finish.
+9. Add normalization, sidecar, supervisor, adapter, and pure Client-selection regressions, including multiple-task coalescing and mixed completion/failure outcomes.
 
-Expected evidence: grouped interaction tests pass, the panel and turn-tail share one details controller, and no unsupported task mutation surface exists.
+Expected evidence: grouped interaction tests pass, the panel and turn-tail share one details controller, background settlements produce one Claude-authored final report in the original DSH turn, and no unsupported task mutation surface exists.
 
 ### Task 9 — Documentation and package verification
 

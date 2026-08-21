@@ -196,6 +196,28 @@ describe('DSH stream mapping', () => {
     ])
   })
 
+  it('emits the initial update and background-task report as separate blocks before one finish', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([
+      { type: 'text-delta', text: 'Tasks are still running.' },
+      { type: 'segment-complete', text: 'Tasks are still running.' },
+      { type: 'text-delta', text: 'All tasks completed.' },
+      { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
+      { type: 'complete', text: 'All tasks completed.' },
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'Tasks are still running.' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'Tasks are still running.' } },
+      { type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'All tasks completed.' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'All tasks completed.' } },
+      { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ])
+  })
+
   it('emits no text block for a turn without visible text', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'usage', usage: { inputTokens: 1, outputTokens: 0 } },

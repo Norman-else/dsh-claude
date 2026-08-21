@@ -40,7 +40,7 @@ Ship an out-of-tree DSH bundle named `dsh-claude` that adds a `Claude Code CLI` 
 - Managing Claude login or credentials inside DSH.
 - Switching a non-empty conversation between native DSH and Claude Code presets.
 - Windows or Linux verification.
-- Plugin-owned background-agent execution or continuation after the top-level Claude result. Claude Code may continue Claude-owned tasks; the plugin only observes and presents their SDK lifecycle.
+- Plugin-owned background-agent execution. Claude Code owns background execution; when tasks outlive the primary result, the plugin keeps that DSH turn open and asks the same Claude session for one final report after all tasks settle.
 - Publishing to npm before local installation and compatibility validation pass.
 - Modifying DeepSeek Harness core APIs.
 
@@ -177,7 +177,7 @@ DSH session logs contain only DSH-supported event types. The plugin must not mut
 
 The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude/sessions`. It stores the Claude resume binding, ordered activity records, latest aggregate context usage, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated.
 
-Each DSH turn maps to exactly one Claude turn. Sidecar activities retain `turn`, `step`, and `ordinal` so the Client can place them immediately before the corresponding standard Claude assistant message in the chat flow. SDK `total_cost_usd` is cumulative across streaming-input turns and is retained as the latest cumulative value rather than summed.
+Each ordinary DSH turn maps to one user-initiated Claude turn. If that Claude result leaves background tasks running, the DSH turn remains open: its primary text is emitted as one completed text block, all task settlements are coalesced, and one plugin-authored hidden follow-up input asks the same Claude session to report final outcomes as a second text block before the single terminal DSH finish. The plugin never fabricates assistant text. Sidecar activities retain `turn`, `step`, and `ordinal` so the Client can place them immediately before the corresponding standard Claude assistant message in the chat flow. SDK `total_cost_usd` is cumulative across streaming-input turns and is retained as the latest cumulative value rather than summed.
 
 The SDK `getContextUsage()` response remains authoritative. Persist only aggregate category counts and model/window figures; memory-file paths, MCP tool names, system-prompt section text, configuration content, and grid rendering data are excluded. All sidecar payloads are bounded and secret-aware: environment maps, credential-shaped keys, and known token fields are redacted before persistence.
 

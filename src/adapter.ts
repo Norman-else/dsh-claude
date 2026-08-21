@@ -280,22 +280,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let text = ''
     let pendingUsage: TokenUsage | undefined
     let completed = false
+    let blockIndex = 0
     try {
       for await (const event of events) {
         if (event.type === 'text-delta') {
-          // Buffered, not live-streamed: Claude's intermediate prose and final
-          // answer settle as one block at the turn's durable position, below
-          // the step's mirrored tool cards, instead of jumping there at the end.
+          // Buffer each Claude result as one block so tool activity stays ahead
+          // of its prose while a background-task report can follow in-block 1.
           text += event.text
         } else if (event.type === 'usage') {
           pendingUsage = tokenUsage(event.usage)
         } else {
-          completed = true
           if (text.length > 0) {
-            yield { type: 'block-start', index: 0, blockType: 'text' }
-            yield { type: 'text-delta', index: 0, text }
-            yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+            yield { type: 'block-start', index: blockIndex, blockType: 'text' }
+            yield { type: 'text-delta', index: blockIndex, text }
+            yield { type: 'block-end', index: blockIndex, block: { type: 'text', text } }
+            blockIndex += 1
           }
+          text = ''
+          if (event.type === 'segment-complete') continue
+          completed = true
           if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
           yield { type: 'finish', reason: { kind: 'stop' } }
         }
@@ -304,9 +307,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if ((error as Error).name === 'AbortError') {
         completed = true
         if (text.length > 0) {
-          yield { type: 'block-start', index: 0, blockType: 'text' }
-          yield { type: 'text-delta', index: 0, text }
-          yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+          yield { type: 'block-start', index: blockIndex, blockType: 'text' }
+          yield { type: 'text-delta', index: blockIndex, text }
+          yield { type: 'block-end', index: blockIndex, block: { type: 'text', text } }
         }
         yield {
           type: 'finish',

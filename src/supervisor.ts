@@ -58,6 +58,7 @@ export interface ClaudeSupervisorConfig {
 export type ClaudeTurnStreamEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'usage'; usage: ClaudeUsage }
+  | { type: 'segment-complete'; text: string }
   | { type: 'complete'; text: string }
 
 export type ClaudeThinkingMode = 'off' | 'ultracode' | EffortLevel
@@ -140,6 +141,7 @@ interface ActiveTurn {
   cursor: ClaudeActivityCursor
   output: AsyncQueue<ClaudeTurnStreamEvent>
   promptUuid: ReturnType<typeof randomUUID>
+  phase: 'primary' | 'waiting-tasks' | 'follow-up'
   sawActivity: boolean
   sawTextDelta: boolean
   text: string
@@ -219,6 +221,12 @@ function sdkUserMessage(prompt: SDKUserMessage['message']['content'], uuid: Retu
     uuid,
   }
 }
+
+const BACKGROUND_TASK_REPORT_PROMPT = [
+  'The background tasks launched by your preceding response have now all settled.',
+  'Report their final completed or failed outcomes concisely to the user.',
+  'Do not start new tools or tasks, and do not repeat the earlier progress update.',
+].join(' ')
 
 /** CLI ≥ 2.1.235 emits system/init only after its first stdin input, while
  *  the supervisor must see init before submitting any real turn. A local
@@ -375,6 +383,7 @@ export class ClaudeSupervisor {
       cursor,
       output: new AsyncQueue<ClaudeTurnStreamEvent>(),
       promptUuid,
+      phase: 'primary',
       sawActivity: false,
       sawTextDelta: false,
       text: '',
@@ -652,7 +661,7 @@ export class ClaudeSupervisor {
     if (message.kind === 'subagent' && taskId !== undefined) {
       await this.#trackTask(entry, message, taskId, entry.active?.cursor.turn)
     } else if (message.kind === 'background-tasks') {
-      this.#trackBackgroundLevel(entry, message.tasks, entry.active?.cursor.turn)
+      await this.#trackBackgroundLevel(entry, message.tasks, entry.active?.cursor.turn)
     }
 
     if (entry.handshakePending) {
@@ -829,15 +838,16 @@ export class ClaudeSupervisor {
     entry.tasks.set(taskId, next)
     const settled = next.status !== 'running'
     await this.#scheduleTasksSnapshot(entry, settled)
+    if (settled) await this.#continueAfterTasks(entry)
   }
 
   /** Fold the background-task level signal into the board (REPLACE semantics
    *  for the backgrounded flag: only the listed tasks are detached). */
-  #trackBackgroundLevel(
+  async #trackBackgroundLevel(
     entry: SupervisorEntry,
     tasks: readonly { taskId: string; taskType?: string; description: string }[],
     originTurn: number | undefined,
-  ): void {
+  ): Promise<void> {
     const live = new Set(tasks.map(task => task.taskId))
     let changed = false
     for (const task of tasks) {
@@ -863,7 +873,32 @@ export class ClaudeSupervisor {
         changed = true
       }
     }
-    if (changed) void this.#scheduleTasksSnapshot(entry, true)
+    if (changed) {
+      await this.#scheduleTasksSnapshot(entry, true)
+      await this.#continueAfterTasks(entry)
+    }
+  }
+
+  #hasRunningTasks(entry: SupervisorEntry, active: ActiveTurn): boolean {
+    return [...entry.tasks.values()].some(task => (
+      task.originTurn === active.cursor.turn && task.backgrounded === true && task.status === 'running'
+    ))
+  }
+
+  async #continueAfterTasks(entry: SupervisorEntry): Promise<void> {
+    const active = entry.active
+    if (active === undefined || active.phase !== 'waiting-tasks' || this.#hasRunningTasks(entry, active)) return
+    active.phase = 'follow-up'
+    active.promptUuid = randomUUID()
+    active.sawTextDelta = false
+    active.text = ''
+    active.thinking = ''
+    await this.#appendSafely(active, {
+      kind: 'status',
+      phase: 'updated',
+      title: 'Claude Code is reporting background task results',
+    })
+    entry.input.push(sdkUserMessage(BACKGROUND_TASK_REPORT_PROMPT, active.promptUuid))
   }
 
   /** Persist the task board. Settled transitions flush immediately; progress
@@ -901,9 +936,6 @@ export class ClaudeSupervisor {
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
   ): Promise<void> {
     if (entry.active !== active) return
-    if (active.signal !== undefined && active.abortListener !== undefined) {
-      active.signal.removeEventListener('abort', active.abortListener)
-    }
     if (active.aborted) {
       await this.#appendSafely(active, {
         kind: 'status',
@@ -952,6 +984,16 @@ export class ClaudeSupervisor {
         active.text = result.text
         active.output.push({ type: 'text-delta', text: result.text })
       }
+      if (active.phase === 'primary' && this.#hasRunningTasks(entry, active)) {
+        active.phase = 'waiting-tasks'
+        await this.#appendSafely(active, {
+          kind: 'status',
+          phase: 'updated',
+          title: 'Claude Code is waiting for background tasks',
+        })
+        active.output.push({ type: 'segment-complete', text: active.text })
+        return
+      }
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'completed',
@@ -959,6 +1001,9 @@ export class ClaudeSupervisor {
       })
       active.output.push({ type: 'complete', text: active.text })
       active.output.close()
+    }
+    if (active.signal !== undefined && active.abortListener !== undefined) {
+      active.signal.removeEventListener('abort', active.abortListener)
     }
     entry.active = undefined
     entry.state = 'idle'
