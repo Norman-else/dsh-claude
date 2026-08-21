@@ -271,7 +271,11 @@ Add a settings section with:
 - redacted Doctor output and rerun action
 - npm release discovery and an in-place update action for uniquely identified registry installations
 
-Persist settings through the plugin's own settings namespace if the DSH public settings seam supports out-of-tree schemas. If not, keep v0.1 configuration in the bundle row and expose Doctor read-only; do not invent an unmanaged credentials file. Plugin updates must install the registry's validated latest version explicitly rather than relying on the profile's existing semver range, then verify both the profile dependency and installed package manifests before reporting success. Linked, ambiguous, and unsupported sources remain non-updatable.
+Persist plugin runtime settings through the plugin's own settings namespace if the DSH public settings seam supports out-of-tree schemas. If not, keep runtime configuration in the bundle row; do not invent an unmanaged credentials file. The settings menu may expose selected Claude Code user settings through one extensible global-settings registry and a trusted same-origin API. Every field requires an explicit descriptor, validation, effect scope, and bounded public metadata; the browser must never receive or write arbitrary settings JSON.
+
+The initial global field is `outputStyle`. Read its current value from `~/.claude/settings.json`, enumerate built-in styles plus bounded names from `~/.claude/output-styles/*.md`, and update only that field while preserving all unknown settings. Selecting Default removes the override. Serialize updates, reject malformed or unlisted values, limit settings/style/request sizes, and replace the settings file atomically with user-only permissions. Never return style prompt bodies or unrelated settings. Output-style changes apply only to newly created Claude sessions.
+
+Plugin updates must install the registry's validated latest version explicitly rather than relying on the profile's existing semver range, then verify both the profile dependency and installed package manifests before reporting success. Linked, ambiguous, and unsupported sources remain non-updatable.
 
 ## 6. Failure and Recovery
 
@@ -304,6 +308,7 @@ Persist settings through the plugin's own settings namespace if the DSH public s
 
 - executable resolution and version parsing
 - exact-version plugin updates, post-install manifest verification, and no-op update rejection
+- global-settings registry validation, bounded output-style discovery, atomic merge writes, malformed input, and concurrent updates
 - newest-direct-message resolution for text-only, pure-image, interleaved text/image, and multiple-image input
 - attachment media/count/byte/pixel/dimension limits, verified reads, bounded errors, and cancellation
 - stream mapping without duplicate text

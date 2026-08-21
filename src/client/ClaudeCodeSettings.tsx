@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CLAUDE_DOCTOR_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from '../constants.ts'
+import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from '../constants.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 
@@ -34,6 +34,42 @@ export function isPluginUpdateStatus(value: unknown): value is PluginUpdateStatu
     && (status.message === undefined || typeof status.message === 'string')
 }
 
+interface GlobalSettingOption {
+  value: string
+  label: string
+  source: 'built-in' | 'user' | 'configured'
+}
+
+interface GlobalSettingView {
+  key: string
+  kind: 'select'
+  value: string
+  options: readonly GlobalSettingOption[]
+  effect: 'new-session' | 'restart'
+}
+
+interface GlobalSettingsView {
+  settings: readonly GlobalSettingView[]
+}
+
+export function isGlobalSettingsView(value: unknown): value is GlobalSettingsView {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const settings = (value as { settings?: unknown }).settings
+  return Array.isArray(settings) && settings.every(setting => {
+    if (typeof setting !== 'object' || setting === null || Array.isArray(setting)) return false
+    const item = setting as Record<string, unknown>
+    return typeof item.key === 'string'
+      && item.kind === 'select'
+      && typeof item.value === 'string'
+      && ['new-session', 'restart'].includes(String(item.effect))
+      && Array.isArray(item.options)
+      && item.options.every(option => typeof option === 'object' && option !== null
+        && typeof (option as Record<string, unknown>).value === 'string'
+        && typeof (option as Record<string, unknown>).label === 'string'
+        && ['built-in', 'user', 'configured'].includes(String((option as Record<string, unknown>).source)))
+  })
+}
+
 export interface ClaudeCodeSettingsInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
 }
@@ -49,6 +85,9 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   const [updateStatus, setUpdateStatus] = useState<PluginUpdateStatus>()
   const [updateError, setUpdateError] = useState<string>()
   const [updateBusy, setUpdateBusy] = useState<'check' | 'update'>()
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettingsView>()
+  const [globalSettingsError, setGlobalSettingsError] = useState<string>()
+  const [globalSettingsBusy, setGlobalSettingsBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     setBusy(true)
@@ -67,6 +106,34 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  const requestGlobalSettings = useCallback(async (changes?: Record<string, string>) => {
+    setGlobalSettingsBusy(true)
+    setGlobalSettingsError(undefined)
+    try {
+      const response = await fetch(CLAUDE_GLOBAL_SETTINGS_PATH, {
+        method: changes === undefined ? 'GET' : 'PATCH',
+        credentials: 'same-origin',
+        headers: { accept: 'application/json', ...(changes === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(changes === undefined ? {} : { body: JSON.stringify({ changes }) }),
+      })
+      const payload = await response.json() as unknown
+      if (!response.ok) {
+        const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
+          ? payload.error
+          : `HTTP ${response.status}`
+        throw new Error(message)
+      }
+      if (!isGlobalSettingsView(payload)) throw new Error('Invalid global settings response')
+      setGlobalSettings(payload)
+    } catch (cause) {
+      setGlobalSettingsError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setGlobalSettingsBusy(false)
+    }
+  }, [])
+
+  useEffect(() => { void requestGlobalSettings() }, [requestGlobalSettings])
 
   const requestUpdate = useCallback(async (action: 'check' | 'update') => {
     setUpdateBusy(action)
@@ -131,6 +198,30 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           </div>
         )}
         {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('error')}: {error}</p>}
+      </section>
+
+      <section style={styles.settingsCard}>
+        <div>
+          <h3 style={styles.settingsSectionHeading}>{t('globalSettings')}</h3>
+          <p style={styles.settingsBody}>{t('globalSettingsBody')}</p>
+        </div>
+        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => (
+          <label key={setting.key} style={styles.diagnosticGrid}>
+            <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle' ? t('outputStyle') : setting.key}</span>
+            <select
+              value={setting.value}
+              disabled={globalSettingsBusy}
+              onChange={event => { void requestGlobalSettings({ [setting.key]: event.target.value }) }}
+              style={styles.diagnosticValue}
+            >
+              {setting.options.map(option => <option key={`${option.source}:${option.value}`} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+        ))}
+        {globalSettings?.settings.some(setting => setting.effect === 'new-session') === true
+          ? <p style={styles.notice}>{t('globalSettingsNewSession')}</p>
+          : null}
+        {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>
 
       <section style={styles.settingsCard}>
