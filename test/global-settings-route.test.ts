@@ -55,7 +55,11 @@ describe('Claude Code global settings route', () => {
   it('reads and updates a registered field through the generic API', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-claude-global-route-'))
     roots.push(root)
-    const paths = { settingsFile: join(root, 'settings.json'), outputStylesDir: join(root, 'output-styles') }
+    const paths = {
+      settingsFile: join(root, 'settings.json'),
+      outputStylesDir: join(root, 'output-styles'),
+      pluginSettingsFile: join(root, 'plugin-settings.json'),
+    }
     await mkdir(root, { recursive: true })
     await writeFile(paths.settingsFile, JSON.stringify({ preserve: 42 }))
     const ctx = context()
@@ -71,6 +75,11 @@ describe('Claude Code global settings route', () => {
     expect(patch.statusCode).toBe(200)
     expect(JSON.parse(patch.body).settings[0]).toMatchObject({ value: 'Concise' })
     expect(JSON.parse(await readFile(paths.settingsFile, 'utf8'))).toEqual({ preserve: 42, outputStyle: 'Concise' })
+
+    const prefix = response()
+    await ctx.handler(request('PATCH', { changes: { worktreeBranchPrefix: 'team' } }), prefix)
+    expect(prefix.statusCode).toBe(200)
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ worktreeBranchPrefix: 'team' })
   })
 
   it('rejects cross-origin, unknown, and oversized changes', async () => {

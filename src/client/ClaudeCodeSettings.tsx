@@ -40,12 +40,18 @@ export interface GlobalSettingOption {
   source: 'built-in' | 'user' | 'configured'
 }
 
-export interface GlobalSettingView {
+export type GlobalSettingView = {
   key: string
   kind: 'select'
   value: string
   options: readonly GlobalSettingOption[]
-  effect: 'new-session' | 'restart'
+  effect: 'new-session' | 'next-worktree' | 'restart'
+} | {
+  key: string
+  kind: 'text'
+  value: string
+  maxLength: number
+  effect: 'new-session' | 'next-worktree' | 'restart'
 }
 
 interface GlobalSettingsView {
@@ -58,10 +64,11 @@ export function isGlobalSettingsView(value: unknown): value is GlobalSettingsVie
   return Array.isArray(settings) && settings.every(setting => {
     if (typeof setting !== 'object' || setting === null || Array.isArray(setting)) return false
     const item = setting as Record<string, unknown>
-    return typeof item.key === 'string'
-      && item.kind === 'select'
-      && typeof item.value === 'string'
-      && ['new-session', 'restart'].includes(String(item.effect))
+    if (typeof item.key !== 'string'
+      || typeof item.value !== 'string'
+      || !['new-session', 'next-worktree', 'restart'].includes(String(item.effect))) return false
+    if (item.kind === 'text') return typeof item.maxLength === 'number' && item.maxLength > 0
+    return item.kind === 'select'
       && Array.isArray(item.options)
       && item.options.every(option => typeof option === 'object' && option !== null
         && typeof (option as Record<string, unknown>).value === 'string'
@@ -79,9 +86,42 @@ function value(status: string, detail?: string): string {
 }
 
 interface GlobalSettingSelectProps {
-  setting: GlobalSettingView
+  setting: Extract<GlobalSettingView, { kind: 'select' }>
   disabled: boolean
   onChange: (value: string) => void
+}
+
+export function GlobalSettingText({ setting, disabled, onChange }: {
+  setting: Extract<GlobalSettingView, { kind: 'text' }>
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(setting.value)
+  useEffect(() => { setDraft(setting.value) }, [setting.value])
+  const save = (): void => {
+    if (draft !== setting.value) onChange(draft)
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      maxLength={setting.maxLength}
+      disabled={disabled}
+      style={styles.settingTextInput}
+      onChange={event => { setDraft(event.currentTarget.value) }}
+      onBlur={save}
+      onKeyDown={event => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          save()
+          event.currentTarget.blur()
+        } else if (event.key === 'Escape') {
+          setDraft(setting.value)
+          event.currentTarget.blur()
+        }
+      }}
+    />
+  )
 }
 
 export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSettingSelectProps) {
@@ -319,16 +359,29 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         </div>
         {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => (
           <div key={setting.key} style={styles.diagnosticGrid}>
-            <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle' ? t('outputStyle') : setting.key}</span>
-            <GlobalSettingSelect
-              setting={setting}
-              disabled={globalSettingsBusy}
-              onChange={nextValue => { void requestGlobalSettings({ [setting.key]: nextValue }) }}
-            />
+            <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle'
+              ? t('outputStyle')
+              : setting.key === 'worktreeBranchPrefix' ? t('worktreeBranchPrefix') : setting.key}</span>
+            {setting.kind === 'select' ? (
+              <GlobalSettingSelect
+                setting={setting}
+                disabled={globalSettingsBusy}
+                onChange={nextValue => { void requestGlobalSettings({ [setting.key]: nextValue }) }}
+              />
+            ) : (
+              <GlobalSettingText
+                setting={setting}
+                disabled={globalSettingsBusy}
+                onChange={nextValue => { void requestGlobalSettings({ [setting.key]: nextValue }) }}
+              />
+            )}
           </div>
         ))}
         {globalSettings?.settings.some(setting => setting.effect === 'new-session') === true
           ? <p style={styles.notice}>{t('globalSettingsNewSession')}</p>
+          : null}
+        {globalSettings?.settings.some(setting => setting.effect === 'next-worktree') === true
+          ? <p style={styles.notice}>{t('worktreeBranchPrefixEffect')}</p>
           : null}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>

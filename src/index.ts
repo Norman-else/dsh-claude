@@ -18,8 +18,10 @@ import { ensureManagedPreset, ManagedPresetConflictError } from './preset-instal
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { RepositoryStatusService } from './repository-status.ts'
+import { RepositorySetupService } from './repository-setup.ts'
+import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
-import { registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -197,6 +199,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
+  const repositorySetup = new RepositorySetupService(ctx.subprocess, { branchPrefix: () => readWorktreeBranchPrefix() })
   const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
   const supervisor = new ClaudeSupervisor({
     runtime: ctx.subprocess,
@@ -294,6 +297,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   ctx.on('agent/disposed', async ({ agent }) => {
     await supervisor.disposeSession(agent.id as string)
+    await repositorySetup.cleanupSession(agent.id as string)
   })
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.effect(() => () => repositoryStatus.dispose(), 'dsh-claude: repository status cache')
@@ -306,6 +310,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         : {}),
     })
     registerClaudeGlobalSettingsRoute(webCtx)
+    registerRepositorySetupRoute(webCtx, repositorySetup)
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID

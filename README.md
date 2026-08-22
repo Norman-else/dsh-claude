@@ -17,7 +17,7 @@ Run the local Claude Code CLI as a first-class main conversation inside DeepSeek
 ## Requirements
 
 - macOS (v0.1 verification target).
-- DeepSeek Harness compatible with `0.1.0-rc.5` public plugin APIs.
+- DeepSeek Harness Desktop public plugin APIs on the `0.1.1-rc.2` package line.
 - A local Claude Code installation already authenticated by the user.
 - Node.js 20 or later.
 
@@ -33,7 +33,7 @@ dsh plugin --profile web add @norman-else/dsh-claude
 
 Wait for the Web profile to rebuild, then refresh the existing DSH page. Open a new conversation and select **Claude** from the Agent Preset picker.
 
-The package ships a read-only system preset and, during Host activation, installs a protected compatibility copy at `$DSH_HOME/.agent-presets/claude`. The compatibility copy is required because DSH `0.1.0-rc.6` through `0.1.0-rc.8` replace third-party preset roots during profile boot. Installation is idempotent and never overwrites user-modified preset content.
+The package ships a read-only system preset and, during Host activation, installs a protected compatibility copy at `$DSH_HOME/.agent-presets/claude`. The compatibility copy is required because supported DSH release-candidate builds replace third-party preset roots during profile boot. Installation is idempotent and never overwrites user-modified preset content.
 
 ## Use
 
@@ -62,7 +62,7 @@ Every Claude permission callback is bridged to `ctx.approval.request(...)`:
 - DSH access modes map to Claude permission modes: `read-only` → `plan`, `workspace-write` → `acceptEdits`, and explicitly acknowledged `danger-full-access` → `bypassPermissions`.
 - Claude `AskUserQuestion` is always routed to `ctx.userQuestions`, including under Full access; cancellation or an unavailable question surface denies the interaction, and answer content is not copied into the sidecar.
 
-This is a permission-policy bridge, not kernel-level workspace confinement. DSH `0.1.0-rc.5` exposes one writable sandbox root, while full Claude compatibility also requires writable `~/.claude`. The plugin therefore does **not** claim that paths outside the workspace are technically unwritable. It still uses DSH managed subprocess ownership for explicit argv, credential-shaped environment scrubbing, cancellation, and whole-process-tree termination.
+This is a permission-policy bridge, not kernel-level workspace confinement. The supported DSH Desktop contract exposes one writable sandbox root, while full Claude compatibility also requires writable `~/.claude`. The plugin therefore does **not** claim that paths outside the workspace are technically unwritable. It still uses DSH managed subprocess ownership for explicit argv, credential-shaped environment scrubbing, cancellation, and whole-process-tree termination.
 
 ## Process and recovery behavior
 

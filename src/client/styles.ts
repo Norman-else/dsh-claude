@@ -129,6 +129,21 @@ export const settingSelect: CSSProperties = {
   minWidth: 0,
 }
 
+export const settingTextInput: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  minHeight: 38,
+  padding: '7px 13px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 10,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+}
+
 export const settingSelectTrigger: CSSProperties = {
   width: '100%',
   minHeight: 38,
@@ -576,6 +591,343 @@ export const tasksTurnLauncherDot: CSSProperties = {
 
 export const tasksTurnLauncherDone: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary, var(--dsw-alias-label-tertiary))',
+}
+
+/* Claude repository setup controls on the blank-session hero. */
+
+export const heroRepositoryControls: CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  minWidth: 0,
+}
+
+export const heroRepositoryCapsule: CSSProperties = {
+  height: 30,
+  display: 'inline-flex',
+  alignItems: 'center',
+  minWidth: 0,
+  padding: 2,
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 10,
+  background: 'var(--dsw-alias-interactive-bg-base, var(--dsw-alias-bg-layer-1))',
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+export const heroBranchPicker: CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+  minWidth: 0,
+}
+
+export const heroBranchTrigger: CSSProperties = {
+  height: 26,
+  maxWidth: 230,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  minWidth: 0,
+  padding: '0 7px',
+  border: 'none',
+  borderRadius: 7,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  cursor: 'pointer',
+}
+
+export const heroBranchName: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-primary)',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const heroBranchMenu: CSSProperties = {
+  position: 'absolute',
+  zIndex: 1100,
+  top: 'calc(100% + 6px)',
+  left: 0,
+  width: 280,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  padding: 4,
+  border: '1px solid var(--dsw-alias-border-inverted)',
+  borderRadius: 10,
+  background: 'var(--dsw-specific-menu)',
+  boxShadow: 'var(--dsw-shadow-lv3)',
+}
+
+export const heroBranchSearch: CSSProperties = {
+  height: 32,
+  boxSizing: 'border-box',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '0 8px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const heroBranchSearchInput: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+export const heroBranchList: CSSProperties = {
+  maxHeight: 170,
+  display: 'flex',
+  flexDirection: 'column',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+}
+
+export const heroBranchItem: CSSProperties = {
+  width: '100%',
+  height: 34,
+  minHeight: 34,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '0 9px',
+  border: 'none',
+  borderRadius: 7,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const heroBranchItemActive: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2))',
+}
+
+export const heroBranchItemName: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const heroBranchEmpty: CSSProperties = {
+  height: 34,
+  display: 'grid',
+  placeItems: 'center',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+}
+
+export const heroRepositoryDivider: CSSProperties = {
+  width: 1,
+  height: 16,
+  flex: 'none',
+  background: 'var(--dsw-alias-border-l2)',
+}
+
+export const heroWorktreeToggle: CSSProperties = {
+  height: 26,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '0 7px',
+  border: 'none',
+  borderRadius: 7,
+  outline: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+  transition: 'background 120ms ease, color 120ms ease, box-shadow 120ms ease',
+}
+
+export const heroWorktreeToggleActive: CSSProperties = {
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 10%, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+}
+
+export const heroWorktreeToggleFocused: CSSProperties = {
+  boxShadow: '0 0 0 2px color-mix(in srgb, var(--dsw-static-blue-450) 28%, transparent)',
+}
+
+export const heroWorktreeCheckbox: CSSProperties = {
+  width: 15,
+  height: 15,
+  boxSizing: 'border-box',
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  border: '1px solid var(--dsw-alias-border-inverted)',
+  borderRadius: 4,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  boxShadow: 'inset 0 1px 1px rgba(0, 0, 0, 0.08)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  transition: 'border-color 120ms ease, background 120ms ease, box-shadow 120ms ease',
+}
+
+export const heroWorktreeCheckboxChecked: CSSProperties = {
+  borderColor: 'var(--dsw-static-blue-450)',
+  background: 'var(--dsw-static-blue-450)',
+  boxShadow: '0 1px 3px color-mix(in srgb, var(--dsw-static-blue-450) 35%, transparent)',
+}
+
+export const heroWorktreeCheckboxIcon: CSSProperties = {
+  width: 12,
+  height: 12,
+  display: 'block',
+}
+
+export const heroWorktreeProgressCard: CSSProperties = {
+  position: 'absolute',
+  zIndex: 1050,
+  top: 'calc(100% + 10px)',
+  left: 0,
+  width: 320,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  padding: 14,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: 'var(--dsw-shadow-lv3)',
+}
+
+export const heroWorktreeProgressHeader: CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 10,
+}
+
+export const heroWorktreeProgressSpinner: CSSProperties = {
+  width: 18,
+  height: 18,
+  flex: 'none',
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const heroWorktreeProgressError: CSSProperties = {
+  width: 18,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  borderRadius: '50%',
+  background: 'var(--dsw-alias-state-error-primary)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  fontSize: 13,
+  lineHeight: 1,
+}
+
+export const heroWorktreeProgressCopy: CSSProperties = {
+  minWidth: 0,
+  display: 'flex',
+  flex: 1,
+  flexDirection: 'column',
+  gap: 2,
+}
+
+export const heroWorktreeProgressTitle: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 13,
+  lineHeight: '18px',
+  fontWeight: 600,
+}
+
+export const heroWorktreeProgressCurrent: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+  overflowWrap: 'anywhere',
+}
+
+export const heroWorktreeProgressDismiss: CSSProperties = {
+  width: 24,
+  height: 24,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  padding: 0,
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  cursor: 'pointer',
+}
+
+export const heroWorktreeProgressSteps: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 7,
+  paddingLeft: 2,
+}
+
+export const heroWorktreeProgressStep: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 11,
+  lineHeight: '16px',
+}
+
+export const heroWorktreeProgressDot: CSSProperties = {
+  width: 14,
+  height: 14,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  boxSizing: 'border-box',
+  borderRadius: '50%',
+  fontSize: 9,
+  lineHeight: 1,
+}
+
+export const heroWorktreeProgressDotDone: CSSProperties = {
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+}
+
+export const heroWorktreeProgressDotActive: CSSProperties = {
+  border: '2px solid var(--dsw-static-blue-450)',
+}
+
+export const heroRepositoryStatus: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  whiteSpace: 'nowrap',
+}
+
+export const heroRepositoryError: CSSProperties = {
+  maxWidth: 240,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 11,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 /* Claude repository readout and details panel. */

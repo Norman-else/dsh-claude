@@ -26,14 +26,22 @@ describe('published package contract', () => {
     expect(contents.join('\n')).not.toContain('claude-code-cli')
   })
 
-  it('declares the public DSH attachment service contract', async () => {
+  it('declares the public DSH attachment service contract on the Desktop development graph', async () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
       peerDependencies: Record<string, string>
       devDependencies: Record<string, string>
     }
-    const host = await readFile(join(root, 'src/index.ts'), 'utf8')
+    const [host, workspace] = await Promise.all([
+      readFile(join(root, 'src/index.ts'), 'utf8'),
+      readFile(join(root, 'pnpm-workspace.yaml'), 'utf8'),
+    ])
+    const dshDevelopmentVersions = Object.entries(packageJson.devDependencies)
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+      .map(([, version]) => version)
     expect(packageJson.peerDependencies['@deepseek-ai/dsh-attachment']).toBe('*')
-    expect(packageJson.devDependencies['@deepseek-ai/dsh-attachment']).toBe('0.1.0-rc.6')
+    expect(dshDevelopmentVersions.length).toBeGreaterThan(0)
+    expect(new Set(dshDevelopmentVersions)).toEqual(new Set(['0.1.1-rc.2']))
+    expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.1-rc.2")
     expect(host).toContain("'attachments'")
     expect(host).toContain('ctx.attachments')
   })

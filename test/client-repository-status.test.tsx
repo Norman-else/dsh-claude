@@ -93,6 +93,12 @@ function hook(value: ClaudeClientProjection) {
   return <T,>(selector: (projection: ClaudeClientProjection) => T): T => selector(value)
 }
 
+function sessionsHook(blank: boolean) {
+  return <T,>(selector: (sessions: { readonly byId: Readonly<Record<string, { readonly blank: boolean } | undefined>> }) => T): T => selector({
+    byId: { session: { blank } },
+  })
+}
+
 describe('Claude repository status UI', () => {
   it('allows Details to fill at most half of its frame', () => {
     expect(clampDetailsWidth(360, 1_600)).toBe(360)
@@ -111,7 +117,20 @@ describe('Claude repository status UI', () => {
 
   it('renders nothing outside Claude-owned sessions', () => {
     const markup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
       useClaudeProjection={hook({ ...projection, owned: false })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(markup).toBe('')
+  })
+
+  it('suppresses the repository bar on blank sessions', () => {
+    const markup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(true)}
+      useClaudeProjection={hook(projection)}
       t={t}
       openDiff={vi.fn()}
     />)
@@ -120,6 +139,8 @@ describe('Claude repository status UI', () => {
 
   it('renders a composer-width static bar with only a diff button', () => {
     const statusMarkup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
       useClaudeProjection={hook(projection)}
       t={t}
       openDiff={vi.fn()}

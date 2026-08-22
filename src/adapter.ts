@@ -5,6 +5,7 @@ import {
   type LlmModelInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
+  type PreparedAdapterCall,
   type ResolvedRetryPolicy,
   type StreamChunk,
   type TokenUsage,
@@ -225,7 +226,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }))
   }
 
-  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+  override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
     const known = MODELS.find(item => item.id === model)
     const observedContextWindow = this.#supervisor.contextWindow(model)
     const contextWindow = observedContextWindow ?? (known !== undefined && 'contextWindow' in known ? known.contextWindow : undefined)
@@ -243,6 +244,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           description: mode.description,
         })),
       },
+    }
+  }
+
+  override async prepareCall(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<PreparedAdapterCall> {
+    return {
+      model: await this.resolveModel(provider, model, signal),
+      stream: options => this.stream(options),
     }
   }
 

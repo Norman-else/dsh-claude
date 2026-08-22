@@ -12,6 +12,8 @@ export interface ClaudeRepositoryStatusInjected {
 
 export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
+  useSessions: SnapshotSelectorHook<{ readonly byId: Readonly<Record<string, { readonly blank: boolean } | undefined>> }>
+  sessionId: string
 }
 
 export function repositorySummary(repository: RepositoryStatus, t: ClaudeRepositoryStatusInjected['t']): readonly string[] {
@@ -130,10 +132,11 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
   )
 }
 
-export function ClaudeRepositoryStatus({ useClaudeProjection, t, openDiff }: ClaudeRepositoryStatusProps) {
+export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff }: ClaudeRepositoryStatusProps) {
+  const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const projection = useClaudeProjection(value => value)
   const repository = projection.repository
-  if (!projection.owned || repository === undefined) return null
+  if (blank || !projection.owned || repository === undefined) return null
   const branch = repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch')
   const pullRequest = repository.pullRequest
   if (repository.status !== 'ready') {

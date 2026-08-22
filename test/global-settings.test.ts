@@ -18,6 +18,7 @@ async function fixture() {
     root,
     settingsFile: join(root, '.claude', 'settings.json'),
     outputStylesDir: join(root, '.claude', 'output-styles'),
+    pluginSettingsFile: join(root, 'dsh', 'settings.json'),
   }
 }
 
@@ -42,6 +43,20 @@ describe('Claude Code global settings registry', () => {
     ]))
     expect(JSON.stringify(result)).not.toContain('SECRET')
     expect(JSON.stringify(result)).not.toContain('Private description')
+  })
+
+  it('stores the Worktree branch prefix in plugin settings with a claude default', async () => {
+    const paths = await fixture()
+    const initial = await readGlobalSettings({ paths })
+    expect(initial.settings.find(setting => setting.key === 'worktreeBranchPrefix')).toMatchObject({
+      kind: 'text', value: 'claude', effect: 'next-worktree', maxLength: 128,
+    })
+
+    const updated = await updateGlobalSettings({ worktreeBranchPrefix: 'team/claude' }, { paths })
+    expect(updated.settings.find(setting => setting.key === 'worktreeBranchPrefix')).toMatchObject({ value: 'team/claude' })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ worktreeBranchPrefix: 'team/claude' })
+    await expect(readFile(paths.settingsFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(updateGlobalSettings({ worktreeBranchPrefix: '../invalid' }, { paths })).rejects.toThrow('Invalid value')
   })
 
   it('updates only outputStyle, preserves unknown settings, and writes user-only permissions', async () => {
@@ -90,7 +105,7 @@ describe('Claude Code global settings registry', () => {
 })
 
 describe('global settings client response validation', () => {
-  it('accepts registered select metadata and rejects incomplete options', () => {
+  it('accepts registered select and text metadata and rejects incomplete options', () => {
     expect(isGlobalSettingsView({
       settings: [{
         key: 'outputStyle',
@@ -99,6 +114,9 @@ describe('global settings client response validation', () => {
         effect: 'new-session',
         options: [{ value: 'Default', label: 'Default', source: 'built-in' }],
       }],
+    })).toBe(true)
+    expect(isGlobalSettingsView({
+      settings: [{ key: 'worktreeBranchPrefix', kind: 'text', value: 'claude', effect: 'next-worktree', maxLength: 128 }],
     })).toBe(true)
     expect(isGlobalSettingsView({
       settings: [{ key: 'outputStyle', kind: 'select', value: 'Default', effect: 'new-session', options: [{}] }],

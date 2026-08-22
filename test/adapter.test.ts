@@ -207,6 +207,23 @@ describe('direct prompt resolution', () => {
 })
 
 describe('DSH stream mapping', () => {
+  it('exposes the Desktop prepareCall contract and dispatches through the prepared stream', async () => {
+    const { supervisor, calls } = capturingSupervisor()
+    const adapter = new ClaudeCodeAdapter(supervisor, {
+      currentInitiator: () => agent,
+      get: () => agent,
+    }, attachmentStore(), claudePreset)
+
+    const prepared = await adapter.prepareCall('claude', 'default')
+    expect(prepared.model).toMatchObject({ provider: 'claude', id: 'default' })
+    const chunks = []
+    for await (const chunk of prepared.stream(options())) chunks.push(chunk)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ prompt: 'hello', model: 'default' })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
   it('settles the accumulated text as one block at turn completion', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'hel' },

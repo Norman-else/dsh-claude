@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from './constants.ts'
 import { json, trustedRequest } from './http.ts'
 
@@ -14,9 +15,11 @@ const MAX_STYLE_BYTES = 64 * 1024
 const MAX_STYLE_FILES = 256
 const BUILTIN_OUTPUT_STYLES = ['Default', 'Proactive', 'Concise', 'Explanatory', 'Learning'] as const
 const STYLE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()\[\]-]{0,127}$/u
+const DEFAULT_WORKTREE_BRANCH_PREFIX = 'claude'
+const MAX_BRANCH_PREFIX_CHARS = 128
 
 type JsonObject = Record<string, unknown>
-export type GlobalSettingEffect = 'new-session' | 'restart'
+export type GlobalSettingEffect = 'new-session' | 'next-worktree' | 'restart'
 
 export interface GlobalSettingOption {
   value: string
@@ -24,11 +27,17 @@ export interface GlobalSettingOption {
   source: 'built-in' | 'user' | 'configured'
 }
 
-export interface GlobalSettingView {
+export type GlobalSettingView = {
   key: string
   kind: 'select'
   value: string
   options: readonly GlobalSettingOption[]
+  effect: GlobalSettingEffect
+} | {
+  key: string
+  kind: 'text'
+  value: string
+  maxLength: number
   effect: GlobalSettingEffect
 }
 
@@ -39,26 +48,41 @@ export interface GlobalSettingsView {
 interface GlobalSettingsPaths {
   settingsFile: string
   outputStylesDir: string
+  pluginSettingsFile: string
 }
 
 export interface GlobalSettingsDependencies {
   paths?: Partial<GlobalSettingsPaths>
 }
 
-interface SettingDescriptor {
+interface SelectSettingDescriptor {
   key: string
   kind: 'select'
+  document: 'claude' | 'plugin'
   effect: GlobalSettingEffect
   options(paths: GlobalSettingsPaths): Promise<readonly GlobalSettingOption[]>
   read(document: JsonObject, options: readonly GlobalSettingOption[]): string
   apply(document: JsonObject, value: unknown, options: readonly GlobalSettingOption[]): void
 }
 
+interface TextSettingDescriptor {
+  key: string
+  kind: 'text'
+  document: 'claude' | 'plugin'
+  effect: GlobalSettingEffect
+  maxLength: number
+  read(document: JsonObject): string
+  apply(document: JsonObject, value: unknown): void
+}
+
+type SettingDescriptor = SelectSettingDescriptor | TextSettingDescriptor
+
 function pathsFor(deps: GlobalSettingsDependencies): GlobalSettingsPaths {
   const root = join(homedir(), '.claude')
   return {
     settingsFile: deps.paths?.settingsFile ?? join(root, 'settings.json'),
     outputStylesDir: deps.paths?.outputStylesDir ?? join(root, 'output-styles'),
+    pluginSettingsFile: deps.paths?.pluginSettingsFile ?? dshHomePath('plugins', 'dsh-claude', 'settings.json'),
   }
 }
 
@@ -125,6 +149,7 @@ async function userOutputStyleOptions(directory: string): Promise<GlobalSettingO
 const OUTPUT_STYLE: SettingDescriptor = {
   key: 'outputStyle',
   kind: 'select',
+  document: 'claude',
   effect: 'new-session',
   async options(paths) {
     const builtIn = BUILTIN_OUTPUT_STYLES.map(value => ({ value, label: value, source: 'built-in' as const }))
@@ -145,13 +170,59 @@ const OUTPUT_STYLE: SettingDescriptor = {
   },
 }
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE]
+export function isValidWorktreeBranchPrefix(value: string): boolean {
+  return value.length > 0
+    && value.length <= MAX_BRANCH_PREFIX_CHARS
+    && value.trim() === value
+    && !value.startsWith('/')
+    && !value.endsWith('/')
+    && !value.includes('//')
+    && !value.includes('..')
+    && !value.includes('@{')
+    && !/[\0-\x20\x7f~^:?*[\\]/u.test(value)
+    && value.split('/').every(segment => segment.length > 0 && !segment.startsWith('.') && !segment.endsWith('.lock'))
+}
+
+const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
+  key: 'worktreeBranchPrefix',
+  kind: 'text',
+  document: 'plugin',
+  effect: 'next-worktree',
+  maxLength: MAX_BRANCH_PREFIX_CHARS,
+  read(document) {
+    const value = document.worktreeBranchPrefix
+    return typeof value === 'string' && isValidWorktreeBranchPrefix(value) ? value : DEFAULT_WORKTREE_BRANCH_PREFIX
+  },
+  apply(document, value) {
+    if (typeof value !== 'string' || !isValidWorktreeBranchPrefix(value)) {
+      throw new Error('Invalid value for global setting worktreeBranchPrefix')
+    }
+    if (value === DEFAULT_WORKTREE_BRANCH_PREFIX) delete document.worktreeBranchPrefix
+    else document.worktreeBranchPrefix = value
+  },
+}
+
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, WORKTREE_BRANCH_PREFIX]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
-async function views(document: JsonObject, paths: GlobalSettingsPaths): Promise<GlobalSettingsView> {
+function documentFor(descriptor: SettingDescriptor, documents: { claude: JsonObject; plugin: JsonObject }): JsonObject {
+  return documents[descriptor.document]
+}
+
+async function views(documents: { claude: JsonObject; plugin: JsonObject }, paths: GlobalSettingsPaths): Promise<GlobalSettingsView> {
   return {
     settings: await Promise.all(DESCRIPTORS.map(async descriptor => {
+      const document = documentFor(descriptor, documents)
+      if (descriptor.kind === 'text') {
+        return {
+          key: descriptor.key,
+          kind: descriptor.kind,
+          value: descriptor.read(document),
+          maxLength: descriptor.maxLength,
+          effect: descriptor.effect,
+        }
+      }
       const discovered = await descriptor.options(paths)
       const value = descriptor.read(document, discovered)
       const options = discovered.some(option => option.value === value)
@@ -168,9 +239,19 @@ async function views(document: JsonObject, paths: GlobalSettingsPaths): Promise<
   }
 }
 
+async function readDocuments(paths: GlobalSettingsPaths): Promise<{ claude: JsonObject; plugin: JsonObject }> {
+  const [claude, plugin] = await Promise.all([readDocument(paths.settingsFile), readDocument(paths.pluginSettingsFile)])
+  return { claude, plugin }
+}
+
 export async function readGlobalSettings(deps: GlobalSettingsDependencies = {}): Promise<GlobalSettingsView> {
   const paths = pathsFor(deps)
-  return views(await readDocument(paths.settingsFile), paths)
+  return views(await readDocuments(paths), paths)
+}
+
+export async function readWorktreeBranchPrefix(deps: GlobalSettingsDependencies = {}): Promise<string> {
+  const paths = pathsFor(deps)
+  return WORKTREE_BRANCH_PREFIX.read(await readDocument(paths.pluginSettingsFile))
 }
 
 async function atomicWrite(path: string, document: JsonObject): Promise<void> {
@@ -196,13 +277,18 @@ export function updateGlobalSettings(changes: unknown, deps: GlobalSettingsDepen
   }
   const paths = pathsFor(deps)
   const operation = pendingWrite.catch(() => undefined).then(async () => {
-    const document = await readDocument(paths.settingsFile)
+    const documents = await readDocuments(paths)
+    const changedDocuments = new Set<'claude' | 'plugin'>()
     for (const [key, value] of Object.entries(changeObject)) {
       const descriptor = DESCRIPTOR_BY_KEY.get(key)!
-      descriptor.apply(document, value, await descriptor.options(paths))
+      const document = documentFor(descriptor, documents)
+      if (descriptor.kind === 'select') descriptor.apply(document, value, await descriptor.options(paths))
+      else descriptor.apply(document, value)
+      changedDocuments.add(descriptor.document)
     }
-    await atomicWrite(paths.settingsFile, document)
-    return views(document, paths)
+    if (changedDocuments.has('claude')) await atomicWrite(paths.settingsFile, documents.claude)
+    if (changedDocuments.has('plugin')) await atomicWrite(paths.pluginSettingsFile, documents.plugin)
+    return views(documents, paths)
   })
   pendingWrite = operation
   return operation
