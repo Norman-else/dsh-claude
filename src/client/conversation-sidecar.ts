@@ -20,20 +20,30 @@ export interface ClaudeActivityChatData {
   subcalls: readonly ClaudeSubcall[]
 }
 
+export interface ClaudeTranscriptDiff {
+  path: string
+  oldText: string | null
+  newText: string
+}
+
 export interface ClaudeTranscriptTool {
   toolUseId: string
   toolName: string
+  description: string
   summary?: string
   input?: string
   output?: string
   phase?: ClaudeActivityPhase
   isError?: boolean
+  additions?: number
+  deletions?: number
+  diffs?: readonly ClaudeTranscriptDiff[]
   subcalls: readonly ClaudeSubcall[]
 }
 
 export type ClaudeTranscriptItem =
   | { kind: 'text'; ordinal: number; text: string }
-  | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[] }
+  | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[]; additions?: number; deletions?: number; files?: number }
   | { kind: 'activity'; ordinal: number; row: ClaudeActivityChatData }
 
 export interface ClaudeTurnMarker {
@@ -198,6 +208,102 @@ export function activityRowsForStep(
   return activityRows(activities, activity => activity.turn === turn && activity.step === step, tasks)
 }
 
+function inputRecord(detail: string | undefined): Record<string, unknown> | undefined {
+  if (detail === undefined) return undefined
+  try {
+    const value: unknown = JSON.parse(detail)
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function inputString(input: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = input?.[key]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function lineCount(text: string): number {
+  return text.length === 0 ? 0 : text.split(/\r?\n/u).length
+}
+
+function editDiffs(toolName: string, input: Record<string, unknown> | undefined): readonly ClaudeTranscriptDiff[] | undefined {
+  const path = inputString(input, 'file_path')
+  if (path === undefined) return undefined
+  if (toolName === 'MultiEdit' && Array.isArray(input?.edits)) {
+    const diffs = input.edits.flatMap(edit => {
+      if (edit === null || typeof edit !== 'object' || Array.isArray(edit)) return []
+      const item = edit as Record<string, unknown>
+      const newText = inputString(item, 'new_string')
+      if (newText === undefined) return []
+      return [{ path, oldText: inputString(item, 'old_string') ?? null, newText }]
+    })
+    return diffs.length === 0 ? undefined : diffs
+  }
+  if (toolName === 'Edit') {
+    const newText = inputString(input, 'new_string')
+    return newText === undefined ? undefined : [{ path, oldText: inputString(input, 'old_string') ?? null, newText }]
+  }
+  if (toolName === 'Write') {
+    const content = inputString(input, 'content')
+    return content === undefined ? undefined : [{ path, oldText: null, newText: content }]
+  }
+  return undefined
+}
+
+function toolDescription(toolName: string, input: Record<string, unknown> | undefined, failed = false): string {
+  const path = inputString(input, 'file_path') ?? inputString(input, 'path')
+  const pattern = inputString(input, 'pattern') ?? inputString(input, 'query')
+  const description = inputString(input, 'description')
+  const target = path ?? pattern
+  let completed: string
+  let failedAction: string
+  switch (toolName) {
+    case 'Grep':
+      completed = path === undefined ? `Searched for ${pattern ?? 'matches'}` : `Searched ${path} for ${pattern ?? 'matches'}`
+      failedAction = path === undefined ? `search for ${pattern ?? 'matches'}` : `search ${path} for ${pattern ?? 'matches'}`
+      break
+    case 'Glob':
+      completed = `Searched for ${pattern ?? 'files'}`
+      failedAction = `search for ${pattern ?? 'files'}`
+      break
+    case 'Read':
+      completed = `Read ${path ?? 'a file'}`
+      failedAction = `read ${path ?? 'a file'}`
+      break
+    case 'WebFetch': {
+      const url = inputString(input, 'url') ?? 'a web page'
+      completed = `Fetched ${url}`
+      failedAction = `fetch ${url}`
+      break
+    }
+    case 'WebSearch':
+      completed = `Searched the web for ${pattern ?? 'results'}`
+      failedAction = `search the web for ${pattern ?? 'results'}`
+      break
+    case 'Edit': case 'MultiEdit':
+      completed = `Edited ${path ?? 'a file'}`
+      failedAction = `edit ${path ?? 'a file'}`
+      break
+    case 'Write':
+      completed = `Wrote ${path ?? 'a file'}`
+      failedAction = `write ${path ?? 'a file'}`
+      break
+    case 'Bash': {
+      const command = inputString(input, 'command') ?? 'a command'
+      completed = description ?? `Ran ${command}`
+      failedAction = description === undefined ? `run ${command}` : description
+      break
+    }
+    default:
+      completed = description ?? `${toolName}${target === undefined ? '' : ` ${target}`}`
+      failedAction = completed.charAt(0).toLowerCase() + completed.slice(1)
+  }
+  return failed ? `Failed to ${failedAction}` : completed
+}
+
 /** Fold one step's shared ordinal stream into Claude Code-style prose and tool groups. */
 export function transcriptItemsForStep(
   activities: readonly ClaudeActivityEvent[],
@@ -213,7 +319,16 @@ export function transcriptItemsForStep(
   let group: { ordinal: number; tools: ClaudeTranscriptTool[]; byId: Map<string, number> } | undefined
   const flushGroup = (): void => {
     if (group === undefined || group.tools.length === 0) return
-    items.push({ kind: 'tools', ordinal: group.ordinal, tools: group.tools })
+    const diffs = group.tools.flatMap(tool => tool.diffs ?? [])
+    const additions = diffs.reduce((total, diff) => total + lineCount(diff.newText), 0)
+    const deletions = diffs.reduce((total, diff) => total + (diff.oldText === null ? 0 : lineCount(diff.oldText)), 0)
+    const files = new Set(diffs.map(diff => diff.path)).size
+    items.push({
+      kind: 'tools',
+      ordinal: group.ordinal,
+      tools: group.tools,
+      ...(diffs.length === 0 ? {} : { additions, deletions, files }),
+    })
     group = undefined
   }
   for (const activity of ordered) {
@@ -227,9 +342,11 @@ export function transcriptItemsForStep(
     if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {
       group ??= { ordinal: activity.ordinal, tools: [], byId: new Map() }
       group.byId.set(activity.toolUseId, group.tools.length)
+      const input = inputRecord(activity.detail)
       group.tools.push({
         toolUseId: activity.toolUseId,
         toolName: activity.toolName,
+        description: toolDescription(activity.toolName, input),
         ...(activity.summary === undefined ? {} : { summary: activity.summary }),
         ...(activity.detail === undefined ? {} : { input: activity.detail }),
         ...(activity.phase === undefined ? {} : { phase: activity.phase }),
@@ -242,11 +359,17 @@ export function transcriptItemsForStep(
       const index = group.byId.get(activity.toolUseId)
       const previous = index === undefined ? undefined : group.tools[index]
       if (index !== undefined && previous !== undefined) {
+        const failed = activity.isError === true || activity.phase === 'failed' || activity.kind === 'permission'
+        const diffs = failed ? undefined : editDiffs(previous.toolName, inputRecord(previous.input))
+        const additions = diffs?.reduce((total, diff) => total + lineCount(diff.newText), 0)
+        const deletions = diffs?.reduce((total, diff) => total + (diff.oldText === null ? 0 : lineCount(diff.oldText)), 0)
         group.tools[index] = {
           ...previous,
+          description: toolDescription(previous.toolName, inputRecord(previous.input), failed),
           ...(activity.detail === undefined ? {} : { output: activity.detail }),
           ...(activity.phase === undefined ? {} : { phase: activity.phase }),
           ...(activity.isError === undefined ? {} : { isError: activity.isError }),
+          ...(diffs === undefined ? {} : { diffs, additions: additions ?? 0, deletions: deletions ?? 0 }),
           ...(activity.kind === 'permission' ? { output: activity.summary, isError: true } : {}),
         }
       }

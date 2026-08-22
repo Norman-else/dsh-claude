@@ -27,6 +27,7 @@ import {
 } from '../src/client/ClaudeTasksPanel.tsx'
 import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from '../src/client/ClaudeActiveTasksNode.tsx'
+import { ClaudeActivityNode, ClaudeTranscriptToolGroup, ClaudeTranscriptToolItem } from '../src/client/ClaudeActivityNode.tsx'
 
 const taskCall: ClaudeActivityEvent = {
   turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
@@ -231,6 +232,131 @@ describe('Claude sidecar conversation projection', () => {
       })] },
       { kind: 'text', ordinal: 9, text: 'I could not run it.' },
     ])
+  })
+
+  it('derives readable descriptions and successful edit diffs for one tool group', () => {
+    const activities: ClaudeActivityEvent[] = [
+      {
+        turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'grep-1', toolName: 'Grep',
+        detail: JSON.stringify({ pattern: 'external payment', path: 'services/accounting-service' }),
+      },
+      { turn: 2, step: 1, ordinal: 2, kind: 'tool-result', phase: 'completed', toolUseId: 'grep-1', detail: 'match.ts' },
+      {
+        turn: 2, step: 1, ordinal: 3, kind: 'tool-call', phase: 'started', toolUseId: 'edit-1', toolName: 'Edit',
+        detail: JSON.stringify({ file_path: 'src/ReceivableService.java', old_string: 'old line', new_string: 'new line\nsecond line' }),
+      },
+      { turn: 2, step: 1, ordinal: 4, kind: 'tool-result', phase: 'completed', toolUseId: 'edit-1', detail: 'updated' },
+      {
+        turn: 2, step: 1, ordinal: 5, kind: 'tool-call', phase: 'started', toolUseId: 'write-failed', toolName: 'Write',
+        detail: JSON.stringify({ file_path: 'src/Failed.java', content: 'not applied' }),
+      },
+      { turn: 2, step: 1, ordinal: 6, kind: 'tool-result', phase: 'failed', toolUseId: 'write-failed', detail: 'denied', isError: true },
+    ]
+
+    const group = transcriptItemsForStep(activities, 2, 1)[0]
+    expect(group).toMatchObject({
+      kind: 'tools',
+      additions: 2,
+      deletions: 1,
+      files: 1,
+      tools: [
+        { description: 'Searched services/accounting-service for external payment' },
+        {
+          description: 'Edited src/ReceivableService.java',
+          additions: 2,
+          deletions: 1,
+          diffs: [{ path: 'src/ReceivableService.java', oldText: 'old line', newText: 'new line\nsecond line' }],
+        },
+        { description: 'Failed to write src/Failed.java' },
+      ],
+    })
+    if (group?.kind !== 'tools') throw new Error('Expected a tool group')
+    expect(group.tools[2]).not.toHaveProperty('diffs')
+    expect(group.tools[2]).not.toHaveProperty('additions')
+    expect(group.tools[2]).not.toHaveProperty('deletions')
+  })
+
+  it('renders the tool-group row without a background card and includes diff statistics', () => {
+    const markup = renderToStaticMarkup(createElement(ClaudeTranscriptToolGroup, {
+      tools: [{
+        toolUseId: 'edit-1',
+        toolName: 'Edit',
+        description: 'Edited file.ts',
+        phase: 'completed',
+        additions: 2,
+        deletions: 1,
+        diffs: [{ path: 'file.ts', oldText: 'old', newText: 'new\nline' }],
+        subcalls: [],
+      }],
+      additions: 2,
+      deletions: 1,
+      files: 1,
+      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
+    }))
+
+    expect(markup).toContain('dsh-claude-tool-group-native')
+    expect(markup).not.toContain('dsh-claude-tool-group-card')
+    expect(markup).toContain('+2')
+    expect(markup).toContain('−1')
+  })
+
+  it('renders interleaved Claude text with the native Markdown renderer', () => {
+    const markup = renderToStaticMarkup(createElement(ClaudeActivityNode, {
+      node: { data: { turn: 2, step: 1 } },
+      t: ((key: string) => key) as never,
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({
+        activities: [{
+          turn: 2,
+          step: 1,
+          ordinal: 0,
+          kind: 'text',
+          text: '## Heading\n\n**bold** and `inline`\n\n- first\n- second',
+        }],
+      })) as never,
+    } as never))
+
+    expect(markup).toContain('class="dsh-claude-flow"')
+    expect(markup).toContain('class="dsh-claude-transcript-text"')
+    expect(markup).toContain('<h2>Heading</h2>')
+    expect(markup).toContain('<strong>bold</strong>')
+    expect(markup).toContain('<code>inline</code>')
+    expect(markup).toContain('<ul>')
+    expect(markup).not.toContain('## Heading')
+  })
+
+  it('keeps each tool entry in an independent collapsed disclosure', () => {
+    const markup = renderToStaticMarkup(createElement('div', null,
+      createElement(ClaudeTranscriptToolItem, {
+        tool: {
+          toolUseId: 'glob-1',
+          toolName: 'Glob',
+          phase: 'completed',
+          input: '{"pattern":"**/*.ts"}',
+          output: 'file.ts',
+          subcalls: [],
+        },
+        t: ((key: string) => key) as never,
+      }),
+      createElement(ClaudeTranscriptToolItem, {
+        tool: {
+          toolUseId: 'grep-1',
+          toolName: 'Grep',
+          phase: 'completed',
+          input: '{"pattern":"external payment"}',
+          output: 'match.ts',
+          subcalls: [],
+        },
+        t: ((key: string) => key) as never,
+      }),
+    ))
+
+    expect(markup.match(/<details/g)).toHaveLength(2)
+    expect(markup).not.toContain('<details open=""')
+    expect(markup).toContain('<summary')
+    expect(markup).toContain('file.ts')
+    expect(markup).toContain('match.ts')
+    expect(markup).toContain('Glob')
+    expect(markup).toContain('Grep')
   })
 
   it('folds task lifecycle messages sharing a taskId into one settled row', () => {
