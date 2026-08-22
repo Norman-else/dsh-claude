@@ -7,8 +7,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent } from '../events.ts'
-import type { ClaudeActivityChatData, ClaudeSubcall } from './conversation-sidecar.ts'
-import { activityRowsForStep } from './conversation-sidecar.ts'
+import type { ClaudeActivityChatData, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
+import { transcriptItemsForStep } from './conversation-sidecar.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -18,7 +18,16 @@ export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-st
 const EMPTY_TASKS = [] as const
 
 const ACTIVITY_CSS = [
-  '.dsh-claude-flow{display:flex;flex-direction:column;gap:4px}',
+  '.dsh-claude-flow{display:flex;flex-direction:column;gap:10px}',
+  '.dsh-claude-transcript-text{color:var(--dsw-alias-label-primary);font-size:15px;line-height:24px;white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.dsh-claude-tool-group{overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}',
+  '.dsh-claude-tool-group>.dsh-claude-flow-row{padding:0 10px}',
+  '.dsh-claude-tool-list{border-top:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-claude-tool-item{padding:8px 12px;border-top:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-claude-tool-item:first-child{border-top:0}',
+  '.dsh-claude-tool-name{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}',
+  '.dsh-claude-tool-summary{margin-left:8px;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-claude-tool-detail{margin:6px 0 0;padding:8px 10px;max-height:220px;overflow:auto;border-radius:8px;background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small);white-space:pre-wrap;overflow-wrap:anywhere}',
   '.dsh-claude-flow-row{position:relative;overflow:hidden}',
   '.dsh-claude-flow-leading{flex-shrink:0}',
   '.dsh-claude-flow-title{font-weight:400}',
@@ -107,15 +116,73 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
   )
 }
 
+function ToolDetail({ label, value }: { label: string; value: string | undefined }) {
+  if (value === undefined || value.length === 0) return null
+  return <pre className="dsh-claude-tool-detail">{`${label}\n${value}`}</pre>
+}
+
+function ToolGroup({ tools, t }: { tools: readonly ClaudeTranscriptTool[]; t: Translate }) {
+  const [open, setOpen] = useState(false)
+  const failed = tools.some(tool => tool.isError === true || tool.phase === 'failed')
+  const running = tools.some(tool => tool.phase === 'started' || tool.phase === 'updated')
+  const summary = tools.length === 1 ? t('usedTool') : t('usedTools', { count: tools.length })
+  return (
+    <div className="dsh-claude-tool-group">
+      <DisclosureRow
+        rowClassName="dsh-claude-flow-row"
+        leadingClassName="dsh-claude-flow-leading"
+        titleClassName="dsh-claude-flow-title"
+        chevronClassName="dsh-claude-flow-chevron"
+        icon={failed ? <StateDot state="error" /> : running ? <StateDot state="ongoing" /> : <IconApiOutline14 size={14} />}
+        title={summary}
+        open={open}
+        expandable
+        expandOnRowClick
+        keepContentWhenOpen
+        onToggle={() => setOpen(value => !value)}
+      />
+      {open ? (
+        <div className="dsh-claude-tool-list">
+          {tools.map(tool => (
+            <div className="dsh-claude-tool-item" key={tool.toolUseId}>
+              <div className="dsh-claude-tool-name">
+                {tool.toolName}
+                {tool.summary === undefined ? null : <span className="dsh-claude-tool-summary">{tool.summary}</span>}
+              </div>
+              {tool.subcalls.length === 0 ? null : (
+                <div className="dsh-claude-flow-subcalls">
+                  {tool.subcalls.map(subcall => (
+                    <div key={subcall.toolUseId}>{subcallGlyph(subcall)} {subcall.toolName ?? t('subagent')}{subcall.summary === undefined ? '' : ` · ${subcall.summary}`}</div>
+                  ))}
+                </div>
+              )}
+              <ToolDetail label={t('toolInput')} value={tool.input} />
+              <ToolDetail label={tool.isError === true ? t('toolError') : t('toolOutput')} value={tool.output} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
   ensureCss()
   const marker = node.data
   const activities = useClaudeProjection(value => value.activities)
   const tasks = useClaudeProjection(value => value.tasks?.tasks ?? EMPTY_TASKS)
-  const rows = useMemo(
-    () => activityRowsForStep(activities, marker.turn, marker.step, tasks),
+  const items = useMemo(
+    () => transcriptItemsForStep(activities, marker.turn, marker.step, tasks),
     [activities, marker.step, marker.turn, tasks],
   )
-  if (rows.length === 0) return null
-  return <div className="dsh-claude-flow">{rows.map((row, index) => <ActivityRow key={`${row.activity.ordinal}:${index}`} row={row} t={t} />)}</div>
+  if (items.length === 0) return null
+  return (
+    <div className="dsh-claude-flow">
+      {items.map(item => item.kind === 'text'
+        ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}>{item.text}</div>
+        : item.kind === 'tools'
+          ? <ToolGroup key={`tools:${item.ordinal}`} tools={item.tools} t={t} />
+          : <ActivityRow key={`activity:${item.ordinal}`} row={item.row} t={t} />)}
+    </div>
+  )
 }

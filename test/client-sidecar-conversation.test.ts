@@ -16,6 +16,7 @@ import {
   claudeActivityStepDefinition,
   claudeTurnDefinition,
   selectClaudeTurn,
+  transcriptItemsForStep,
 } from '../src/client/conversation-sidecar.ts'
 import {
   activitiesForTask,
@@ -201,6 +202,35 @@ describe('Claude sidecar conversation projection', () => {
       { ...taskCall, step: 2, ordinal: 2, toolUseId: 'task-2' },
       { ...taskCall, turn: 3, ordinal: 3, toolUseId: 'task-3' },
     ], 2, 1)).toEqual([expect.objectContaining({ activity: taskCall })])
+  })
+
+  it('interleaves text and consecutive folded tool groups by shared ordinal', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 0, kind: 'text', text: 'I will inspect this.' },
+      { turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'read-1', toolName: 'Read', detail: 'file.ts' },
+      { turn: 2, step: 1, ordinal: 2, kind: 'tool-result', phase: 'completed', toolUseId: 'read-1', detail: 'contents' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'tool-call', phase: 'started', toolUseId: 'grep-1', toolName: 'Grep', detail: 'symbol' },
+      { turn: 2, step: 1, ordinal: 4, kind: 'tool-result', phase: 'failed', toolUseId: 'grep-1', detail: 'not found', isError: true },
+      { turn: 2, step: 1, ordinal: 5, kind: 'text', text: 'I found the cause.' },
+      { turn: 2, step: 1, ordinal: 6, kind: 'tool-call', phase: 'started', toolUseId: 'bash-1', toolName: 'Bash', detail: 'pnpm test' },
+      { turn: 2, step: 1, ordinal: 7, kind: 'subagent', phase: 'completed', parentToolUseId: 'bash-1', toolUseId: 'nested-1', toolName: 'Read', summary: 'log' },
+      { turn: 2, step: 1, ordinal: 8, kind: 'permission', phase: 'denied', toolUseId: 'bash-1', summary: 'rejected' },
+      { turn: 2, step: 1, ordinal: 9, kind: 'text', text: 'I could not run it.' },
+    ]
+
+    expect(transcriptItemsForStep(activities.reverse(), 2, 1)).toEqual([
+      { kind: 'text', ordinal: 0, text: 'I will inspect this.' },
+      { kind: 'tools', ordinal: 1, tools: [
+        expect.objectContaining({ toolUseId: 'read-1', toolName: 'Read', output: 'contents', phase: 'completed' }),
+        expect.objectContaining({ toolUseId: 'grep-1', toolName: 'Grep', output: 'not found', phase: 'failed', isError: true }),
+      ] },
+      { kind: 'text', ordinal: 5, text: 'I found the cause.' },
+      { kind: 'tools', ordinal: 6, tools: [expect.objectContaining({
+        toolUseId: 'bash-1', toolName: 'Bash', phase: 'denied', output: 'rejected', isError: true,
+        subcalls: [expect.objectContaining({ toolUseId: 'nested-1', phase: 'completed' })],
+      })] },
+      { kind: 'text', ordinal: 9, text: 'I could not run it.' },
+    ])
   })
 
   it('folds task lifecycle messages sharing a taskId into one settled row', () => {

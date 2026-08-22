@@ -41,6 +41,19 @@ describe('Claude sidecar repository', () => {
     expect(projection.tasks?.tasks).toEqual([{ taskId: 'task', description: 'work', status: 'running', originTurn: 1 }])
   })
 
+  it('round-trips redacted visible transcript text', async () => {
+    const store = await repository()
+    await store.appendActivity('session', {
+      turn: 1,
+      step: 1,
+      ordinal: 0,
+      kind: 'text',
+      text: 'Before token=raw-secret after',
+    })
+    const projection = await store.read('session')
+    expect(projection.activities[0]).toMatchObject({ kind: 'text', text: 'Before token=[REDACTED] after' })
+  })
+
   it('persists native question lifecycle without answer content', async () => {
     const store = await repository()
     await store.appendActivity('session', {

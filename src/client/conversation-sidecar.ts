@@ -20,6 +20,22 @@ export interface ClaudeActivityChatData {
   subcalls: readonly ClaudeSubcall[]
 }
 
+export interface ClaudeTranscriptTool {
+  toolUseId: string
+  toolName: string
+  summary?: string
+  input?: string
+  output?: string
+  phase?: ClaudeActivityPhase
+  isError?: boolean
+  subcalls: readonly ClaudeSubcall[]
+}
+
+export type ClaudeTranscriptItem =
+  | { kind: 'text'; ordinal: number; text: string }
+  | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[] }
+  | { kind: 'activity'; ordinal: number; row: ClaudeActivityChatData }
+
 export interface ClaudeTurnMarker {
   readonly turn: number
 }
@@ -180,6 +196,82 @@ export function activityRowsForStep(
   tasks: readonly ClaudeTaskInfo[] = [],
 ): readonly ClaudeActivityChatData[] {
   return activityRows(activities, activity => activity.turn === turn && activity.step === step, tasks)
+}
+
+/** Fold one step's shared ordinal stream into Claude Code-style prose and tool groups. */
+export function transcriptItemsForStep(
+  activities: readonly ClaudeActivityEvent[],
+  turn: number,
+  step: number,
+  tasks: readonly ClaudeTaskInfo[] = [],
+): readonly ClaudeTranscriptItem[] {
+  const ordered = activities
+    .filter(activity => activity.turn === turn && activity.step === step)
+    .slice()
+    .sort((left, right) => left.ordinal - right.ordinal)
+  const items: ClaudeTranscriptItem[] = []
+  let group: { ordinal: number; tools: ClaudeTranscriptTool[]; byId: Map<string, number> } | undefined
+  const flushGroup = (): void => {
+    if (group === undefined || group.tools.length === 0) return
+    items.push({ kind: 'tools', ordinal: group.ordinal, tools: group.tools })
+    group = undefined
+  }
+  for (const activity of ordered) {
+    if (activity.kind === 'text') {
+      flushGroup()
+      if (activity.text !== undefined && activity.text.length > 0) {
+        items.push({ kind: 'text', ordinal: activity.ordinal, text: activity.text })
+      }
+      continue
+    }
+    if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {
+      group ??= { ordinal: activity.ordinal, tools: [], byId: new Map() }
+      group.byId.set(activity.toolUseId, group.tools.length)
+      group.tools.push({
+        toolUseId: activity.toolUseId,
+        toolName: activity.toolName,
+        ...(activity.summary === undefined ? {} : { summary: activity.summary }),
+        ...(activity.detail === undefined ? {} : { input: activity.detail }),
+        ...(activity.phase === undefined ? {} : { phase: activity.phase }),
+        ...(activity.isError === undefined ? {} : { isError: activity.isError }),
+        subcalls: [],
+      })
+      continue
+    }
+    if ((activity.kind === 'tool-result' || activity.kind === 'permission') && activity.toolUseId !== undefined && group !== undefined) {
+      const index = group.byId.get(activity.toolUseId)
+      const previous = index === undefined ? undefined : group.tools[index]
+      if (index !== undefined && previous !== undefined) {
+        group.tools[index] = {
+          ...previous,
+          ...(activity.detail === undefined ? {} : { output: activity.detail }),
+          ...(activity.phase === undefined ? {} : { phase: activity.phase }),
+          ...(activity.isError === undefined ? {} : { isError: activity.isError }),
+          ...(activity.kind === 'permission' ? { output: activity.summary, isError: true } : {}),
+        }
+      }
+      continue
+    }
+    if (activity.kind === 'subagent' && activity.parentToolUseId !== undefined && group !== undefined) {
+      const index = group.byId.get(activity.parentToolUseId)
+      const previous = index === undefined ? undefined : group.tools[index]
+      const nested = subcallOf(activity)
+      if (index !== undefined && previous !== undefined && nested !== undefined) {
+        const nestedIndex = previous.subcalls.findIndex(item => item.toolUseId === nested.toolUseId)
+        const subcalls = nestedIndex === -1
+          ? [...previous.subcalls, nested]
+          : previous.subcalls.map((item, position) => position === nestedIndex ? { ...item, ...nested } : item)
+        group.tools[index] = { ...previous, subcalls }
+      }
+      continue
+    }
+    if (!presentable(activity)) continue
+    flushGroup()
+    const row = activityRows([activity], () => true, tasks)[0]
+    if (row !== undefined) items.push({ kind: 'activity', ordinal: activity.ordinal, row })
+  }
+  flushGroup()
+  return items
 }
 
 interface ClaudeActivityStepState extends ClaudeActivityStepMarker {

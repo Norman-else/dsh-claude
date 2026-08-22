@@ -80,6 +80,19 @@ describe('event normalization', () => {
     expect(normalized.summary).toContain('[truncated]')
   })
 
+  it('redacts and bounds visible transcript text', () => {
+    const normalized = normalizeActivity({
+      turn: 1,
+      step: 1,
+      ordinal: 0,
+      kind: 'text',
+      text: `token=raw-secret ${'x'.repeat(70_000)}`,
+    })
+    expect(normalized.text).not.toContain('raw-secret')
+    expect(normalized.text?.length).toBeLessThanOrEqual(64_000)
+    expect(normalized.text).toContain('[truncated]')
+  })
+
   it('returns JSON detail without functions, circular references, or secrets', () => {
     const input: Record<string, unknown> = { secret: 'nope', value: 1, fn: () => undefined }
     input.self = input

@@ -980,7 +980,7 @@ describe('Claude supervisor', () => {
     }
   })
 
-  it('mirrors root Claude tool calls into the native tool channel', async () => {
+  it('keeps root Claude tools exclusively in the ordered sidecar transcript', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -991,18 +991,17 @@ describe('Claude supervisor', () => {
     query.push(toolResultMessage)
     query.push(result('done'))
     await collect(output)
-    const call = owner.events.find(event => event.type === 'tool/call')
-    expect(call?.data).toMatchObject({ turn: 1, step: 1, callId: 'tool-1', name: 'Bash' })
-    expect((call?.data as { arguments: string }).arguments).toContain('ls -la')
-    const settled = owner.events.find(event => event.type === 'tool/result')
-    const block = (settled?.data as { message: { content: Array<{ toolCallId: string; isError: boolean; content: Array<{ text: string }> }> } }).message.content[0]
-    expect(block?.toolCallId).toBe('tool-1')
-    expect(block?.isError).toBe(false)
-    expect(block?.content[0]?.text).toContain('listed')
+    expect(owner.events.some(event => event.type === 'tool/call' || event.type === 'tool/result')).toBe(false)
+    await expect(projection(runtime)).resolves.toMatchObject({
+      activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'tool-call', toolUseId: 'tool-1', toolName: 'Bash' }),
+        expect.objectContaining({ kind: 'tool-result', toolUseId: 'tool-1', detail: 'listed' }),
+      ]),
+    })
     await runtime.dispose()
   })
 
-  it('settles a native tool card when Claude reports permission denied', async () => {
+  it('records permission denial in the sidecar without creating a native tool card', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -1020,11 +1019,12 @@ describe('Claude supervisor', () => {
     query.push(result('not pulled'))
     await collect(output)
 
-    const settled = owner.events.find(event => event.type === 'tool/result')
-    const block = (settled?.data as { message: { content: Array<{ toolCallId: string; isError: boolean; content: Array<{ text: string }> }> } }).message.content[0]
-    expect(block?.toolCallId).toBe('tool-1')
-    expect(block?.isError).toBe(true)
-    expect(block?.content[0]?.text).toContain('rejected')
+    expect(owner.events.some(event => event.type === 'tool/call' || event.type === 'tool/result')).toBe(false)
+    await expect(projection(runtime)).resolves.toMatchObject({
+      activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'permission', toolUseId: 'tool-1', phase: 'denied' }),
+      ]),
+    })
     await runtime.dispose()
   })
 
@@ -1050,7 +1050,7 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('registers a dynamic presenter for unknown tool names exactly once', async () => {
+  it('does not register native presenters for Claude-owned tool names', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -1070,8 +1070,8 @@ describe('Claude supervisor', () => {
     } as SDKMessage)
     query.push(result('done'))
     await collect(output)
-    // The MCP tool gets one agent-scoped mirror; the statically covered Bash gets none.
-    expect(owner.registeredTools).toEqual(['mcp__obsidian__search_simple'])
+    expect(owner.registeredTools).toEqual([])
+    expect(owner.events.some(event => event.type === 'tool/call')).toBe(false)
     await runtime.dispose()
   })
 

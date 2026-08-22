@@ -7,6 +7,7 @@ import {
 } from './constants.ts'
 
 export type ClaudeActivityKind =
+  | 'text'
   | 'status'
   | 'thinking'
   | 'tool-call'
@@ -55,6 +56,8 @@ export interface ClaudeActivityEvent {
   title?: string
   summary?: string
   detail?: string
+  /** Redacted visible Claude prose used by the plugin-owned interleaved transcript. */
+  text?: string
   isError?: boolean
   usage?: ClaudeUsage
 }
@@ -99,6 +102,7 @@ declare module '@deepseek-ai/dsh-session/types' {
 const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key|env|environ|environment)(?:$|[_-])/i
 const MAX_SUMMARY_CHARS = 1_000
 const MAX_DETAIL_CHARS = 4_000
+const MAX_TRANSCRIPT_TEXT_CHARS = 64_000
 const MAX_DEPTH = 6
 const MAX_ARRAY_ITEMS = 40
 const MAX_OBJECT_KEYS = 60
@@ -193,6 +197,7 @@ export function normalizeActivity(
   }
   const detail = safeDetail(activity.detail)
   if (detail !== undefined) normalized.detail = detail
+  if (activity.text !== undefined) normalized.text = redactText(activity.text, MAX_TRANSCRIPT_TEXT_CHARS)
   if (activity.isError !== undefined) normalized.isError = activity.isError
   if (activity.usage !== undefined) normalized.usage = { ...activity.usage }
   return normalized

@@ -12,7 +12,6 @@ import {
   type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
@@ -20,8 +19,6 @@ import { AsyncQueue } from './async-queue.ts'
 import { TASK_TOOL_NAMES } from './constants.ts'
 import {
   currentClaudeActivityCursor,
-  redactText,
-  safeDetail,
   type ClaudeActivityCursor,
   type ClaudeActivityInput,
   type ClaudeTaskInfo,
@@ -30,7 +27,6 @@ import {
 import { createPermissionBridge } from './permission.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
-import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 
@@ -145,6 +141,8 @@ interface ActiveTurn {
   sawActivity: boolean
   sawTextDelta: boolean
   text: string
+  /** Offset already persisted as visible transcript text within the current result segment. */
+  persistedTextLength: number
   thinking: string
   aborted: boolean
   deniedToolUseIds: Set<string>
@@ -268,7 +266,6 @@ export class ClaudeSupervisor {
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
-  readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
   #admissionGate: Promise<void> = Promise.resolve()
@@ -387,6 +384,7 @@ export class ClaudeSupervisor {
       sawActivity: false,
       sawTextDelta: false,
       text: '',
+      persistedTextLength: 0,
       thinking: '',
       aborted: false,
       deniedToolUseIds: new Set(),
@@ -744,6 +742,7 @@ export class ClaudeSupervisor {
         })
         return
       case 'tool-call':
+        if (message.parentToolUseId === undefined) await this.#flushTranscriptText(active)
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-call' : 'subagent',
           phase: 'started',
@@ -754,13 +753,7 @@ export class ClaudeSupervisor {
           summary: message.parentToolUseId === undefined ? rootCallSummary(message.toolName, message.input) : `Subagent called ${message.toolName}`,
           detail: message.input,
         })
-        if (message.parentToolUseId === undefined) {
-          active.callNames.set(message.toolUseId, message.toolName)
-          this.#ensureDynamicPresenter(active.agent, message.toolName)
-          // Task dispatches render as plugin-owned group cards gathering the
-          // subagents' nested work; only ordinary tools mirror natively.
-          if (!TASK_TOOL_NAMES.has(message.toolName)) await this.#appendNativeToolCall(active, message)
-        }
+        if (message.parentToolUseId === undefined) active.callNames.set(message.toolUseId, message.toolName)
         return
       case 'tool-result':
         await this.#appendActivity(active, {
@@ -772,10 +765,6 @@ export class ClaudeSupervisor {
           detail: message.output,
           isError: message.isError,
         })
-        if (message.parentToolUseId === undefined
-          && !TASK_TOOL_NAMES.has(active.callNames.get(message.toolUseId) ?? '')) {
-          await this.#appendNativeToolResult(active, message)
-        }
         return
       case 'subagent':
         await this.#appendActivity(active, {
@@ -808,14 +797,6 @@ export class ClaudeSupervisor {
           title: message.toolName,
           summary: message.summary,
         })
-        if (!TASK_TOOL_NAMES.has(active.callNames.get(message.toolUseId) ?? message.toolName)) {
-          await this.#appendNativeToolResult(active, {
-            kind: 'tool-result',
-            toolUseId: message.toolUseId,
-            output: message.summary,
-            isError: true,
-          })
-        }
         return
     }
   }
@@ -903,6 +884,7 @@ export class ClaudeSupervisor {
     active.promptUuid = randomUUID()
     active.sawTextDelta = false
     active.text = ''
+    active.persistedTextLength = 0
     active.thinking = ''
     await this.#appendSafely(active, {
       kind: 'status',
@@ -960,9 +942,11 @@ export class ClaudeSupervisor {
       active.text = result.text
       active.output.push({ type: 'text-delta', text: result.text })
     }
+    await this.#flushTranscriptText(active)
     active.output.push({ type: 'segment-complete', text: active.text })
     active.sawTextDelta = false
     active.text = ''
+    active.persistedTextLength = 0
     active.thinking = ''
   }
 
@@ -973,6 +957,7 @@ export class ClaudeSupervisor {
   ): Promise<void> {
     if (entry.active !== active) return
     if (active.aborted) {
+      await this.#flushTranscriptText(active)
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'failed',
@@ -1005,6 +990,11 @@ export class ClaudeSupervisor {
       })
     }
     if (!result.success) {
+      if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
+        active.text = result.text
+        active.output.push({ type: 'text-delta', text: result.text })
+      }
+      await this.#flushTranscriptText(active)
       const message = result.errors?.join('\n')
         ?? (result.terminalReason !== undefined ? `Claude Code failed the turn (${result.terminalReason})` : 'Claude Code failed the turn')
       await this.#appendSafely(active, {
@@ -1020,6 +1010,7 @@ export class ClaudeSupervisor {
         active.text = result.text
         active.output.push({ type: 'text-delta', text: result.text })
       }
+      await this.#flushTranscriptText(active)
       if (active.phase === 'primary' && this.#hasRunningTasks(entry, active)) {
         active.phase = 'waiting-tasks'
         await this.#appendSafely(active, {
@@ -1047,6 +1038,21 @@ export class ClaudeSupervisor {
     this.#armIdleTimer(entry)
   }
 
+  async #flushTranscriptText(active: ActiveTurn): Promise<void> {
+    const text = active.text.slice(active.persistedTextLength)
+    if (text.length === 0) return
+    try {
+      await this.#appendActivity(active, {
+        kind: 'text',
+        phase: 'completed',
+        text,
+      })
+      active.persistedTextLength = active.text.length
+    } catch {
+      // Transcript persistence is presentational and must not change a settled Claude outcome.
+    }
+  }
+
   async #appendActivity(active: ActiveTurn, activity: ClaudeActivityInput): Promise<void> {
     const ordinal = active.cursor.nextOrdinal++
     await this.#sidecar.appendActivity(active.agent.id as string, {
@@ -1063,73 +1069,13 @@ export class ClaudeSupervisor {
     await this.#appendActivity(active, activity).catch(() => undefined)
   }
 
-  /** Register one presenter-only mirror for a tool name the static preset
-   *  registry does not cover (MCP tools, newly added built-ins). Runs in the
-   *  agent scope so the mirror is visible only to this preset's sessions and
-   *  unwinds with the agent; failure keeps the generic card, never the turn. */
-  #ensureDynamicPresenter(agent: Agent, name: string): void {
-    if (CLAUDE_PRESENTER_NAMES.has(name)) return
-    let known = this.#dynamicPresenterNames.get(agent)
-    if (known === undefined) {
-      known = new Set<string>()
-      this.#dynamicPresenterNames.set(agent, known)
-    }
-    if (known.has(name)) return
-    try {
-      agent.ctx.tools.register(dynamicPresenterDefinition(name))
-      known.add(name)
-    } catch {
-      // A late or disposed agent keeps the generic card; presentation must
-      // never unsettle the Claude turn.
-    }
-  }
-
-  /** Mirror one root Claude tool call into the durable native tool channel so
-   *  the host's tool presentation renders it exactly like a DSH-executed call.
-   *  Presentation duplication is best-effort and never unsettles the turn. */
-  async #appendNativeToolCall(
-    active: ActiveTurn,
-    message: Extract<NormalizedSdkMessage, { kind: 'tool-call' }>,
-  ): Promise<void> {
-    try {
-      await active.agent.session.append('tool/call', {
-        turn: active.cursor.turn,
-        step: active.cursor.step,
-        callId: CallId(message.toolUseId),
-        name: message.toolName,
-        arguments: safeDetail(message.input) ?? '{}',
-      })
-    } catch {
-      // Presentation duplication must never unsettle the Claude turn.
-    }
-  }
-
-  async #appendNativeToolResult(
-    active: ActiveTurn,
-    message: Extract<NormalizedSdkMessage, { kind: 'tool-result' }>,
-  ): Promise<void> {
-    const text = typeof message.output === 'string' ? redactText(message.output) : safeDetail(message.output) ?? ''
-    try {
-      await active.agent.session.append('tool/result', {
-        turn: active.cursor.turn,
-        step: active.cursor.step,
-        message: createToolResultMessage({
-          callId: CallId(message.toolUseId),
-          content: [{ type: 'text', text }],
-          isError: message.isError,
-        }),
-      }, { surfaceOp: 'append' })
-    } catch {
-      // Presentation duplication must never unsettle the Claude turn.
-    }
-  }
-
   async #interrupt(entry: SupervisorEntry): Promise<void> {
     const active = entry.active
     if (active === undefined || entry.state === 'interrupting') return
     entry.state = 'interrupting'
     active.aborted = true
     active.output.fail(abortFailure())
+    await this.#flushTranscriptText(active)
     let interruptError: unknown
     try {
       const receipt = await withTimeout(entry.query.interrupt(), CLAUDE_INTERRUPT_TIMEOUT_MS, 'Claude Code interrupt')
@@ -1158,6 +1104,7 @@ export class ClaudeSupervisor {
     const active = entry.active
     const stderr = entry.process?.stderrTail()
     if (active !== undefined) {
+      await this.#flushTranscriptText(active)
       if (active.signal !== undefined && active.abortListener !== undefined) {
         active.signal.removeEventListener('abort', active.abortListener)
       }

@@ -289,40 +289,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
 
-    let text = ''
     let pendingUsage: TokenUsage | undefined
     let completed = false
-    let blockIndex = 0
     try {
       for await (const event of events) {
-        if (event.type === 'text-delta') {
-          // Buffer each Claude result as one block so tool activity stays ahead
-          // of its prose while a background-task report can follow in-block 1.
-          text += event.text
-        } else if (event.type === 'usage') {
+        if (event.type === 'usage') {
           pendingUsage = tokenUsage(event.usage)
-        } else {
-          if (text.length > 0) {
-            yield { type: 'block-start', index: blockIndex, blockType: 'text' }
-            yield { type: 'text-delta', index: blockIndex, text }
-            yield { type: 'block-end', index: blockIndex, block: { type: 'text', text } }
-            blockIndex += 1
-          }
-          text = ''
-          if (event.type === 'segment-complete') continue
-          completed = true
-          if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
-          yield { type: 'finish', reason: { kind: 'stop' } }
+          continue
         }
+        if (event.type === 'text-delta' || event.type === 'segment-complete') continue
+        completed = true
+        if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
+        yield { type: 'finish', reason: { kind: 'stop' } }
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         completed = true
-        if (text.length > 0) {
-          yield { type: 'block-start', index: blockIndex, blockType: 'text' }
-          yield { type: 'text-delta', index: blockIndex, text }
-          yield { type: 'block-end', index: blockIndex, block: { type: 'text', text } }
-        }
         yield {
           type: 'finish',
           reason: {
