@@ -75,6 +75,19 @@ describe('repository status parsing', () => {
       mergeStateStatus: 'CLEAN',
       statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
     })).toMatchObject({ number: 12, state: 'open', review: 'approved', checks: 'passing' })
+    expect(parsePullRequest({
+      number: 13,
+      title: 'Merged repository status',
+      url: 'https://github.com/owner/repo/pull/13',
+      state: 'CLOSED',
+      mergedAt: '2026-08-22T08:00:00Z',
+      baseRefName: 'master',
+    })).toMatchObject({
+      number: 13,
+      state: 'merged',
+      mergedAt: '2026-08-22T08:00:00.000Z',
+      baseBranch: 'master',
+    })
     expect(parsePullRequest({ number: 1, title: 'bad', url: 'http://github.com/x/y/pull/1', state: 'OPEN' })).toBeUndefined()
   })
 })

@@ -573,6 +573,14 @@ describe('Claude supervisor', () => {
     await Promise.resolve()
     expect(followUpReceived).toBe(false)
 
+    // Claude Code automatically reacts to task notifications and can emit an
+    // uncorrelated top-level result while other background work is still
+    // running. Publish it as progress without closing the original DSH turn.
+    query.push(delta('First task settled; still waiting for the second.'))
+    query.push(result('First task settled; still waiting for the second.'))
+    await vi.waitFor(() => expect(runtime.snapshots()[0]).toMatchObject({ state: 'running' }))
+    expect(followUpReceived).toBe(false)
+
     query.push({
       type: 'system',
       subtype: 'task_notification',
@@ -588,6 +596,7 @@ describe('Claude supervisor', () => {
 
     await expect(collected).resolves.toEqual(expect.arrayContaining([
       { type: 'segment-complete', text: 'Both deployments are running in the background.' },
+      { type: 'segment-complete', text: 'First task settled; still waiting for the second.' },
       { type: 'complete', text: 'Service one deployed; service two failed.' },
     ]))
     expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle' })

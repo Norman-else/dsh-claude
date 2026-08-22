@@ -80,7 +80,8 @@ function validateRepository(value: unknown): value is RepositoryStatus {
     || !optionalBoundedString(pullRequest.mergeState)
     || !optionalBoundedString(pullRequest.author)
     || !optionalBoundedString(pullRequest.baseBranch)
-    || (pullRequest.createdAt !== undefined && (typeof pullRequest.createdAt !== 'string' || !Number.isFinite(Date.parse(pullRequest.createdAt))))) return false
+    || (pullRequest.createdAt !== undefined && (typeof pullRequest.createdAt !== 'string' || !Number.isFinite(Date.parse(pullRequest.createdAt))))
+    || (pullRequest.mergedAt !== undefined && (typeof pullRequest.mergedAt !== 'string' || !Number.isFinite(Date.parse(pullRequest.mergedAt))))) return false
   try {
     const url = new URL(pullRequest.url)
     return url.protocol === 'https:' && url.hostname === 'github.com'

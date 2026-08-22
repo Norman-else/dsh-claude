@@ -960,6 +960,11 @@ export const repositoryBar: CSSProperties = {
   textAlign: 'left',
 }
 
+export const repositoryBarMerged: CSSProperties = {
+  borderColor: 'color-mix(in srgb, #a78bfa 30%, var(--dsw-alias-border-l2))',
+  background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
+}
+
 export const repositoryPrIcon: CSSProperties = {
   width: 20,
   height: 20,
@@ -968,6 +973,10 @@ export const repositoryPrIcon: CSSProperties = {
   flex: 'none',
   borderRadius: 6,
   color: 'var(--dsw-alias-state-success-primary, var(--dsw-static-blue-450))',
+}
+
+export const repositoryPrIconMerged: CSSProperties = {
+  color: '#a78bfa',
 }
 
 export const repositoryPrimary: CSSProperties = {
@@ -992,6 +1001,10 @@ export const repositoryPrLink: CSSProperties = {
   fontWeight: 650,
   textDecoration: 'none',
   cursor: 'pointer',
+}
+
+export const repositoryPrLinkMerged: CSSProperties = {
+  color: '#a78bfa',
 }
 
 export const repositoryPrHoverCard: CSSProperties = {
@@ -1030,6 +1043,11 @@ export const repositoryPrStateBadge: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary)',
   fontSize: 11,
   fontWeight: 650,
+}
+
+export const repositoryPrStateBadgeMerged: CSSProperties = {
+  background: 'color-mix(in srgb, #a78bfa 18%, transparent)',
+  color: '#a78bfa',
 }
 
 export const repositoryPrHoverRepo: CSSProperties = {
@@ -1168,6 +1186,34 @@ export const repositoryItemError: CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary)',
 }
 
+export const repositoryMergedStatus: CSSProperties = {
+  minWidth: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  overflow: 'hidden',
+  color: '#a78bfa',
+  fontSize: 12,
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+  textOverflow: 'ellipsis',
+}
+
+export const repositoryMergedDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  flex: 'none',
+  borderRadius: 999,
+  background: 'currentColor',
+}
+
+export const repositoryMergedAge: CSSProperties = {
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontWeight: 500,
+  textOverflow: 'ellipsis',
+}
+
 export const diffTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',
@@ -1185,12 +1231,25 @@ export const diffTrigger: CSSProperties = {
   cursor: 'pointer',
 }
 
+export const diffTriggerMuted: CSSProperties = {
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
 export const diffAdd: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary)',
 }
 
 export const diffDelete: CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const diffAddMuted: CSSProperties = {
+  color: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 62%, var(--dsw-alias-label-tertiary))',
+}
+
+export const diffDeleteMuted: CSSProperties = {
+  color: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 62%, var(--dsw-alias-label-tertiary))',
 }
 
 export const diffPanel: CSSProperties = {

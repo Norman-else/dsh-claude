@@ -21,6 +21,7 @@ export interface RepositoryPullRequestStatus {
   readonly mergeState?: string
   readonly author?: string
   readonly createdAt?: string
+  readonly mergedAt?: string
   readonly baseBranch?: string
 }
 
@@ -195,6 +196,9 @@ export function parsePullRequest(value: unknown): RepositoryPullRequestStatus | 
       : {}),
     ...(typeof input.createdAt === 'string' && Number.isFinite(Date.parse(input.createdAt))
       ? { createdAt: new Date(input.createdAt).toISOString() }
+      : {}),
+    ...(typeof input.mergedAt === 'string' && Number.isFinite(Date.parse(input.mergedAt))
+      ? { mergedAt: new Date(input.mergedAt).toISOString() }
       : {}),
     ...(typeof input.baseRefName === 'string' && bounded(input.baseRefName).length > 0
       ? { baseBranch: bounded(input.baseRefName) }

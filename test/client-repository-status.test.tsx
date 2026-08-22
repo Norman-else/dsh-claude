@@ -66,6 +66,9 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   repositoryPr: 'PR #{number}',
   repositoryPrState: 'PR state',
   repositoryState_open: 'Open',
+  repositoryState_merged: 'Merged',
+  repositoryMergedInto: 'Merged into {branch}',
+  repositoryMergedAgo: '{age} ago',
   repositoryChecks: 'Checks',
   repositoryChecks_passing: 'Checks passing',
   repositoryReview: 'Review',
@@ -165,6 +168,38 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('href="https://github.com/Mercaso/premier-store-os/pull/12"')
     expect(statusMarkup).toContain('target="_blank"')
     expect(statusMarkup).toContain('rel="noopener noreferrer"')
+  })
+
+  it('renders a merged PR as a purple terminal state instead of active checks', () => {
+    const mergedRepository = {
+      ...repository,
+      pullRequest: {
+        ...repository.pullRequest,
+        state: 'merged' as const,
+        mergedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+      },
+    }
+    expect(repositorySummary(mergedRepository, t)).toEqual([
+      'feature/status', 'Worktree', 'Modified', 'PR #12', 'Merged into master',
+    ])
+    const statusMarkup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook({ ...projection, repository: mergedRepository })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(statusMarkup).toContain('Merged into master')
+    expect(statusMarkup).toContain('2h ago')
+    expect(statusMarkup).toContain('#a78bfa')
+    expect(statusMarkup).toContain('color-mix(in srgb, #a78bfa 30%')
+    expect(statusMarkup).not.toContain('Checks passing')
+    expect(statusMarkup).not.toContain('Approved')
+    expect(statusMarkup).toContain('<circle cx="12" cy="8" r="1.6"></circle>')
+
+    const hoverMarkup = renderToStaticMarkup(<PullRequestHoverCard repository={mergedRepository} t={t} />)
+    expect(hoverMarkup).toContain('Merged')
+    expect(hoverMarkup).toContain('color-mix(in srgb, #a78bfa 18%')
   })
 
   it('renders the Claude-style PR hover content', () => {

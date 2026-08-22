@@ -688,7 +688,18 @@ export class ClaudeSupervisor {
       if (message.sessionId !== entry.claudeSessionId) {
         throw new ClaudeProtocolError(`Claude Code result session ${message.sessionId} does not match ${entry.claudeSessionId}`)
       }
+      if (active.phase === 'waiting-tasks') {
+        // The CLI may automatically react to each completed background task and
+        // emit a top-level result, correlated or not. Publish that prose as a
+        // completed progress block, but keep the original DSH turn open until
+        // every owned task settles and the explicit final report returns.
+        await this.#completeProgressSegment(active, message)
+        return
+      }
       if (message.userMessageUuid !== undefined && message.userMessageUuid !== active.promptUuid) {
+        // A stale internal continuation must not settle the explicit final
+        // report request. Primary-turn mismatches remain protocol failures.
+        if (active.phase === 'follow-up') return
         throw new ClaudeProtocolError(`Claude Code result for user message ${message.userMessageUuid} does not match active request ${active.promptUuid}`)
       }
       await this.#completeTurn(entry, active, message)
@@ -930,6 +941,31 @@ export class ClaudeSupervisor {
     await this.#sidecar.writeTasks(entry.sessionId, [...entry.tasks.values()]).catch(() => undefined)
   }
 
+  async #completeProgressSegment(
+    active: ActiveTurn,
+    result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
+    recordUsage = true,
+  ): Promise<void> {
+    if (recordUsage && (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined || result.usage.cumulativeCostUsd !== undefined)) {
+      await this.#appendSafely(active, {
+        kind: 'usage',
+        phase: 'completed',
+        title: 'Claude usage',
+        summary: usageSummary(result.usage),
+        usage: result.usage,
+      })
+      active.output.push({ type: 'usage', usage: result.usage })
+    }
+    if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
+      active.text = result.text
+      active.output.push({ type: 'text-delta', text: result.text })
+    }
+    active.output.push({ type: 'segment-complete', text: active.text })
+    active.sawTextDelta = false
+    active.text = ''
+    active.thinking = ''
+  }
+
   async #completeTurn(
     entry: SupervisorEntry,
     active: ActiveTurn,
@@ -991,7 +1027,7 @@ export class ClaudeSupervisor {
           phase: 'updated',
           title: 'Claude Code is waiting for background tasks',
         })
-        active.output.push({ type: 'segment-complete', text: active.text })
+        await this.#completeProgressSegment(active, result, false)
         return
       }
       await this.#appendSafely(active, {

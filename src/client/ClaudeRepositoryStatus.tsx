@@ -26,11 +26,16 @@ export function repositorySummary(repository: RepositoryStatus, t: ClaudeReposit
     repository.dirty === true ? t('repositoryModified') : t('repositoryClean'),
     ...(pullRequest === undefined
       ? [t('repositoryNoPr')]
-      : [
-          pullRequest.draft ? t('repositoryPrDraft', { number: pullRequest.number }) : t('repositoryPr', { number: pullRequest.number }),
-          t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey),
-          t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey),
-        ]),
+      : pullRequest.state === 'merged'
+        ? [
+            t('repositoryPr', { number: pullRequest.number }),
+            t('repositoryMergedInto', { branch: pullRequest.baseBranch ?? t('repositoryUnknownBranch') }),
+          ]
+        : [
+            pullRequest.draft ? t('repositoryPrDraft', { number: pullRequest.number }) : t('repositoryPr', { number: pullRequest.number }),
+            t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey),
+            t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey),
+          ]),
   ]
 }
 
@@ -41,7 +46,18 @@ function StatusItem({ label, tone = 'neutral' }: { label: string; tone?: 'neutra
   return <span style={{ ...styles.repositoryItem, ...toneStyle }}><span style={styles.repositoryItemDot} aria-hidden="true" />{label}</span>
 }
 
-function PullRequestIcon({ size = 16 }: { size?: number }) {
+function PullRequestIcon({ size = 16, merged = false }: { size?: number; merged?: boolean }) {
+  if (merged) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="4" cy="3" r="1.6" />
+        <circle cx="4" cy="13" r="1.6" />
+        <circle cx="12" cy="8" r="1.6" />
+        <path d="M4 4.6v6.8" />
+        <path d="M5.6 3H7a5 5 0 0 1 5 3.4" />
+      </svg>
+    )
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="4" cy="3" r="1.6" />
@@ -70,11 +86,12 @@ function relativeAge(value: string | undefined): string | undefined {
 export function PullRequestHoverCard({ repository, t }: { repository: RepositoryStatus; t: ClaudeRepositoryStatusInjected['t'] }) {
   const pullRequest = repository.pullRequest
   if (pullRequest === undefined) return null
-  const age = relativeAge(pullRequest.createdAt)
+  const merged = pullRequest.state === 'merged'
+  const age = relativeAge(merged ? pullRequest.mergedAt : pullRequest.createdAt)
   return (
     <span role="tooltip" style={styles.repositoryPrHoverCard}>
       <span style={styles.repositoryPrHoverTop}>
-        <span style={styles.repositoryPrStateBadge}><PullRequestIcon size={13} />{t(`repositoryState_${pullRequest.state}` as ClaudeCodeSettingsKey)}</span>
+        <span style={{ ...styles.repositoryPrStateBadge, ...(merged ? styles.repositoryPrStateBadgeMerged : {}) }}><PullRequestIcon size={13} merged={merged} />{t(`repositoryState_${pullRequest.state}` as ClaudeCodeSettingsKey)}</span>
         <span style={styles.repositoryPrHoverRepo}>{repositoryName(repository.remote)} #{pullRequest.number}</span>
         {age === undefined ? null : <span style={styles.repositoryPrHoverAge}>{age}</span>}
       </span>
@@ -125,7 +142,7 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
         href={pullRequest.url}
         target="_blank"
         rel="noopener noreferrer"
-        style={styles.repositoryPrLink}
+        style={{ ...styles.repositoryPrLink, ...(pullRequest.state === 'merged' ? styles.repositoryPrLinkMerged : {}) }}
         aria-label={t('repositoryOpenPr', { number: pullRequest.number })}
       >#{pullRequest.number}</a>
     </span>
@@ -139,6 +156,8 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   if (blank || !projection.owned || repository === undefined) return null
   const branch = repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch')
   const pullRequest = repository.pullRequest
+  const merged = pullRequest?.state === 'merged'
+  const mergedAge = merged ? relativeAge(pullRequest.mergedAt) : undefined
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame}>
@@ -151,20 +170,26 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   }
   return (
     <div style={styles.repositoryBarFrame}>
-      <div style={styles.repositoryBar}>
-        <span style={styles.repositoryPrIcon}><PullRequestIcon /></span>
+      <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
+        <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
         <PullRequestLink repository={repository} t={t} />
         {repository.remote === undefined ? null : <span style={styles.repositoryRemote}>{repositoryName(repository.remote)}</span>}
         <span style={styles.repositoryBranch}>{branch}</span>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
         <span style={styles.repositoryStatusItems}>
           {repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0) ? (
-            <button type="button" style={styles.diffTrigger} onClick={openDiff} aria-label={t('diffOpen')}>
-              <span style={styles.diffAdd}>+{repository.diff.additions}</span>
-              <span style={styles.diffDelete}>−{repository.diff.deletions}</span>
+            <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
+              <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
+              <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
             </button>
           ) : null}
-          {pullRequest === undefined ? null : <>
+          {pullRequest === undefined ? null : merged ? (
+            <span style={styles.repositoryMergedStatus}>
+              <span style={styles.repositoryMergedDot} aria-hidden="true" />
+              {t('repositoryMergedInto', { branch: pullRequest.baseBranch ?? t('repositoryUnknownBranch') })}
+              {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
+            </span>
+          ) : <>
             <StatusItem
               label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : pullRequest.checks === 'pending' ? 'warning' : 'neutral'}

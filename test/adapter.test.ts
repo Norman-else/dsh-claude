@@ -242,10 +242,12 @@ describe('DSH stream mapping', () => {
     ])
   })
 
-  it('emits the initial update and background-task report as separate blocks before one finish', async () => {
+  it('emits initial, intermediate, and final task reports as separate blocks before one finish', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'Tasks are still running.' },
       { type: 'segment-complete', text: 'Tasks are still running.' },
+      { type: 'text-delta', text: 'Deploy locked on; waiting for the build.' },
+      { type: 'segment-complete', text: 'Deploy locked on; waiting for the build.' },
       { type: 'text-delta', text: 'All tasks completed.' },
       { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
       { type: 'complete', text: 'All tasks completed.' },
@@ -257,8 +259,11 @@ describe('DSH stream mapping', () => {
       { type: 'text-delta', index: 0, text: 'Tasks are still running.' },
       { type: 'block-end', index: 0, block: { type: 'text', text: 'Tasks are still running.' } },
       { type: 'block-start', index: 1, blockType: 'text' },
-      { type: 'text-delta', index: 1, text: 'All tasks completed.' },
-      { type: 'block-end', index: 1, block: { type: 'text', text: 'All tasks completed.' } },
+      { type: 'text-delta', index: 1, text: 'Deploy locked on; waiting for the build.' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'Deploy locked on; waiting for the build.' } },
+      { type: 'block-start', index: 2, blockType: 'text' },
+      { type: 'text-delta', index: 2, text: 'All tasks completed.' },
+      { type: 'block-end', index: 2, block: { type: 'text', text: 'All tasks completed.' } },
       { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
       { type: 'finish', reason: { kind: 'stop' } },
     ])
