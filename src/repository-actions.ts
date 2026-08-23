@@ -6,12 +6,13 @@ const MAX_OUTPUT_BYTES = 256 * 1024
 const MAX_PATCH_CHARS = 64 * 1024
 const MAX_MESSAGE_CHARS = 512
 const MAX_PR_TEXT_CHARS = 8 * 1024
+const MAX_UNPUSHED_COMMITS = 20
 const GIT_TIMEOUT_MS = 15_000
 const REMOTE_TIMEOUT_MS = 60_000
 const GENERATE_TIMEOUT_MS = 60_000
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
-export type RepositoryActionKind = 'commit' | 'commit-push' | 'create-pr'
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr'
 
 interface CommandResult {
   readonly exitCode: number | null
@@ -27,6 +28,11 @@ export interface RepositoryActionFile {
   readonly untracked: boolean
 }
 
+export interface RepositoryActionCommit {
+  readonly hash: string
+  readonly subject: string
+}
+
 export interface RepositoryActionPreview {
   readonly root: string
   readonly branch: string
@@ -38,6 +44,9 @@ export interface RepositoryActionPreview {
   readonly hasStaged: boolean
   readonly hasUnstaged: boolean
   readonly hasUntracked: boolean
+  readonly upstream?: string
+  readonly unpushedCommits: readonly RepositoryActionCommit[]
+  readonly unpushedTruncated: boolean
 }
 
 export interface RepositoryActionRequest {
@@ -189,29 +198,45 @@ export class RepositoryActionService {
   }
 
   async #execute(cwd: string, request: RepositoryActionRequest): Promise<RepositoryActionResult> {
-    const message = safeText(request.message, MAX_MESSAGE_CHARS, 'Commit message')
     const before = await this.#preview(cwd)
     if (before.fingerprint !== request.fingerprint) throw new RepositoryActionError('repository-changed', 'Repository changes have changed. Refresh the commit panel.')
-    if (before.files.length === 0) throw new RepositoryActionError('nothing-to-commit', 'There are no changes to commit.')
-    const git = await this.#git()
-    await this.#rejectStagedWarp(git, before.root)
-    if (request.includeUnstaged) {
-      const paths = before.files.filter(file => file.unstaged || file.untracked).map(file => file.path)
-      if (paths.length > 0) await this.#mustRun(git, ['add', '--', ...paths], before.root, GIT_TIMEOUT_MS, 'stage-failed', 'Changes could not be staged.')
+    if (request.action === 'push') {
+      const git = await this.#git()
+      try {
+        await this.#push(git, before.root, before.branch)
+      } catch (error) {
+        throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.')
+      }
+      this.#invalidate(before.root)
+      return { commit: before.head, pushed: true }
     }
-    await this.#rejectStagedWarp(git, before.root)
-    const staged = await this.#run(git, ['diff', '--cached', '--quiet', '--exit-code', '--'], before.root, GIT_TIMEOUT_MS)
-    if (staged.exitCode === 0) throw new RepositoryActionError('nothing-to-commit', 'There are no staged changes to commit.')
-    if (staged.exitCode !== 1) throw new RepositoryActionError('repository-unavailable', 'The staged changes could not be verified.')
-    await this.#mustRun(git, ['commit', '-m', message, '--'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'Git commit failed.')
-    const oid = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'The new commit could not be verified.')).stdout.trim()
-    this.#invalidate(before.root)
-    if (request.action === 'commit') return { commit: oid, pushed: false }
+    const message = safeText(request.message, MAX_MESSAGE_CHARS, 'Commit message')
+    if (before.files.length === 0 && request.action !== 'create-pr') {
+      throw new RepositoryActionError('nothing-to-commit', 'There are no changes to commit.')
+    }
+    const git = await this.#git()
+    let oid = before.head
+    if (before.files.length > 0) {
+      await this.#rejectStagedWarp(git, before.root)
+      if (request.includeUnstaged) {
+        const paths = before.files.filter(file => file.unstaged || file.untracked).map(file => file.path)
+        if (paths.length > 0) await this.#mustRun(git, ['add', '--', ...paths], before.root, GIT_TIMEOUT_MS, 'stage-failed', 'Changes could not be staged.')
+      }
+      await this.#rejectStagedWarp(git, before.root)
+      const staged = await this.#run(git, ['diff', '--cached', '--quiet', '--exit-code', '--'], before.root, GIT_TIMEOUT_MS)
+      if (staged.exitCode === 0) throw new RepositoryActionError('nothing-to-commit', 'There are no staged changes to commit.')
+      if (staged.exitCode !== 1) throw new RepositoryActionError('repository-unavailable', 'The staged changes could not be verified.')
+      await this.#mustRun(git, ['commit', '-m', message, '--'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'Git commit failed.')
+      oid = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'The new commit could not be verified.')).stdout.trim()
+      this.#invalidate(before.root)
+      if (request.action === 'commit') return { commit: oid, pushed: false }
+    }
     try {
       await this.#push(git, before.root, before.branch)
     } catch (error) {
       throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.', oid)
     }
+    this.#invalidate(before.root)
     if (request.action === 'commit-push') return { commit: oid, pushed: true }
     const title = safeText(request.prTitle ?? message, 256, 'Pull request title')
     const body = safeText(request.prBody ?? '', MAX_PR_TEXT_CHARS, 'Pull request description')
@@ -251,6 +276,19 @@ export class RepositoryActionService {
     const branch = branchResult.stdout.trim()
     const head = headResult.stdout.trim()
     const fingerprint = createHash('sha256').update([head, branch, statusResult.stdout, stagedPatch.stdout, unstagedPatch.stdout].join('\0')).digest('hex')
+    const upstreamResult = await this.#run(git, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], root, GIT_TIMEOUT_MS)
+    const upstream = upstreamResult.exitCode === 0 && !upstreamResult.lossy ? upstreamResult.stdout.trim() : undefined
+    const logResult = await this.#run(git, [
+      'log', '--format=%H%x09%s', `-n`, String(MAX_UNPUSHED_COMMITS + 1), upstream === undefined ? 'HEAD' : '@{upstream}..HEAD', '--',
+    ], root, GIT_TIMEOUT_MS)
+    const commitLines = logResult.exitCode === 0 && !logResult.lossy
+      ? logResult.stdout.split(/\r?\n/u).filter(line => line.includes('\t'))
+      : []
+    const unpushedCommits = commitLines.slice(0, MAX_UNPUSHED_COMMITS).flatMap(line => {
+      const tab = line.indexOf('\t')
+      const hash = line.slice(0, tab)
+      return /^[0-9a-f]{40}$/iu.test(hash) ? [{ hash, subject: line.slice(tab + 1).slice(0, 140) }] : []
+    })
     return {
       root,
       branch,
@@ -262,6 +300,9 @@ export class RepositoryActionService {
       hasStaged: files.some(file => file.staged),
       hasUnstaged: files.some(file => file.unstaged),
       hasUntracked: files.some(file => file.untracked),
+      ...(upstream === undefined ? {} : { upstream }),
+      unpushedCommits,
+      unpushedTruncated: commitLines.length > MAX_UNPUSHED_COMMITS,
     }
   }
 

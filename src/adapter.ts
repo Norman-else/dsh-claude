@@ -16,6 +16,7 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
+import { formatReviewComments, type ReviewComment } from './review-comments.ts'
 
 const MODELS = [
   { id: 'default', name: 'Default (recommended)', description: 'Use Claude Code’s recommended default model.' },
@@ -82,6 +83,20 @@ function validateImageRef(ref: ImageAttachmentRef, attachments: AttachmentReader
     || (maxDimension !== undefined && (ref.width > maxDimension || ref.height > maxDimension))) {
     throw new Error(`dsh-claude: image ${imageIndex} exceeds the configured dimension limit`)
   }
+}
+
+/**
+ * Prepend the session's pending diff-review comments to the outgoing user
+ * prompt. The comments are drained once per turn: they are formatted into one
+ * `<user-review-comments>` block placed ahead of the user's own text (or as a
+ * leading text block for multi-part prompts) so Claude reads them in the same
+ * turn that consumed them.
+ */
+export function injectReviewComments(prompt: ClaudePrompt, comments: readonly ReviewComment[]): ClaudePrompt {
+  if (comments.length === 0) return prompt
+  const block = formatReviewComments(comments)
+  if (typeof prompt === 'string') return `${block}\n\n${prompt}`
+  return [{ type: 'text', text: block }, ...prompt]
 }
 
 function imageBlock(data: Uint8Array, mediaType: ImageMediaType): ClaudePromptBlock {
@@ -194,18 +209,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly #agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>
   readonly #attachments: AttachmentReader
   readonly #presetIdFor: (agent: Agent) => string | undefined
+  readonly #drainReviewComments: (sessionId: string) => readonly ReviewComment[]
 
   constructor(
     supervisor: ClaudeSupervisor,
     agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>,
     attachments: AttachmentReader,
     presetIdFor: (agent: Agent) => string | undefined,
+    drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
   ) {
     super()
     this.#supervisor = supervisor
     this.#agents = agents
     this.#attachments = attachments
     this.#presetIdFor = presetIdFor
+    this.#drainReviewComments = drainReviewComments
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -283,7 +301,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     const events = await this.#supervisor.runTurn({
       agent,
-      prompt,
+      prompt: injectReviewComments(prompt, this.#drainReviewComments(agent.id as string)),
       model: options.model,
       ...(thinkingMode === undefined ? {} : { thinkingMode }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -328,6 +346,7 @@ export function createClaudeCodeAdapter(
   agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>,
   attachments: AttachmentReader,
   presetIdFor: (agent: Agent) => string | undefined,
+  drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments)
 }

@@ -42,6 +42,9 @@ export interface RepositoryStatus {
   readonly detached?: boolean
   readonly worktree?: boolean
   readonly dirty?: boolean
+  readonly upstream?: boolean
+  readonly ahead?: number
+  readonly behind?: number
   readonly remote?: string
   readonly pullRequest?: RepositoryPullRequestStatus
   readonly diff?: RepositoryDiffStatus
@@ -96,10 +99,20 @@ function normalizedPath(value: string): string {
   return value.replaceAll('\\', '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US')
 }
 
-export function parseGitStatus(output: string): { branch?: string; detached: boolean; dirty: boolean } {
+export function parseGitStatus(output: string): {
+  branch?: string
+  detached: boolean
+  dirty: boolean
+  upstream: boolean
+  ahead?: number
+  behind?: number
+} {
   let branch: string | undefined
   let detached = false
   let dirty = false
+  let upstream = false
+  let ahead: number | undefined
+  let behind: number | undefined
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith('# branch.head ')) {
       const head = bounded(line.slice('# branch.head '.length))
@@ -107,9 +120,28 @@ export function parseGitStatus(output: string): { branch?: string; detached: boo
       else if (head.length > 0 && head !== '(unknown)') branch = head
       continue
     }
+    if (line.startsWith('# branch.upstream ')) {
+      upstream = true
+      continue
+    }
+    if (line.startsWith('# branch.ab ')) {
+      const counts = /^# branch\.ab \+(\d+) -(\d+)$/u.exec(line)
+      if (counts !== null) {
+        ahead = Number(counts[1])
+        behind = Number(counts[2])
+      }
+      continue
+    }
     if (line.length > 0 && !line.startsWith('# ')) dirty = true
   }
-  return { ...(branch === undefined ? {} : { branch }), detached, dirty }
+  return {
+    ...(branch === undefined ? {} : { branch }),
+    detached,
+    dirty,
+    upstream,
+    ...(ahead === undefined ? {} : { ahead }),
+    ...(behind === undefined ? {} : { behind }),
+  }
 }
 
 export function parseDiffNumstat(value: string): Omit<RepositoryDiffStatus, 'patch' | 'truncated'> {

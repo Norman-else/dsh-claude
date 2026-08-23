@@ -46,6 +46,8 @@ const previewResults = (status = ' M src/a.ts\n?? src/new.ts\n?? nested/WARP.md\
   { stdout: status },
   { stdout: '' },
   { stdout: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n' },
+  { stdout: 'origin/feature/actions\n' },
+  { stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tUpdate repository actions\n' },
 ]
 
 describe('repository action parsing', () => {
@@ -128,6 +130,59 @@ describe('repository action service', () => {
     await expect(service.execute('C:/repo', {
       action: 'commit', fingerprint: initial.fingerprint, message: 'Update files', includeUnstaged: false,
     })).rejects.toMatchObject({ code: 'protected-warp-file' })
+  })
+
+  it('exposes the upstream and unpushed commits in the preview', async () => {
+    const fake = runtime(previewResults())
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    expect(preview.upstream).toBe('origin/feature/actions')
+    expect(preview.unpushedCommits).toEqual([
+      { hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject: 'Update repository actions' },
+    ])
+    expect(preview.unpushedTruncated).toBe(false)
+    expect(fake.spawn.mock.calls.at(-1)?.[0].argv).toEqual([
+      'C:/bin/git.exe', 'log', '--format=%H%x09%s', '-n', '21', '@{upstream}..HEAD', '--',
+    ])
+  })
+
+  it('pushes existing commits without creating a new commit', async () => {
+    const fake = runtime([
+      ...previewResults(''),
+      ...previewResults(''),
+      { stdout: 'origin/feature/actions\n' },
+      { stdout: '' },
+    ])
+    const invalidated = vi.fn()
+    const service = new RepositoryActionService(fake, 'claude', invalidated)
+    const initial = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'push', fingerprint: initial.fingerprint, message: '', includeUnstaged: false,
+    })).resolves.toEqual({ commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', pushed: true })
+    expect(fake.spawn.mock.calls.some(call => call[0].argv.includes('commit'))).toBe(false)
+    expect(fake.spawn.mock.calls.at(-1)?.[0].argv).toEqual(['C:/bin/git.exe', 'push'])
+    expect(invalidated).toHaveBeenCalledWith('C:/repo')
+  })
+
+  it('creates a PR from already committed work without a new commit', async () => {
+    const fake = runtime([
+      ...previewResults(''),
+      ...previewResults(''),
+      { stdout: 'origin/feature/actions\n' },
+      { stdout: '' },
+      { stdout: 'https://github.com/owner/repo/pull/7\n' },
+    ])
+    const service = new RepositoryActionService(fake, 'claude')
+    const initial = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'create-pr', fingerprint: initial.fingerprint, message: 'Update files', includeUnstaged: false,
+      prTitle: 'Update files', prBody: 'Summary: Update files\n\nChanges:\n- Updated files',
+    })).resolves.toEqual({
+      commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      pushed: true,
+      pullRequestUrl: 'https://github.com/owner/repo/pull/7',
+    })
+    expect(fake.spawn.mock.calls.some(call => call[0].argv.includes('commit'))).toBe(false)
   })
 
   it('preserves the completed commit when push fails', async () => {

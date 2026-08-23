@@ -1315,6 +1315,231 @@ export const diffDelete: CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary)',
 }
 
+export const diffCommentButtonClass = 'dshClaudeDiffCommentButton'
+export const diffLineRowClass = 'dshClaudeDiffLineRow'
+export const diffCommentTextareaClass = 'dshClaudeDiffCommentTextarea'
+
+export const diffCommentCss = `
+.${diffCommentButtonClass} {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  margin: 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--dsw-static-blue-450);
+  color: var(--dsw-alias-label-on-accent, #fff);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+.${diffLineRowClass}:hover .${diffCommentButtonClass},
+.${diffCommentButtonClass}:focus-visible {
+  opacity: 1;
+}
+.${diffCommentButtonClass}[disabled] {
+  visibility: hidden;
+}
+.${diffCommentTextareaClass}:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--dsw-static-blue-450);
+}
+`
+
+export const diffCommentBlock: CSSProperties = {
+  boxSizing: 'border-box',
+  width: 'min(640px, calc(var(--dsh-claude-diff-viewport, 520px) - 72px))',
+  position: 'sticky',
+  left: 62,
+  margin: '4px 8px 8px 62px',
+  padding: '8px 10px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  fontFamily: 'var(--dsw-font-family, system-ui)',
+  fontSize: 12,
+  lineHeight: '18px',
+  whiteSpace: 'normal',
+}
+
+export const diffCommentCardText: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-primary)',
+  overflowWrap: 'anywhere',
+}
+
+export const diffCommentCardMeta: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  marginBottom: 4,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+}
+
+export const diffCommentTextarea: CSSProperties = {
+  width: '100%',
+  minHeight: 56,
+  boxSizing: 'border-box',
+  padding: '6px 8px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 6,
+  background: 'var(--dsw-alias-bg-base)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  resize: 'vertical',
+}
+
+export const diffCommentActions: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 8,
+  marginTop: 6,
+}
+
+export const diffCommentActionButton: CSSProperties = {
+  minHeight: 24,
+  padding: '2px 10px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
+}
+
+export const diffCommentSubmitButton: CSSProperties = {
+  border: 'none',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  fontWeight: 600,
+}
+
+export const diffCommentError: CSSProperties = {
+  margin: '4px 0 0',
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 11,
+}
+
+export const reviewCommentBarFrame: CSSProperties = {
+  width: 'calc(100% - 64px)',
+  maxWidth: 'var(--dsh-conversation-composer-max-width, 782px)',
+  margin: '0 auto',
+  boxSizing: 'border-box',
+}
+
+export const reviewCommentBar: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  minHeight: 42,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: 8,
+  padding: '7px 11px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 11,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '20px',
+}
+
+export const reviewCommentIcon: CSSProperties = {
+  width: 20,
+  height: 20,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const reviewCommentClearSeat: CSSProperties = {
+  marginLeft: 'auto',
+  alignSelf: 'flex-start',
+  flex: 'none',
+  display: 'inline-flex',
+}
+
+export const reviewCommentChip: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 3,
+  maxWidth: 240,
+  padding: '1px 4px 1px 9px',
+  border: '1px solid color-mix(in srgb, var(--dsw-static-blue-450) 32%, transparent)',
+  borderRadius: 999,
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 10%, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '20px',
+}
+
+export const reviewCommentChipLabel: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const reviewCommentChipRemove: CSSProperties = {
+  width: 16,
+  height: 16,
+  flex: 'none',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: 'none',
+  borderRadius: 999,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: 1,
+  cursor: 'pointer',
+}
+
+export const reviewCommentHoverCard: CSSProperties = {
+  display: 'block',
+  maxWidth: 360,
+  padding: '8px 10px',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+export const reviewCommentHoverPath: CSSProperties = {
+  display: 'block',
+  marginBottom: 4,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  overflowWrap: 'anywhere',
+}
+
+export const reviewCommentHoverText: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-primary)',
+  whiteSpace: 'pre-wrap',
+  overflowWrap: 'anywhere',
+}
+
+export const diffAhead: CSSProperties = {
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const diffAheadMuted: CSSProperties = {
+  color: 'color-mix(in srgb, var(--dsw-static-blue-450) 62%, var(--dsw-alias-label-tertiary))',
+}
+
 export const diffAddMuted: CSSProperties = {
   color: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 62%, var(--dsw-alias-label-tertiary))',
 }
@@ -1544,9 +1769,8 @@ export const diffModalCss = `
 .dshClaudeRepositoryActionModal {
   box-sizing: border-box;
   width: min(760px, calc(100vw - 48px));
-  height: min(680px, calc(100vh - 48px));
   max-width: calc(100vw - 48px);
-  max-height: calc(100vh - 48px);
+  max-height: min(680px, calc(100vh - 48px));
 }
 .dshClaudeRepositoryActionModalContent {
   flex: 1;
@@ -1570,6 +1794,11 @@ export const diffModalCss = `
 .dshClaudeRepositoryActionModal input[type='checkbox'] {
   width: 18px;
   height: 18px;
+}
+.dshClaudeRepositoryActionModal textarea:focus,
+.dshClaudeRepositoryActionModal input:not([type='checkbox']):focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--dsw-static-blue-450);
 }
 `
 

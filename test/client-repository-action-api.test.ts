@@ -19,6 +19,7 @@ describe('repository action client API', () => {
         root: '/repo', branch: 'main', head: 'a', fingerprint: 'f', files: [
           { path: 'src/a.ts', staged: false, unstaged: true, untracked: false },
         ], patch: 'diff', truncated: false, hasStaged: false, hasUnstaged: true, hasUntracked: false,
+        upstream: 'origin/main', unpushedCommits: [{ hash: 'a'.repeat(40), subject: 'Update files' }], unpushedTruncated: false,
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Update files' }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ commit: 'b', pushed: true }), { status: 200, headers: { 'content-type': 'application/json' } }))

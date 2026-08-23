@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconChevronDownOutline14,
   IconCloseOutline16,
@@ -10,9 +10,11 @@ import {
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryActionKind, RepositoryActionPreview } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
+import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPreview } from './repository-action-api.ts'
+import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
 import * as styles from './styles.ts'
 
 export interface ClaudeDiffPanelInjected {
@@ -105,17 +107,44 @@ export function numberDiffLines(lines: readonly string[]): readonly NumberedDiff
   return numbered
 }
 
-function DiffLine({ entry }: { entry: NumberedDiffLine }) {
+export interface ReviewCommentAnchor {
+  readonly line: number
+  readonly side: ReviewCommentSide
+}
+
+/** Which working-tree line a comment on this rendered diff row refers to. */
+export function commentAnchorForLine(entry: NumberedDiffLine): ReviewCommentAnchor | undefined {
+  if (entry.kind === 'add' || entry.kind === 'context') {
+    return entry.newLine === undefined ? undefined : { line: entry.newLine, side: 'new' }
+  }
+  if (entry.kind === 'delete') {
+    return entry.oldLine === undefined ? undefined : { line: entry.oldLine, side: 'old' }
+  }
+  return undefined
+}
+
+function DiffLine({ entry, addLabel, onComment }: { entry: NumberedDiffLine; addLabel: string; onComment?: (() => void) | undefined }) {
   const style = entry.kind === 'add'
     ? styles.diffLineAdd
     : entry.kind === 'delete' ? styles.diffLineDelete : entry.kind === 'hunk' || entry.kind === 'collapsed' ? styles.diffLineHunk : styles.diffLineContext
   const lineNumber = entry.oldLine === undefined && entry.newLine === undefined
     ? ''
     : entry.oldLine === undefined ? String(entry.newLine) : entry.newLine === undefined ? String(entry.oldLine) : String(entry.newLine)
-  return <div style={{ ...styles.diffLine, ...style }}><span style={styles.diffLineNumber}>{lineNumber}</span><span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : entry.kind === 'collapsed' ? '⌄' : ' '}</span><span>{entry.kind === 'collapsed' ? entry.line : entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span></div>
+  return <div className={styles.diffLineRowClass} style={{ ...styles.diffLine, ...style }}><button type="button" className={styles.diffCommentButtonClass} disabled={onComment === undefined} aria-label={addLabel} onClick={onComment}>+</button><span style={styles.diffLineNumber}>{lineNumber}</span><span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : entry.kind === 'collapsed' ? '⌄' : ' '}</span><span>{entry.kind === 'collapsed' ? entry.line : entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span></div>
 }
 
-function DiffFileSection({ file, initiallyOpen }: { file: DiffFile; initiallyOpen: boolean }) {
+interface DiffFileSectionProps {
+  readonly file: DiffFile
+  readonly initiallyOpen: boolean
+  readonly t: ClaudeDiffPanelInjected['t']
+  readonly comments: readonly ReviewComment[]
+  readonly editorAnchor: ReviewCommentAnchor | undefined
+  readonly editorNode: ReactNode
+  readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
+  readonly onRemoveComment: (id: string) => void
+}
+
+function DiffFileSection({ file, initiallyOpen, t, comments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
   const [open, setOpen] = useState(initiallyOpen)
   return (
     <section style={styles.diffFile}>
@@ -124,7 +153,26 @@ function DiffFileSection({ file, initiallyOpen }: { file: DiffFile; initiallyOpe
         <span style={styles.diffFilePath}>{file.path}</span>
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
-      {open ? <div style={styles.diffCode}>{numberDiffLines(file.lines).map((entry, index) => <DiffLine key={`${index}:${entry.line}`} entry={entry} />)}</div> : null}
+      {open ? <div style={styles.diffCode}>{numberDiffLines(file.lines).map((entry, index) => {
+        const anchor = commentAnchorForLine(entry)
+        const lineComments = anchor === undefined ? [] : comments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
+        const editorOpen = anchor !== undefined && editorAnchor !== undefined && editorAnchor.line === anchor.line && editorAnchor.side === anchor.side
+        return (
+          <Fragment key={`${index}:${entry.line}`}>
+            <DiffLine entry={entry} addLabel={t('reviewCommentAdd')} onComment={anchor === undefined ? undefined : () => onOpenEditor(anchor)} />
+            {lineComments.map(comment => (
+              <div key={comment.id} style={styles.diffCommentBlock}>
+                <div style={styles.diffCommentCardMeta}>
+                  <span>{comment.side === 'old' ? t('reviewCommentOldSide', { line: comment.line }) : t('reviewCommentNewSide', { line: comment.line })}</span>
+                  <button type="button" style={styles.reviewCommentChipRemove} aria-label={t('reviewCommentRemove')} onClick={() => onRemoveComment(comment.id)}>×</button>
+                </div>
+                <p style={styles.diffCommentCardText}>{comment.text}</p>
+              </div>
+            ))}
+            {editorOpen ? editorNode : null}
+          </Fragment>
+        )
+      })}</div> : null}
     </section>
   )
 }
@@ -139,22 +187,28 @@ interface ActionDialogState {
   readonly pullRequestUrl?: string
 }
 
-function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInjected['t']): string {
-  return action === 'commit' ? t('diffCommit') : action === 'commit-push' ? t('diffCommitPush') : t('diffCreatePr')
+export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInjected['t']): string {
+  const label = action === 'commit'
+    ? t('diffCommit')
+    : action === 'commit-push' ? t('diffCommitPush') : action === 'push' ? t('diffPush') : t('diffCreatePr')
+  return label.replace(/[….]+$/u, '')
 }
 
 export type RepositoryActionAvailability = Readonly<Record<RepositoryActionKind, boolean>>
 
 export function repositoryActionAvailability(
-  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest'> | undefined,
+  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest' | 'upstream' | 'ahead'> | undefined,
 ): RepositoryActionAvailability {
-  const committable = repository?.status === 'ready' && repository.dirty === true && repository.detached !== true
+  const ready = repository?.status === 'ready' && repository.detached !== true
+  const committable = ready && repository.dirty === true
   const hasRemote = repository?.remote !== undefined
   const hasOpenPullRequest = repository?.pullRequest?.state === 'open'
+  const pushable = ready && hasRemote && (repository.upstream === false || (repository.ahead ?? 0) > 0)
   return {
     'commit': committable,
     'commit-push': committable && hasRemote,
-    'create-pr': committable && hasRemote && !hasOpenPullRequest,
+    'push': pushable,
+    'create-pr': (committable || pushable) && hasRemote && !hasOpenPullRequest,
   }
 }
 
@@ -179,7 +233,27 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const [prBody, setPrBody] = useState('')
   const [baseBranch, setBaseBranch] = useState('')
   const [draft, setDraft] = useState(true)
+  const [commentEditor, setCommentEditor] = useState<{ path: string } & ReviewCommentAnchor>()
+  const [commentDraft, setCommentDraft] = useState('')
+  const [commentBusy, setCommentBusy] = useState(false)
+  const [commentError, setCommentError] = useState<string>()
+  const [localComments, setLocalComments] = useState<readonly ReviewComment[]>([])
+  const [removedCommentIds, setRemovedCommentIds] = useState<ReadonlySet<string>>(() => new Set())
   const actionController = useRef<AbortController>()
+  // The code container is max-content wide for horizontal scrolling; comment
+  // editors size against the visible width published through this variable.
+  const diffViewportObserver = useRef<ResizeObserver>()
+  const diffBodyRef = useCallback((element: HTMLDivElement | null) => {
+    diffViewportObserver.current?.disconnect()
+    diffViewportObserver.current = undefined
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    const update = (): void => element.style.setProperty('--dsh-claude-diff-viewport', `${element.clientWidth}px`)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    diffViewportObserver.current = observer
+  }, [])
+  useEffect(() => () => diffViewportObserver.current?.disconnect(), [])
   const closeDialog = useCallback(() => {
     if (dialog?.submitting === true) return
     actionController.current?.abort()
@@ -199,6 +273,10 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     actionController.current = controller
     void loadRepositoryActionPreview(sessionId, controller.signal).then(async preview => {
       setIncludeUnstaged(preview.hasUnstaged || preview.hasUntracked)
+      if (action === 'push') {
+        setDialog({ action, preview, loading: false, submitting: false })
+        return
+      }
       setDialog({ action, preview, loading: true, submitting: false })
       const generated = await generateCommitMessage(sessionId, preview.fingerprint, controller.signal)
       setMessage(generated)
@@ -210,7 +288,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     })
   }, [sessionId, t])
   const confirm = useCallback(async () => {
-    if (dialog?.preview === undefined || message.trim().length === 0) return
+    if (dialog?.preview === undefined || (dialog.action !== 'push' && message.trim().length === 0)) return
     const { error: _error, ...pending } = dialog
     setDialog({ ...pending, submitting: true })
     try {
@@ -227,6 +305,65 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       setDialog({ ...dialog, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed'), ...(completedCommit === undefined ? {} : { commit: completedCommit }) })
     }
   }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, sessionId, t])
+  const openCommentEditor = useCallback((path: string, anchor: ReviewCommentAnchor) => {
+    setCommentEditor({ path, ...anchor })
+    setCommentDraft('')
+    setCommentError(undefined)
+  }, [])
+  const closeCommentEditor = useCallback(() => {
+    setCommentEditor(undefined)
+    setCommentDraft('')
+    setCommentError(undefined)
+  }, [])
+  const submitComment = useCallback(async () => {
+    if (commentEditor === undefined || commentDraft.trim().length === 0 || commentBusy) return
+    setCommentBusy(true)
+    setCommentError(undefined)
+    try {
+      const created = await addReviewComment(sessionId, {
+        path: commentEditor.path,
+        line: commentEditor.line,
+        side: commentEditor.side,
+        text: commentDraft.trim(),
+      })
+      setLocalComments(list => [...list, created])
+      closeCommentEditor()
+    } catch (error) {
+      setCommentError(error instanceof Error ? error.message : t('reviewCommentFailed'))
+    } finally {
+      setCommentBusy(false)
+    }
+  }, [closeCommentEditor, commentBusy, commentDraft, commentEditor, sessionId, t])
+  const removeComment = useCallback((id: string) => {
+    setRemovedCommentIds(previous => new Set([...previous, id]))
+    void removeReviewComment(sessionId, id).catch(() => {
+      setRemovedCommentIds(previous => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+    })
+  }, [sessionId])
+  // Locally added comments only bridge the polling gap: once the projection
+  // reports an id, the server copy is authoritative — dropping the local copy
+  // lets removals made elsewhere (e.g. the composer chips) disappear here too.
+  useEffect(() => {
+    const projected = new Set((projection.reviewComments ?? []).map(comment => comment.id))
+    setLocalComments(list => (list.some(comment => projected.has(comment.id))
+      ? list.filter(comment => !projected.has(comment.id))
+      : list))
+    setRemovedCommentIds(previous => {
+      const kept = [...previous].filter(id => projected.has(id))
+      return kept.length === previous.size ? previous : new Set(kept)
+    })
+  }, [projection.reviewComments])
+  const reviewComments = useMemo(() => {
+    const merged = new Map<string, ReviewComment>()
+    for (const comment of projection.reviewComments ?? []) merged.set(comment.id, comment)
+    for (const comment of localComments) merged.set(comment.id, comment)
+    for (const id of removedCommentIds) merged.delete(id)
+    return [...merged.values()]
+  }, [localComments, projection.reviewComments, removedCommentIds])
   useEffect(() => () => actionController.current?.abort(), [])
   useEffect(() => {
     if (!projection.owned || repository?.status !== 'ready' || diff === undefined) closeDetails()
@@ -234,16 +371,35 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   if (!projection.owned || repository?.status !== 'ready' || diff === undefined) return null
   const branch = repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch')
   const availability = repositoryActionAvailability(repository)
-  const anyActionAvailable = availability['commit'] || availability['commit-push'] || availability['create-pr']
+  const anyActionAvailable = availability['commit'] || availability['commit-push'] || availability['push'] || availability['create-pr']
   const menuItems: readonly MenuEntry[] = [
     { id: 'commit', label: t('diffCommit'), disabled: !availability['commit'] },
     { id: 'commit-push', label: t('diffCommitPush'), disabled: !availability['commit-push'] },
+    { id: 'push', label: t('diffPush'), disabled: !availability['push'] },
     { id: 'create-pr', label: t('diffCreatePr'), disabled: !availability['create-pr'] },
   ]
   const completed = dialog?.commit !== undefined && dialog.error === undefined
+  const commentEditorNode: ReactNode = commentEditor === undefined ? null : (
+    <div style={styles.diffCommentBlock}>
+      <textarea
+        className={styles.diffCommentTextareaClass}
+        style={styles.diffCommentTextarea}
+        value={commentDraft}
+        maxLength={2000}
+        placeholder={t('reviewCommentPlaceholder')}
+        autoFocus
+        onChange={event => setCommentDraft(event.currentTarget.value)}
+      />
+      {commentError !== undefined ? <p style={styles.diffCommentError}>{commentError}</p> : null}
+      <div style={styles.diffCommentActions}>
+        <button type="button" style={styles.diffCommentActionButton} onClick={closeCommentEditor}>{t('reviewCommentCancel')}</button>
+        <button type="button" style={{ ...styles.diffCommentActionButton, ...styles.diffCommentSubmitButton }} disabled={commentBusy || commentDraft.trim().length === 0} onClick={() => void submitComment()}>{t('reviewCommentSubmit')}</button>
+      </div>
+    </div>
+  )
   return (
     <>
-      <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}{styles.panelIconButtonCss}</style>
+      <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
       <div style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
           <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span>{t('diffWorkingTree')}</span></div>
@@ -263,32 +419,53 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
           <span style={styles.diffAdd}>+{diff.additions}</span>
           <span style={styles.diffDelete}>−{diff.deletions}</span>
         </div>
-        <div style={styles.diffBody}>
+        <div ref={diffBodyRef} style={styles.diffBody}>
           {diff.truncated ? <p style={styles.diffNotice}>{t('diffTruncated')}</p> : null}
           {files.length === 0 ? <p style={styles.diffEmpty}>{t('diffEmpty')}</p> : files.map((file, index) => (
-            <DiffFileSection key={file.path} file={file} initiallyOpen={index === 0} />
+            <DiffFileSection
+              key={file.path}
+              file={file}
+              initiallyOpen={index === 0}
+              t={t}
+              comments={reviewComments.filter(comment => comment.path === file.path)}
+              editorAnchor={commentEditor !== undefined && commentEditor.path === file.path ? commentEditor : undefined}
+              editorNode={commentEditorNode}
+              onOpenEditor={anchor => openCommentEditor(file.path, anchor)}
+              onRemoveComment={removeComment}
+            />
           ))}
         </div>
       </div>
       <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={dialog === undefined ? t('diffCommit') : actionLabel(dialog.action, t)} closeLabel={t('diffCancel')} description={t('diffConfirmDescription')} footer={
         <div style={styles.diffModalFooter}>
           <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{completed ? t('diffDone') : t('diffCancel')}</button>
-          {!completed ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.loading === true || dialog?.submitting === true || dialog?.preview === undefined || message.trim() === ''} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+          {!completed ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.loading === true || dialog?.submitting === true || dialog?.preview === undefined || (dialog.action !== 'push' && message.trim() === '')} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
         </div>
       }>
         {dialog?.loading === true ? <p style={styles.diffModalStatus}>{t('diffGeneratingMessage')}</p> : null}
         {dialog?.preview !== undefined ? <div style={styles.diffModalBody}>
-          <div style={styles.diffModalMeta}><strong style={styles.diffModalMetaText} title={dialog.preview.branch}>{dialog.preview.branch}</strong><span style={styles.diffModalFileState}>{t('diffFiles', { count: dialog.preview.files.length })}</span></div>
-          <div style={styles.diffModalFiles}>{dialog.preview.files.map(file => <div key={file.path} style={styles.diffModalFile}><span style={styles.diffModalFilePath} title={file.path}>{file.path}</span><span style={styles.diffModalFileState}>{file.untracked ? t('diffUntracked') : file.staged && file.unstaged ? t('diffStagedUnstaged') : file.staged ? t('diffStaged') : t('diffUnstaged')}</span></div>)}</div>
-          <label style={styles.diffModalCheckbox}><input type="checkbox" checked={includeUnstaged} disabled={!dialog.preview.hasUnstaged && !dialog.preview.hasUntracked} onChange={event => setIncludeUnstaged(event.currentTarget.checked)} />{t('diffIncludeUnstaged')}</label>
-          <label style={styles.diffModalField}>{t('diffCommitMessage')}<textarea style={styles.diffModalTextarea} value={message} maxLength={512} onChange={event => setMessage(event.currentTarget.value)} /></label>
+          <div style={styles.diffModalMeta}><strong style={styles.diffModalMetaText} title={dialog.preview.branch}>{dialog.action === 'push'
+            ? `${dialog.preview.branch} → ${dialog.preview.upstream ?? `origin/${dialog.preview.branch}`}`
+            : dialog.preview.branch}</strong><span style={styles.diffModalFileState}>{dialog.action === 'push'
+            ? t('diffPushAhead', { count: dialog.preview.unpushedTruncated ? `${dialog.preview.unpushedCommits.length}+` : dialog.preview.unpushedCommits.length })
+            : t('diffFiles', { count: dialog.preview.files.length })}</span></div>
+          {dialog.action === 'push' ? <>
+            <div style={styles.diffModalFiles}>{dialog.preview.unpushedCommits.map(commit => <div key={commit.hash} style={styles.diffModalFile}><span style={styles.diffModalFilePath} title={commit.subject}>{commit.subject}</span><span style={styles.diffModalFileState}>{commit.hash.slice(0, 8)}</span></div>)}</div>
+            <p style={styles.diffModalStatus}>{t('diffPushDescription')}</p>
+          </> : <>
+            <div style={styles.diffModalFiles}>{dialog.preview.files.map(file => <div key={file.path} style={styles.diffModalFile}><span style={styles.diffModalFilePath} title={file.path}>{file.path}</span><span style={styles.diffModalFileState}>{file.untracked ? t('diffUntracked') : file.staged && file.unstaged ? t('diffStagedUnstaged') : file.staged ? t('diffStaged') : t('diffUnstaged')}</span></div>)}</div>
+            <label style={styles.diffModalCheckbox}><input type="checkbox" checked={includeUnstaged} disabled={!dialog.preview.hasUnstaged && !dialog.preview.hasUntracked} onChange={event => setIncludeUnstaged(event.currentTarget.checked)} />{t('diffIncludeUnstaged')}</label>
+            <label style={styles.diffModalField}>{t('diffCommitMessage')}<textarea style={styles.diffModalTextarea} value={message} maxLength={512} onChange={event => setMessage(event.currentTarget.value)} /></label>
+          </>}
           {dialog.action === 'create-pr' ? <>
             <label style={styles.diffModalField}>{t('diffPrTitle')}<input style={styles.diffModalTextInput} value={prTitle} maxLength={256} onChange={event => setPrTitle(event.currentTarget.value)} /></label>
             <label style={styles.diffModalField}>{t('diffPrBase')}<input style={styles.diffModalTextInput} value={baseBranch} maxLength={512} placeholder={t('diffPrBaseDefault')} onChange={event => setBaseBranch(event.currentTarget.value)} /></label>
             <label style={styles.diffModalField}>{t('diffPrDescription')}<textarea style={{ ...styles.diffModalTextarea, minHeight: 240 }} value={prBody} maxLength={8192} onChange={event => setPrBody(event.currentTarget.value)} /></label>
             <label style={styles.diffModalCheckbox}><input type="checkbox" checked={draft} onChange={event => setDraft(event.currentTarget.checked)} />{t('diffPrDraft')}</label>
           </> : null}
-          {dialog.commit !== undefined ? <p style={styles.diffModalSuccess}>{t('diffCommitCompleted', { commit: dialog.commit.slice(0, 8) })}</p> : null}
+          {dialog.commit !== undefined ? <p style={styles.diffModalSuccess}>{dialog.action === 'push'
+            ? t('diffPushCompleted', { commit: dialog.commit.slice(0, 8) })
+            : t('diffCommitCompleted', { commit: dialog.commit.slice(0, 8) })}</p> : null}
           {dialog.pullRequestUrl !== undefined ? <a href={dialog.pullRequestUrl} target="_blank" rel="noopener noreferrer">{t('diffOpenPr')}</a> : null}
         </div> : null}
         {dialog?.error !== undefined ? <p role="alert" style={styles.diffModalError}>{dialog.error}{dialog.commit === undefined ? '' : ` ${t('diffCommitPreserved', { commit: dialog.commit.slice(0, 8) })}`}</p> : null}

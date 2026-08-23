@@ -41,12 +41,22 @@ describe('repository status parsing', () => {
       branch: 'feature/status',
       detached: false,
       dirty: true,
+      upstream: false,
     })
-    expect(parseGitStatus('# branch.head (detached)\n')).toEqual({ detached: true, dirty: false })
+    expect(parseGitStatus('# branch.head (detached)\n')).toEqual({ detached: true, dirty: false, upstream: false })
     expect(parseGitStatus('# branch.head main\n? untracked.txt\n')).toEqual({
       branch: 'main',
       detached: false,
       dirty: true,
+      upstream: false,
+    })
+    expect(parseGitStatus('# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n')).toEqual({
+      branch: 'main',
+      detached: false,
+      dirty: false,
+      upstream: true,
+      ahead: 2,
+      behind: 1,
     })
   })
 
@@ -125,6 +135,7 @@ describe('repository status service', () => {
       detached: false,
       worktree: true,
       dirty: false,
+      upstream: false,
       remote: 'owner/repo',
       pullRequest: {
         number: 12,

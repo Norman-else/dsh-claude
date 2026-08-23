@@ -5,6 +5,7 @@ import { json, trustedRequest } from './http.ts'
 import type { ClaudeSidecarRepository } from './sidecar.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
 import type { RepositoryStatus } from './repository-status.ts'
+import type { ReviewComment } from './review-comments.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
 
@@ -30,6 +31,7 @@ export function registerClaudeProjectionRoute(
   ownsSession: (sessionId: string) => boolean,
   commandsForSession: (sessionId: string) => readonly ClaudeCommandView[] = () => [],
   repositoryForSession: (sessionId: string) => Promise<RepositoryStatus | undefined> = async () => undefined,
+  reviewCommentsForSession: (sessionId: string) => readonly ReviewComment[] = () => [],
 ): void {
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -52,6 +54,7 @@ export function registerClaudeProjectionRoute(
           ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
           ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
           ...(repository === undefined ? {} : { repository }),
+          reviewComments: owned ? reviewCommentsForSession(sessionId) : [],
         })
       } catch {
         return json(res, 500, { error: 'projection unavailable' })

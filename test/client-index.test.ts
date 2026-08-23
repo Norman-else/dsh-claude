@@ -26,7 +26,7 @@ describe('Claude client slot registration', () => {
     resizeLifecycle.dispose.mockClear()
   })
 
-  it('keeps repository status ahead of DSH terminal queue dock', () => {
+  it('stacks the dock as comments, queue dock, then repository status', () => {
     const registrations: Array<{ readonly name: string; readonly id?: string; readonly order?: number }> = []
     const dispose = (): void => {}
     const ctx = {
@@ -60,9 +60,14 @@ describe('Claude client slot registration', () => {
 
     apply(ctx as never)
 
+    const reviewComments = registrations.find(entry => entry.id === 'claude-review-comments')
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
+    expect(reviewComments).toBeDefined()
     expect(repositoryStatus).toBeDefined()
-    expect(repositoryStatus?.order).toBeLessThan(20)
+    // DSH's QueueDock owns order 20: comments sit above it, the status below.
+    expect(reviewComments?.order).toBeLessThan(20)
+    expect(repositoryStatus?.order).toBeGreaterThan(20)
+    expect(repositoryStatus?.order).toBeLessThan(21)
   })
 
   it('registers the maximized diff as an identified shell overlay', () => {

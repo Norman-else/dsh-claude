@@ -47,13 +47,19 @@ function preview(value: unknown): RepositoryActionPreview {
   if (input === undefined || typeof input.root !== 'string' || typeof input.branch !== 'string'
     || typeof input.head !== 'string' || typeof input.fingerprint !== 'string' || !Array.isArray(input.files)
     || typeof input.patch !== 'string' || typeof input.truncated !== 'boolean'
-    || typeof input.hasStaged !== 'boolean' || typeof input.hasUnstaged !== 'boolean' || typeof input.hasUntracked !== 'boolean') {
+    || typeof input.hasStaged !== 'boolean' || typeof input.hasUnstaged !== 'boolean' || typeof input.hasUntracked !== 'boolean'
+    || (input.upstream !== undefined && typeof input.upstream !== 'string')
+    || !Array.isArray(input.unpushedCommits) || typeof input.unpushedTruncated !== 'boolean') {
     throw new Error('Invalid repository action preview.')
   }
   for (const file of input.files) {
     const item = record(file)
     if (item === undefined || typeof item.path !== 'string' || typeof item.staged !== 'boolean'
       || typeof item.unstaged !== 'boolean' || typeof item.untracked !== 'boolean') throw new Error('Invalid repository action file.')
+  }
+  for (const commit of input.unpushedCommits) {
+    const item = record(commit)
+    if (item === undefined || typeof item.hash !== 'string' || typeof item.subject !== 'string') throw new Error('Invalid repository action commit.')
   }
   return input as unknown as RepositoryActionPreview
 }

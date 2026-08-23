@@ -22,6 +22,8 @@ import { RepositorySetupService } from './repository-setup.ts'
 import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
+import { registerReviewCommentRoute } from './review-comment-routes.ts'
+import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
@@ -202,6 +204,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
   const repositorySetup = new RepositorySetupService(ctx.subprocess, { branchPrefix: () => readWorktreeBranchPrefix() })
+  const reviewComments = new ReviewCommentStore()
   const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
   const supervisor = new ClaudeSupervisor({
     runtime: ctx.subprocess,
@@ -222,7 +225,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx)),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId)),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
@@ -298,9 +301,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     resolutionError = error
   }
   ctx.on('agent/disposed', async ({ agent }) => {
+    reviewComments.disposeSession(agent.id as string)
     await supervisor.disposeSession(agent.id as string)
     await repositorySetup.cleanupSession(agent.id as string)
   })
+  ctx.effect(() => () => reviewComments.dispose(), 'dsh-claude: review comments store')
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.effect(() => () => repositoryStatus.dispose(), 'dsh-claude: repository status cache')
   ctx.inject(['webServer'], webCtx => {
@@ -319,14 +324,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       return agent.session.header.cwd
     })
-    registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
+    const ownsClaudeSession = (sessionId: string): boolean => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
-    }, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
+    }
+    registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
+    registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const cwd = agent.session.header.cwd
       return cwd === undefined ? undefined : repositoryStatus.inspect(cwd)
-    })
+    }, sessionId => reviewComments.list(sessionId))
   })
 }

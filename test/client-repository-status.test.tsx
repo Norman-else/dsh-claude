@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudeDiffPanel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
+import { ClaudeDiffPanel, actionLabel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
@@ -15,6 +15,9 @@ const repository = {
   detached: false,
   worktree: true,
   dirty: true,
+  upstream: true,
+  ahead: 0,
+  behind: 0,
   remote: 'Mercaso/premier-store-os',
   pullRequest: {
     number: 12,
@@ -171,6 +174,26 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('rel="noopener noreferrer"')
   })
 
+  it('keeps the diff entry visible while commits are waiting to be pushed', () => {
+    const render = (overrides: Partial<typeof repository>): string => renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook({ ...projection, repository: { ...repository, ...overrides } })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    const committed = render({ dirty: false, ahead: 2, diff: { additions: 0, deletions: 0, files: 0, truncated: false } })
+    expect(committed).toContain('↑2')
+    expect(committed).toContain('aria-label="View working tree diff"')
+    expect(committed).not.toContain('+0')
+    const pushed = render({ dirty: false, ahead: 0, diff: { additions: 0, deletions: 0, files: 0, truncated: false } })
+    expect(pushed).not.toContain('↑')
+    expect(pushed).not.toContain('aria-label="View working tree diff"')
+    const dirtyAndAhead = render({ ahead: 2 })
+    expect(dirtyAndAhead).toContain('+2')
+    expect(dirtyAndAhead).toContain('↑2')
+  })
+
   it('renders a merged PR as a purple terminal state instead of active checks', () => {
     const mergedRepository = {
       ...repository,
@@ -262,26 +285,52 @@ describe('Claude repository status UI', () => {
     expect(panelMarkup).not.toContain('github.com/Mercaso/premier-store-os/pull/12')
   })
 
+  it('strips the menu ellipsis from dialog titles', () => {
+    const copyT = ((key: string) => ({ diffCommitPush: 'Commit & Push…', diffCreatePr: 'Create PR…', diffCommit: 'Commit', diffPush: 'Push' }[key] ?? key)) as never
+    expect(actionLabel('commit-push', copyT)).toBe('Commit & Push')
+    expect(actionLabel('create-pr', copyT)).toBe('Create PR')
+    expect(actionLabel('commit', copyT)).toBe('Commit')
+    expect(actionLabel('push', copyT)).toBe('Push')
+  })
+
   it('gates commit actions on the session repository state', () => {
     expect(repositoryActionAvailability(repository)).toEqual({
       'commit': true,
       'commit-push': true,
+      'push': false,
       'create-pr': false,
     })
     expect(repositoryActionAvailability({
       ...repository,
       pullRequest: { ...repository.pullRequest, state: 'merged' as const },
-    })).toEqual({ 'commit': true, 'commit-push': true, 'create-pr': true })
+    })).toEqual({ 'commit': true, 'commit-push': true, 'push': false, 'create-pr': true })
     const { pullRequest: _pullRequest, remote: _remote, ...localOnly } = repository
     expect(repositoryActionAvailability(localOnly)).toEqual({
       'commit': true,
       'commit-push': false,
+      'push': false,
       'create-pr': false,
     })
-    const none = { 'commit': false, 'commit-push': false, 'create-pr': false }
+    const none = { 'commit': false, 'commit-push': false, 'push': false, 'create-pr': false }
     expect(repositoryActionAvailability({ ...repository, dirty: false })).toEqual(none)
     expect(repositoryActionAvailability({ ...repository, detached: true })).toEqual(none)
     expect(repositoryActionAvailability(undefined)).toEqual(none)
+  })
+
+  it('enables Push for unpushed commits even with a clean working tree', () => {
+    const committed = { ...repository, dirty: false, pullRequest: { ...repository.pullRequest, state: 'merged' as const } }
+    expect(repositoryActionAvailability({ ...committed, ahead: 2 })).toEqual({
+      'commit': false,
+      'commit-push': false,
+      'push': true,
+      'create-pr': true,
+    })
+    const { ahead: _ahead, ...neverPushed } = { ...committed, upstream: false }
+    expect(repositoryActionAvailability(neverPushed)).toMatchObject({
+      'push': true,
+      'create-pr': true,
+    })
+    expect(repositoryActionAvailability({ ...repository, ahead: 2 })).toMatchObject({ 'push': true, 'create-pr': false })
   })
 
   it('disables the Commit button when the working tree has nothing to commit', () => {
@@ -387,7 +436,8 @@ describe('Claude repository status UI', () => {
 
     expect(markup).toContain('data-dsh-claude-repository-modal-styles="true"')
     expect(modalCss).toContain('width: min(760px, calc(100vw - 48px))')
-    expect(modalCss).toContain('height: min(680px, calc(100vh - 48px))')
+    expect(modalCss).toContain('max-height: min(680px, calc(100vh - 48px))')
+    expect(modalCss).not.toMatch(/[^-]height: min\(680px/u)
     expect(modalCss).toContain('box-sizing: border-box')
     expect(modalCss).toContain('overflow-y: auto')
     expect(modalCss).toMatch(/> div:first-child \{\s*position: sticky;\s*top: 0;/u)

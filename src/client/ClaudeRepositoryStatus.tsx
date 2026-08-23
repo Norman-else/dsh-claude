@@ -158,6 +158,9 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const pullRequest = repository.pullRequest
   const merged = pullRequest?.state === 'merged'
   const mergedAge = merged ? relativeAge(pullRequest.mergedAt) : undefined
+  const aheadCount = repository.ahead ?? 0
+  const pushable = repository.remote !== undefined && repository.detached !== true && (aheadCount > 0 || repository.upstream === false)
+  const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame}>
@@ -177,10 +180,13 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
         <span style={styles.repositoryBranch}>{branch}</span>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
         <span style={styles.repositoryStatusItems}>
-          {repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0) ? (
+          {hasDiff || pushable ? (
             <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
-              <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
-              <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
+              {hasDiff && repository.diff !== undefined ? <>
+                <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
+                <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
+              </> : null}
+              {pushable ? <span style={merged ? styles.diffAheadMuted : styles.diffAhead}>↑{aheadCount > 0 ? aheadCount : ''}</span> : null}
             </button>
           ) : null}
           {pullRequest === undefined ? null : merged ? (

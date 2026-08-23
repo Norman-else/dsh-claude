@@ -13,6 +13,7 @@ import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
+import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
 import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
@@ -223,10 +224,31 @@ export function apply(ctx: ClientContext): void {
   }, ClaudeActivityTail))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
+    id: 'claude-review-comments',
+    // Topmost dock row: pending comments render above DSH's QueueDock (20)
+    // and the repository status readout (20.5).
+    order: 18,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeReviewCommentsInjected => ({
+      t,
+      sessionId,
+      ...(sessions === undefined || conversation === undefined ? {} : {
+        submitWith: (fallbackDraft: string) => {
+          const scope = sessions.scope(sessionId as SessionId)
+          if (scope === undefined) return
+          const input = conversation.input.for(scope)
+          if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
+          input.submit()
+        },
+      }),
+    }),
+  }, ClaudeReviewComments))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock',
     id: 'claude-repository-status',
-    // DSH's QueueDock owns terminal order 20 and uses a negative bottom
-    // margin to join the composer card. Keep this readout ahead of it.
-    order: 19,
+    // Below DSH's QueueDock (20) and above the hero controls (21), so the
+    // dock stacks comments (18) → queue (20) → repository readout.
+    order: 20.5,
     locale: namespace,
     inject: (sessionId: string): ClaudeRepositoryStatusInjected => ({
       t,

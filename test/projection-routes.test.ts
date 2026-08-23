@@ -96,7 +96,7 @@ describe('Claude sidecar projection route', () => {
     const res = response()
     await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/unknown`), res)
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ schemaVersion: 1, revision: 0, owned: false, commands: [], activities: [] })
+    expect(JSON.parse(res.body)).toEqual({ schemaVersion: 1, revision: 0, owned: false, commands: [], activities: [], reviewComments: [] })
   })
 
   it('rejects malformed, forbidden, and non-GET requests', async () => {

@@ -66,6 +66,22 @@ describe('Claude client sidecar projection', () => {
     })).toThrow()
   })
 
+  it('validates pending review comments', () => {
+    const comment = { id: 'c1', path: 'src/a.ts', line: 12, side: 'new', text: 'Rename this.' }
+    expect(parseClaudeClientProjection({ ...valid, reviewComments: [comment] }).reviewComments).toEqual([comment])
+    expect(parseClaudeClientProjection({ ...valid, reviewComments: [] }).reviewComments).toEqual([])
+    for (const bad of [
+      [{ ...comment, id: '' }],
+      [{ ...comment, path: '' }],
+      [{ ...comment, line: -1 }],
+      [{ ...comment, side: 'left' }],
+      [{ ...comment, text: 'x'.repeat(2_001) }],
+      'not-an-array',
+    ]) {
+      expect(() => parseClaudeClientProjection({ ...valid, reviewComments: bad })).toThrow()
+    }
+  })
+
   it('loads immediately, polls while subscribed, and stops after unsubscribe', async () => {
     vi.useFakeTimers()
     let revision = 0

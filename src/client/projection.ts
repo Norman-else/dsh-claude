@@ -2,6 +2,7 @@ import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-clie
 import type { ClaudeActivityEvent, ClaudeContextUsageEvent, ClaudeTasksEvent } from '../events.ts'
 import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
+import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
 
 export interface ClaudeClientProjection {
@@ -13,6 +14,7 @@ export interface ClaudeClientProjection {
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
   readonly repository?: RepositoryStatus
+  readonly reviewComments?: readonly ReviewComment[]
 }
 
 export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
@@ -28,6 +30,8 @@ const MAX_ACTIVITIES = 10_000
 const MAX_COMMANDS = 2_000
 const MAX_REPOSITORY_TEXT_CHARS = 1_024
 const MAX_DIFF_CHARS = 256 * 1024
+const MAX_REVIEW_COMMENTS = 50
+const MAX_REVIEW_COMMENT_CHARS = 2_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -54,7 +58,10 @@ function validateRepository(value: unknown): value is RepositoryStatus {
     || !optionalBoundedString(repository.remote)
     || (repository.detached !== undefined && typeof repository.detached !== 'boolean')
     || (repository.worktree !== undefined && typeof repository.worktree !== 'boolean')
-    || (repository.dirty !== undefined && typeof repository.dirty !== 'boolean')) return false
+    || (repository.dirty !== undefined && typeof repository.dirty !== 'boolean')
+    || (repository.upstream !== undefined && typeof repository.upstream !== 'boolean')
+    || (repository.ahead !== undefined && !nonNegativeInteger(repository.ahead))
+    || (repository.behind !== undefined && !nonNegativeInteger(repository.behind))) return false
   if (repository.diff !== undefined) {
     const diff = record(repository.diff)
     if (diff === undefined
@@ -128,6 +135,22 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
   if (input.repository !== undefined && !validateRepository(input.repository)) {
     throw new Error('invalid Claude repository projection')
   }
+  if (input.reviewComments !== undefined) {
+    if (!Array.isArray(input.reviewComments) || input.reviewComments.length > MAX_REVIEW_COMMENTS) {
+      throw new Error('invalid Claude review comment projection')
+    }
+    for (const item of input.reviewComments) {
+      const comment = record(item)
+      if (comment === undefined
+        || typeof comment.id !== 'string' || comment.id.length === 0 || comment.id.length > 128
+        || typeof comment.path !== 'string' || comment.path.length === 0 || comment.path.length > MAX_REPOSITORY_TEXT_CHARS
+        || !nonNegativeInteger(comment.line)
+        || (comment.side !== 'old' && comment.side !== 'new')
+        || typeof comment.text !== 'string' || comment.text.length > MAX_REVIEW_COMMENT_CHARS) {
+        throw new Error('invalid Claude review comment projection')
+      }
+    }
+  }
   return input as unknown as ClaudeClientProjection
 }
 
@@ -164,7 +187,8 @@ export function createClaudeProjectionSource(
       const next = parseClaudeClientProjection(await response.json())
       const commandCatalogChanged = JSON.stringify(next.commands) !== JSON.stringify(snapshot.commands)
       const repositoryChanged = JSON.stringify(next.repository) !== JSON.stringify(snapshot.repository)
-      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged || repositoryChanged) {
+      const reviewCommentsChanged = JSON.stringify(next.reviewComments) !== JSON.stringify(snapshot.reviewComments)
+      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged || repositoryChanged || reviewCommentsChanged) {
         snapshot = next
         for (const listener of [...listeners]) listener()
       }

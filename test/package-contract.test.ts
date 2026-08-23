@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import * as buildConfigModule from '../tsdown.config.ts'
 
 const root = join(import.meta.dirname, '..')
 
@@ -57,5 +58,20 @@ describe('published package contract', () => {
     expect(patch).not.toMatch(/^\s+name: (?:dsh-claude|@\S+)\s*$/mu)
     expect(buildConfig).toContain(`id: \"${packageJson.name}\"`)
     expect(buildConfig).not.toContain('id: \"dsh-claude\"')
+  })
+
+  it('converts aliased ESM imports into valid ModuleLoader require bindings', () => {
+    const wrapDshClientModule = Reflect.get(buildConfigModule, 'wrapDshClientModule') as ((code: string) => string) | undefined
+    const source = [
+      'import { Fragment as Fragment$1, jsx, jsxs } from "react/jsx-runtime";',
+      'const name = "dsh-claude-client";',
+      'export { name };',
+    ].join('\n')
+
+    expect(wrapDshClientModule).toBeTypeOf('function')
+    const wrapped = wrapDshClientModule?.(source)
+    expect(wrapped).toContain('window.__ModuleLoader__.load')
+    expect(wrapped).toContain('var { Fragment: Fragment$1, jsx, jsxs } = require("react/jsx-runtime");')
+    expect(wrapped).not.toContain('var { Fragment as Fragment$1')
   })
 })
