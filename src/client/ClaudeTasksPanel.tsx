@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
+import { isProjectedTask } from './task-projection.ts'
 import { formatTokenCount } from './token-format.ts'
 
 export interface ClaudeTasksPanelInjected {
@@ -27,9 +29,10 @@ const STATUS_LABEL: Record<string, StatusKey> = {
 }
 
 export function visibleTaskGroups(tasks: readonly ClaudeTaskInfo[], dismissedSettledIds: ReadonlySet<string>) {
+  const projected = tasks.filter(isProjectedTask)
   return {
-    running: tasks.filter(task => task.status === 'running'),
-    finished: tasks.filter(task => task.status !== 'running' && !dismissedSettledIds.has(task.taskId)),
+    running: projected.filter(task => task.status === 'running'),
+    finished: projected.filter(task => task.status !== 'running' && !dismissedSettledIds.has(task.taskId)),
   }
 }
 
@@ -38,7 +41,7 @@ export function activitiesForTask(activities: readonly ClaudeActivityEvent[], ta
 }
 
 export function tasksForTurn(tasks: readonly ClaudeTaskInfo[], turn: number) {
-  return tasks.filter(task => task.originTurn === turn)
+  return tasks.filter(task => task.originTurn === turn && isProjectedTask(task))
 }
 
 export interface TurnTaskSummary {
@@ -178,12 +181,13 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
   if (!projection.owned) return null
   return (
     <div style={styles.tasksPanel}>
+      <style data-dsh-claude-panel-icon-styles>{styles.panelIconButtonCss}</style>
       <div style={styles.tasksHeader}>
         <div>
           <span style={styles.tasksHeading}>{t('tasksPanelTurn')}</span>
           <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn })}</span>
         </div>
-        <button type="button" style={styles.tasksClose} aria-label={t('tasksClose')} onClick={closeDetails}>×</button>
+        <button type="button" className={styles.panelIconButtonClass} aria-label={t('tasksClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
       </div>
       <div style={styles.tasksBody}>
         <section aria-label={t('tasksRunning')}>

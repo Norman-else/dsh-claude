@@ -1,10 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudeDiffPanel, numberDiffLines, parseUnifiedDiff } from '../src/client/ClaudeDiffPanel.tsx'
+import { ClaudeDiffPanel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 import type { ClaudeClientProjection } from '../src/client/projection.ts'
+import * as styles from '../src/client/styles.ts'
 
 const repository = {
   status: 'ready' as const,
@@ -239,9 +240,15 @@ describe('Claude repository status UI', () => {
     const panelMarkup = renderToStaticMarkup(<ClaudeDiffPanel
       useClaudeProjection={hook(projection)}
       t={t}
+      sessionId="session"
+      maximized={false}
       closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
     />)
     expect(panelMarkup).toContain('Working tree changes')
+    expect(panelMarkup).toContain('Commit')
+    expect(panelMarkup).toContain('aria-label="diffCommitMenu"')
+    expect(panelMarkup).toContain('aria-label="diffMaximize"')
     expect(panelMarkup).toContain('src/file.ts')
     expect(panelMarkup).toContain('+2')
     expect(panelMarkup).toContain('−1')
@@ -253,5 +260,145 @@ describe('Claude repository status UI', () => {
     expect(panelMarkup).toContain('box-sizing:border-box')
     expect(panelMarkup).toContain('border-radius:12px')
     expect(panelMarkup).not.toContain('github.com/Mercaso/premier-store-os/pull/12')
+  })
+
+  it('gates commit actions on the session repository state', () => {
+    expect(repositoryActionAvailability(repository)).toEqual({
+      'commit': true,
+      'commit-push': true,
+      'create-pr': false,
+    })
+    expect(repositoryActionAvailability({
+      ...repository,
+      pullRequest: { ...repository.pullRequest, state: 'merged' as const },
+    })).toEqual({ 'commit': true, 'commit-push': true, 'create-pr': true })
+    const { pullRequest: _pullRequest, remote: _remote, ...localOnly } = repository
+    expect(repositoryActionAvailability(localOnly)).toEqual({
+      'commit': true,
+      'commit-push': false,
+      'create-pr': false,
+    })
+    const none = { 'commit': false, 'commit-push': false, 'create-pr': false }
+    expect(repositoryActionAvailability({ ...repository, dirty: false })).toEqual(none)
+    expect(repositoryActionAvailability({ ...repository, detached: true })).toEqual(none)
+    expect(repositoryActionAvailability(undefined)).toEqual(none)
+  })
+
+  it('disables the Commit button when the working tree has nothing to commit', () => {
+    const renderPanel = (dirty: boolean): string => renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook({ ...projection, repository: { ...repository, dirty } })}
+      t={t}
+      sessionId="session"
+      maximized={false}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+    const cleanMarkup = renderPanel(false)
+    expect(cleanMarkup).toMatch(/<button[^>]*disabled[^>]*>diffCommit<\/button>/u)
+    expect(cleanMarkup).toMatch(/<button[^>]*disabled[^>]*aria-label="diffCommitMenu"/u)
+    const dirtyMarkup = renderPanel(true)
+    expect(dirtyMarkup).not.toMatch(/<button[^>]*disabled[^>]*>diffCommit<\/button>/u)
+    expect(dirtyMarkup).not.toMatch(/<button[^>]*disabled[^>]*aria-label="diffCommitMenu"/u)
+  })
+
+  it('renders matching interactive icon buttons for maximize and close', () => {
+    const markup = renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook(projection)}
+      t={t}
+      sessionId="session"
+      maximized={false}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+    expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="diffMaximize"[^>]*><svg\b/u)
+    expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="Close diff panel"[^>]*><svg\b/u)
+    expect(markup).not.toContain('>×</button>')
+    expect(styles.panelIconButtonCss).toContain('width: 26px')
+    expect(styles.panelIconButtonCss).toContain('height: 26px')
+    expect(styles.panelIconButtonCss).toContain(':hover')
+    expect(styles.panelIconButtonCss).toContain(':active')
+    expect(styles.panelIconButtonCss).toContain(':focus-visible')
+  })
+
+  it('renders the Commit menu trigger with a vector chevron', () => {
+    const markup = renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook(projection)}
+      t={t}
+      sessionId="session"
+      maximized={false}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+
+    expect(markup).toMatch(/aria-label="diffCommitMenu"[^>]*><svg\b/u)
+    expect(markup).not.toMatch(/aria-label="diffCommitMenu"[^>]*>⌄<\/button>/u)
+  })
+
+  it('renders maximize and restore actions with vector window icons', () => {
+    const renderPanel = (maximized: boolean): string => renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook(projection)}
+      t={t}
+      sessionId="session"
+      maximized={maximized}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+
+    const maximizable = renderPanel(false)
+    expect(maximizable).toMatch(/aria-label="diffMaximize"[^>]*><svg\b/u)
+    expect(maximizable).not.toMatch(/aria-label="diffMaximize"[^>]*>↗<\/button>/u)
+
+    const restorable = renderPanel(true)
+    expect(restorable).toMatch(/aria-label="diffRestore"[^>]*><svg\b/u)
+    expect(restorable).not.toMatch(/aria-label="diffRestore"[^>]*>↙<\/button>/u)
+  })
+
+  it('keeps the repository action form within the DSH modal content column', () => {
+    expect(styles.diffModalBody).toMatchObject({
+      width: '100%',
+      minWidth: 0,
+      boxSizing: 'border-box',
+    })
+    expect(styles.diffModalMetaText).toMatchObject({
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    })
+    expect(styles.diffModalFile).toMatchObject({ minWidth: 0 })
+    expect(styles.diffModalFilePath).toMatchObject({
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    })
+    expect(styles.diffModalFileState).toMatchObject({ flex: 'none' })
+  })
+
+  it('doubles the repository action modal and uses readable form text', () => {
+    const modalCss = Reflect.get(styles, 'diffModalCss') as string | undefined
+    const modalButton = Reflect.get(styles, 'diffModalButton') as Record<string, unknown> | undefined
+    const markup = renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook(projection)}
+      t={t}
+      sessionId="session"
+      maximized={false}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+
+    expect(markup).toContain('data-dsh-claude-repository-modal-styles="true"')
+    expect(modalCss).toContain('width: min(760px, calc(100vw - 48px))')
+    expect(modalCss).toContain('height: min(680px, calc(100vh - 48px))')
+    expect(modalCss).toContain('box-sizing: border-box')
+    expect(modalCss).toContain('overflow-y: auto')
+    expect(modalCss).toMatch(/> div:first-child \{\s*position: sticky;\s*top: 0;/u)
+    expect(modalCss).toContain('font-size: 24px')
+    expect(modalCss).toContain('font-size: 18px')
+    expect(styles.diffModalMeta).toMatchObject({ fontSize: 16, lineHeight: '24px' })
+    expect(styles.diffModalFile).toMatchObject({ fontSize: 15, lineHeight: '22px' })
+    expect(styles.diffModalField).toMatchObject({ fontSize: 16, lineHeight: '24px' })
+    expect(styles.diffModalCheckbox).toMatchObject({ fontSize: 16, lineHeight: '24px' })
+    expect(styles.diffModalTextarea).toMatchObject({ minHeight: 140, fontSize: 16, lineHeight: '24px' })
+    expect(styles.diffModalStatus).toMatchObject({ fontSize: 16, lineHeight: '24px' })
+    expect(modalButton).toMatchObject({ minHeight: 42, fontSize: 16, lineHeight: '24px' })
   })
 })

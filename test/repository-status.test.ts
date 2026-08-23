@@ -36,14 +36,14 @@ function runtime(results: Array<{ stdout: string; exitCode?: number; lossy?: boo
 }
 
 describe('repository status parsing', () => {
-  it('parses branches, detached heads, and tracked changes', () => {
+  it('parses branches, detached heads, and tracked or untracked changes', () => {
     expect(parseGitStatus('# branch.head feature/status\n1 .M N... file.ts\n')).toEqual({
       branch: 'feature/status',
       detached: false,
       dirty: true,
     })
     expect(parseGitStatus('# branch.head (detached)\n')).toEqual({ detached: true, dirty: false })
-    expect(parseGitStatus('# branch.head main\n? ignored-untracked\n')).toEqual({
+    expect(parseGitStatus('# branch.head main\n? untracked.txt\n')).toEqual({
       branch: 'main',
       detached: false,
       dirty: true,
@@ -114,6 +114,7 @@ describe('repository status service', () => {
       { stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' },
       { stdout: '2\t1\tsrc/file.ts\n' },
       { stdout: 'diff --git a/src/file.ts b/src/file.ts\n@@ -1 +1 @@\n-old\n+new\n+more\n' },
+      { stdout: '' },
     ])
     const service = new RepositoryStatusService(fake, 60_000)
     await expect(service.inspect('C:/repo')).resolves.toEqual({
@@ -147,12 +148,15 @@ describe('repository status service', () => {
       },
     })
     await service.inspect('C:/repo')
-    expect(fake.spawn).toHaveBeenCalledTimes(7)
+    expect(fake.spawn).toHaveBeenCalledTimes(8)
     expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({
       argv: ['/bin/git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
       cwd: 'C:/repo',
       stdio: { stdin: 'ignore', stdout: { maxBytes: 65_536 }, stderr: { maxBytes: 65_536 } },
     })
+    expect(fake.spawn.mock.calls[1]?.[0].argv).toEqual([
+      '/bin/git', 'status', '--porcelain=v2', '--branch', '--untracked-files=normal',
+    ])
     expect(fake.spawn.mock.calls[3]?.[0].argv).toEqual([
       '/bin/gh', 'pr', 'view', 'feature/status', '--repo', 'owner/repo', '--json',
       'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName',
@@ -163,6 +167,7 @@ describe('repository status service', () => {
       argv: ['/bin/git', 'diff', '--no-ext-diff', '--no-color', '--unified=3', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--'],
       stdio: { stdout: { maxBytes: 262_144 } },
     })
+    expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'ls-files', '--others', '--exclude-standard', '-z'])
   })
 
   it('keeps the last PR and its diff when a later gh probe is temporarily unavailable', async () => {
@@ -183,6 +188,7 @@ describe('repository status service', () => {
       { stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' },
       { stdout: '2\t1\tsrc/file.ts\n' },
       { stdout: 'diff --git a/src/file.ts b/src/file.ts\n@@ -1 +1 @@\n-old\n+new\n' },
+      { stdout: '' },
       { stdout: '/repo\n/repo/.git\n/repo/.git\n' },
       { stdout: '# branch.head feature/status\n' },
       { stdout: 'https://github.com/owner/repo.git\n' },
@@ -202,6 +208,7 @@ describe('repository status service', () => {
       { stdout: '', exitCode: 2 },
       { stdout: '4\t3\tfile.ts\n' },
       { stdout: 'partial patch', lossy: true },
+      { stdout: '' },
     ])
     await expect(new RepositoryStatusService(fake).inspect('/repo')).resolves.toMatchObject({
       status: 'ready',
@@ -213,8 +220,30 @@ describe('repository status service', () => {
       { stdout: '', exitCode: 2 },
       { stdout: '4\t3\tfile.ts\n' },
       { stdout: 'partial patch', lossy: true },
+      { stdout: '' },
     ])).inspect('/repo')
     expect(result.diff).not.toHaveProperty('patch')
+  })
+
+  it('counts untracked files and their lines in the working tree diff', async () => {
+    const fake = runtime([
+      { stdout: '/repo\n/repo/.git\n/repo/.git\n' },
+      { stdout: '# branch.head main\n1 .M N... file.ts\n? new.ts\n' },
+      { stdout: '', exitCode: 2 },
+      { stdout: '2\t1\tfile.ts\n' },
+      { stdout: 'diff --git a/file.ts b/file.ts\n@@ -1 +1 @@\n-old\n+new\n+more\n' },
+      { stdout: 'new.ts\0empty.ts\0' },
+      { stdout: '3\t0\tnul => new.ts\ndiff --git a/new.ts b/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n', exitCode: 1 },
+      { stdout: '' },
+    ])
+    const status = await new RepositoryStatusService(fake).inspect('/repo')
+    expect(status.diff).toMatchObject({ additions: 5, deletions: 1, files: 3, truncated: false })
+    expect(status.diff?.patch).toContain('diff --git a/file.ts b/file.ts')
+    expect(status.diff?.patch).toContain('diff --git a/new.ts b/new.ts')
+    expect(fake.spawn.mock.calls[5]?.[0].argv).toEqual(['/bin/git', 'ls-files', '--others', '--exclude-standard', '-z'])
+    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual([
+      '/bin/git', 'diff', '--no-ext-diff', '--no-color', '--unified=3', '--numstat', '--patch', '--no-index', '--', '/dev/null', 'new.ts',
+    ])
   })
 
   it('degrades for non-repositories and unavailable executables without leaking errors', async () => {

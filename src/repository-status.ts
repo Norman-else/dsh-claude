@@ -2,6 +2,7 @@ import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subpr
 
 const MAX_OUTPUT_BYTES = 64 * 1024
 const MAX_DIFF_BYTES = 256 * 1024
+const MAX_UNTRACKED_DIFFS = 50
 const GIT_TIMEOUT_MS = 5_000
 const GH_TIMEOUT_MS = 8_000
 const CACHE_TTL_MS = 5_000
@@ -228,6 +229,11 @@ export class RepositoryStatusService {
     return value
   }
 
+  invalidate(cwd: string): void {
+    this.#cache.delete(cwd)
+    this.#lastReady.delete(cwd)
+  }
+
   dispose(): void {
     this.#cache.clear()
     this.#lastReady.clear()
@@ -280,7 +286,7 @@ export class RepositoryStatusService {
       const gitDir = bounded(gitDirValue ?? '')
       const commonDir = bounded(commonDirValue ?? '')
       if (root.length === 0 || gitDir.length === 0 || commonDir.length === 0) return { status: 'unavailable', cwd: safeCwd }
-      const statusResult = await run(this.#runtime, git, ['status', '--porcelain=v2', '--branch', '--untracked-files=no'], cwd, GIT_TIMEOUT_MS)
+      const statusResult = await run(this.#runtime, git, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal'], cwd, GIT_TIMEOUT_MS)
       if (statusResult.exitCode !== 0) return { status: 'unavailable', cwd: safeCwd }
       const status = parseGitStatus(statusResult.stdout)
       const remoteResult = await run(this.#runtime, git, ['remote', 'get-url', 'origin'], cwd, GIT_TIMEOUT_MS)
@@ -327,14 +333,41 @@ export class RepositoryStatusService {
       const summary = parseDiffNumstat(numstat.stdout)
       const patch = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
       if (patch.exitCode !== 0) return { ...summary, truncated: true }
+      const untracked = await this.#untrackedDiff(cwd, git)
+      const combinedPatch = `${patch.stdout}${untracked.patch}`
       return {
-        ...summary,
-        ...(patch.lossy ? {} : { patch: patch.stdout }),
-        truncated: patch.lossy,
+        additions: summary.additions + untracked.additions,
+        deletions: summary.deletions,
+        files: summary.files + untracked.files,
+        ...(patch.lossy ? {} : { patch: combinedPatch.slice(0, MAX_DIFF_BYTES) }),
+        truncated: patch.lossy || untracked.truncated || combinedPatch.length > MAX_DIFF_BYTES,
       }
     } catch {
       return undefined
     }
+  }
+
+  async #untrackedDiff(cwd: string, git: string): Promise<{ additions: number; files: number; patch: string; truncated: boolean }> {
+    const listed = await run(this.#runtime, git, ['ls-files', '--others', '--exclude-standard', '-z'], cwd, GIT_TIMEOUT_MS)
+    if (listed.exitCode !== 0 || listed.lossy) return { additions: 0, files: 0, patch: '', truncated: listed.lossy }
+    const paths = listed.stdout.split('\0').filter(path => path.length > 0)
+    let additions = 0
+    let patch = ''
+    let truncated = paths.length > MAX_UNTRACKED_DIFFS
+    for (const path of paths.slice(0, MAX_UNTRACKED_DIFFS)) {
+      const result = await run(this.#runtime, git, [
+        'diff', '--no-ext-diff', '--no-color', '--unified=3', '--numstat', '--patch', '--no-index', '--', '/dev/null', path,
+      ], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
+      if (result.exitCode !== 0 && result.exitCode !== 1) {
+        truncated = true
+        continue
+      }
+      const start = result.stdout.indexOf('diff --git ')
+      additions += parseDiffNumstat(start >= 0 ? result.stdout.slice(0, start) : result.stdout).additions
+      if (result.lossy) truncated = true
+      else if (start >= 0) patch += result.stdout.slice(start)
+    }
+    return { additions, files: paths.length, patch, truncated }
   }
 
   async #pullRequest(cwd: string, repository: string, branch: string): Promise<RepositoryPullRequestStatus | undefined> {

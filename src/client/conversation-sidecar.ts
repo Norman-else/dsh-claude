@@ -5,6 +5,7 @@ import type {
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo } from '../events.ts'
 import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
+import { isProjectedTaskActivity } from './task-projection.ts'
 
 export interface ClaudeSubcall {
   toolUseId: string
@@ -130,7 +131,7 @@ function activityRows(
   const rows: ClaudeActivityChatData[] = []
   const byId = new Map<string, number>()
   for (const value of activities) {
-    if (!accepts(value)) continue
+    if (!accepts(value) || !isProjectedTaskActivity(value, tasks)) continue
     const existingTaskId = value.toolUseId === undefined ? undefined : `task-${value.toolUseId}`
     const updatesExistingTask = value.kind === 'tool-result'
       && existingTaskId !== undefined
@@ -316,22 +317,33 @@ export function transcriptItemsForStep(
     .slice()
     .sort((left, right) => left.ordinal - right.ordinal)
   const items: ClaudeTranscriptItem[] = []
-  let group: { ordinal: number; tools: ClaudeTranscriptTool[]; byId: Map<string, number> } | undefined
+  let group: {
+    ordinal: number
+    tools: ClaudeTranscriptTool[]
+    byId: Map<string, number>
+    trailingActivities: ClaudeActivityEvent[]
+  } | undefined
   const flushGroup = (): void => {
     if (group === undefined || group.tools.length === 0) return
-    const diffs = group.tools.flatMap(tool => tool.diffs ?? [])
+    const current = group
+    const diffs = current.tools.flatMap(tool => tool.diffs ?? [])
     const additions = diffs.reduce((total, diff) => total + lineCount(diff.newText), 0)
     const deletions = diffs.reduce((total, diff) => total + (diff.oldText === null ? 0 : lineCount(diff.oldText)), 0)
     const files = new Set(diffs.map(diff => diff.path)).size
     items.push({
       kind: 'tools',
-      ordinal: group.ordinal,
-      tools: group.tools,
+      ordinal: current.ordinal,
+      tools: current.tools,
       ...(diffs.length === 0 ? {} : { additions, deletions, files }),
     })
     group = undefined
+    for (const activity of current.trailingActivities) {
+      const row = activityRows([activity], () => true, tasks)[0]
+      if (row !== undefined) items.push({ kind: 'activity', ordinal: activity.ordinal, row })
+    }
   }
   for (const activity of ordered) {
+    if (!isProjectedTaskActivity(activity, tasks)) continue
     if (activity.kind === 'text') {
       flushGroup()
       if (activity.text !== undefined && activity.text.length > 0) {
@@ -340,7 +352,7 @@ export function transcriptItemsForStep(
       continue
     }
     if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {
-      group ??= { ordinal: activity.ordinal, tools: [], byId: new Map() }
+      group ??= { ordinal: activity.ordinal, tools: [], byId: new Map(), trailingActivities: [] }
       group.byId.set(activity.toolUseId, group.tools.length)
       const input = inputRecord(activity.detail)
       group.tools.push({
@@ -389,7 +401,13 @@ export function transcriptItemsForStep(
       continue
     }
     if (!presentable(activity)) continue
-    flushGroup()
+    if (group !== undefined) {
+      // Only the next top-level assistant prose closes a tool group. Keep any
+      // presentable task/warning metadata after that group without splitting
+      // consecutive root tools that occurred between the same two prose spans.
+      group.trailingActivities.push(activity)
+      continue
+    }
     const row = activityRows([activity], () => true, tasks)[0]
     if (row !== undefined) items.push({ kind: 'activity', ordinal: activity.ordinal, row })
   }
@@ -398,35 +416,49 @@ export function transcriptItemsForStep(
 }
 
 interface ClaudeActivityStepState extends ClaudeActivityStepMarker {
+  readonly anchorSeq: number
   readonly assistantSeq?: number
 }
 
-/** Anchor one sidecar-backed activity group immediately before its Claude assistant step. */
+/** Keep one sidecar-backed activity group at the live chat tail, then anchor it
+ * before the native assistant message or at step settlement when none appears. */
 export const claudeActivityStepDefinition: ConversationNodeDefinition<ClaudeActivityStepState> = {
   kind: 'claude-activity-step',
   target: 'chat',
   match(event) {
     if (event.type === 'step/start') return { id: `${event.data.turn}:${event.data.step}`, role: 'start' }
+    if (event.type === 'step/end') return { id: `${event.data.turn}:${event.data.step}`, role: 'update' }
     if (event.type !== 'assistant/message' || event.data.message.source.provider !== CLAUDE_CODE_PROVIDER) return null
     return { id: `${event.data.turn}:${event.data.step}`, role: 'update' }
   },
   start(_context, match) {
     if (match.event.type !== 'step/start') throw new Error('Claude activity step requires step/start')
-    return { turn: match.event.data.turn, step: match.event.data.step }
+    return {
+      turn: match.event.data.turn,
+      step: match.event.data.step,
+      anchorSeq: Number.MAX_SAFE_INTEGER - 1,
+    }
   },
   update(context, match) {
-    if (match.event.type !== 'assistant/message') throw new Error('Claude activity step update requires assistant/message')
-    return { ...context.state, assistantSeq: match.event.seq }
+    if (match.event.type === 'assistant/message') {
+      return { ...context.state, assistantSeq: match.event.seq, anchorSeq: match.event.seq - 0.1 }
+    }
+    if (match.event.type === 'step/end') {
+      return context.state.assistantSeq === undefined
+        ? { ...context.state, anchorSeq: match.event.seq - 0.1 }
+        : context.state
+    }
+    throw new Error('Claude activity step update requires assistant/message or step/end')
   },
   buildViewNode(context): ChatConversationViewNode | null {
     const state = context.state
-    if (state?.assistantSeq === undefined) return null
+    if (state === undefined) return null
     return {
       key: context.key,
       kind: 'claude-activity-step',
       id: context.id,
       target: 'chat',
-      anchorSeq: state.assistantSeq - 0.1,
+      anchorSeq: state.anchorSeq,
       location: context.start?.location ?? { kind: 'unresolved' },
       visibility: 'visible',
       data: { turn: state.turn, step: state.step },

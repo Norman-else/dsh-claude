@@ -293,11 +293,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let completed = false
     try {
       for await (const event of events) {
+        // The sidecar owns the complete visible transcript so prose and Claude
+        // tool groups can share one exact ordinal stream. DSH receives only an
+        // empty assistant completion anchor plus usage/lifecycle metadata.
+        if (event.type === 'text-delta' || event.type === 'segment-complete') continue
         if (event.type === 'usage') {
           pendingUsage = tokenUsage(event.usage)
           continue
         }
-        if (event.type === 'text-delta' || event.type === 'segment-complete') continue
         completed = true
         if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
         yield { type: 'finish', reason: { kind: 'stop' } }

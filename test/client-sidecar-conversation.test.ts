@@ -210,13 +210,14 @@ describe('Claude sidecar conversation projection', () => {
       { turn: 2, step: 1, ordinal: 0, kind: 'text', text: 'I will inspect this.' },
       { turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'read-1', toolName: 'Read', detail: 'file.ts' },
       { turn: 2, step: 1, ordinal: 2, kind: 'tool-result', phase: 'completed', toolUseId: 'read-1', detail: 'contents' },
-      { turn: 2, step: 1, ordinal: 3, kind: 'tool-call', phase: 'started', toolUseId: 'grep-1', toolName: 'Grep', detail: 'symbol' },
-      { turn: 2, step: 1, ordinal: 4, kind: 'tool-result', phase: 'failed', toolUseId: 'grep-1', detail: 'not found', isError: true },
-      { turn: 2, step: 1, ordinal: 5, kind: 'text', text: 'I found the cause.' },
-      { turn: 2, step: 1, ordinal: 6, kind: 'tool-call', phase: 'started', toolUseId: 'bash-1', toolName: 'Bash', detail: 'pnpm test' },
-      { turn: 2, step: 1, ordinal: 7, kind: 'subagent', phase: 'completed', parentToolUseId: 'bash-1', toolUseId: 'nested-1', toolName: 'Read', summary: 'log' },
-      { turn: 2, step: 1, ordinal: 8, kind: 'permission', phase: 'denied', toolUseId: 'bash-1', summary: 'rejected' },
-      { turn: 2, step: 1, ordinal: 9, kind: 'text', text: 'I could not run it.' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'warning', phase: 'updated', title: 'Transient tool warning' },
+      { turn: 2, step: 1, ordinal: 4, kind: 'tool-call', phase: 'started', toolUseId: 'grep-1', toolName: 'Grep', detail: 'symbol' },
+      { turn: 2, step: 1, ordinal: 5, kind: 'tool-result', phase: 'failed', toolUseId: 'grep-1', detail: 'not found', isError: true },
+      { turn: 2, step: 1, ordinal: 6, kind: 'text', text: 'I found the cause.' },
+      { turn: 2, step: 1, ordinal: 7, kind: 'tool-call', phase: 'started', toolUseId: 'bash-1', toolName: 'Bash', detail: 'pnpm test' },
+      { turn: 2, step: 1, ordinal: 8, kind: 'subagent', phase: 'completed', parentToolUseId: 'bash-1', toolUseId: 'nested-1', toolName: 'Read', summary: 'log' },
+      { turn: 2, step: 1, ordinal: 9, kind: 'permission', phase: 'denied', toolUseId: 'bash-1', summary: 'rejected' },
+      { turn: 2, step: 1, ordinal: 10, kind: 'text', text: 'I could not run it.' },
     ]
 
     expect(transcriptItemsForStep(activities.reverse(), 2, 1)).toEqual([
@@ -225,12 +226,13 @@ describe('Claude sidecar conversation projection', () => {
         expect.objectContaining({ toolUseId: 'read-1', toolName: 'Read', output: 'contents', phase: 'completed' }),
         expect.objectContaining({ toolUseId: 'grep-1', toolName: 'Grep', output: 'not found', phase: 'failed', isError: true }),
       ] },
-      { kind: 'text', ordinal: 5, text: 'I found the cause.' },
-      { kind: 'tools', ordinal: 6, tools: [expect.objectContaining({
+      { kind: 'activity', ordinal: 3, row: expect.objectContaining({ activity: expect.objectContaining({ title: 'Transient tool warning' }) }) },
+      { kind: 'text', ordinal: 6, text: 'I found the cause.' },
+      { kind: 'tools', ordinal: 7, tools: [expect.objectContaining({
         toolUseId: 'bash-1', toolName: 'Bash', phase: 'denied', output: 'rejected', isError: true,
         subcalls: [expect.objectContaining({ toolUseId: 'nested-1', phase: 'completed' })],
       })] },
-      { kind: 'text', ordinal: 9, text: 'I could not run it.' },
+      { kind: 'text', ordinal: 10, text: 'I could not run it.' },
     ])
   })
 
@@ -300,28 +302,37 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('−1')
   })
 
-  it('renders interleaved Claude text with the native Markdown renderer', () => {
+  it('renders sidecar text and tools from the unified transcript', () => {
     const markup = renderToStaticMarkup(createElement(ClaudeActivityNode, {
       node: { data: { turn: 2, step: 1 } },
       t: ((key: string) => key) as never,
       useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({
-        activities: [{
-          turn: 2,
-          step: 1,
-          ordinal: 0,
-          kind: 'text',
-          text: '## Heading\n\n**bold** and `inline`\n\n- first\n- second',
-        }],
+        activities: [
+          {
+            turn: 2,
+            step: 1,
+            ordinal: 0,
+            kind: 'text',
+            text: '## Sidecar assistant text',
+          },
+          {
+            turn: 2,
+            step: 1,
+            ordinal: 1,
+            kind: 'tool-call',
+            phase: 'started',
+            toolUseId: 'read-1',
+            toolName: 'Read',
+            detail: JSON.stringify({ file_path: 'README.md' }),
+          },
+        ],
+        tasks: { tasks: [] },
       })) as never,
     } as never))
 
-    expect(markup).toContain('class="dsh-claude-flow"')
-    expect(markup).toContain('class="dsh-claude-transcript-text"')
-    expect(markup).toContain('<h2>Heading</h2>')
-    expect(markup).toContain('<strong>bold</strong>')
-    expect(markup).toContain('<code>inline</code>')
-    expect(markup).toContain('<ul>')
-    expect(markup).not.toContain('## Heading')
+    expect(markup).toContain('dsh-claude-tool-group-native')
+    expect(markup).toContain('Sidecar assistant text')
+    expect(markup).toContain('dsh-claude-transcript-text')
   })
 
   it('keeps each tool entry in an independent collapsed disclosure', () => {
@@ -359,6 +370,112 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('Grep')
   })
 
+  it('renders semantic Read, search, terminal, diff, and unknown tool details without protocol JSON walls', () => {
+    const render = (tool: Parameters<typeof ClaudeTranscriptToolItem>[0]['tool']) => renderToStaticMarkup(createElement(ClaudeTranscriptToolItem, {
+      tool,
+      t: ((key: string) => key) as never,
+    }))
+
+    const read = render({
+      toolUseId: 'read-1', toolName: 'Read', description: 'Read src/example.ts', subcalls: [],
+      input: JSON.stringify({ file_path: 'src/example.ts', offset: 10, limit: 2 }),
+      output: JSON.stringify({ type: 'text', file: { filePath: 'src/example.ts', content: 'const one = 1\nconst two = 2' } }),
+    })
+    expect(read).toContain('src/example.ts')
+    expect(read).toContain('<span class="dsh-claude-tool-line-number">10</span>')
+    expect(read).toContain('const one = 1')
+    expect(read).not.toContain('&quot;filePath&quot;')
+
+    const grep = render({
+      toolUseId: 'grep-1', toolName: 'Grep', description: 'Searched for symbol', subcalls: [],
+      input: JSON.stringify({ pattern: 'symbol', output_mode: 'files_with_matches' }),
+      output: JSON.stringify({ mode: 'files_with_matches', filenames: ['src/a.ts', 'src/b.ts'], numFiles: 2 }),
+    })
+    expect(grep).toContain('src/a.ts')
+    expect(grep).toContain('src/b.ts')
+    expect(grep).not.toContain('&quot;filenames&quot;')
+
+    const bash = render({
+      toolUseId: 'bash-1', toolName: 'Bash', description: 'Ran tests', subcalls: [],
+      input: JSON.stringify({ command: 'pnpm test', description: 'Run tests' }),
+      output: JSON.stringify({ stdout: '18 passed', stderr: '', interrupted: false }),
+    })
+    expect(bash).toContain('pnpm test')
+    expect(bash).toContain('18 passed')
+    expect(bash).not.toContain('&quot;stdout&quot;')
+
+    const diff = render({
+      toolUseId: 'edit-1', toolName: 'Edit', description: 'Edited src/a.ts', subcalls: [],
+      diffs: [{ path: 'src/a.ts', oldText: 'old', newText: 'new' }],
+      input: JSON.stringify({ file_path: 'src/a.ts', old_string: 'old', new_string: 'new' }),
+      output: JSON.stringify({ success: true }),
+    })
+    expect(diff).toContain('src/a.ts')
+    expect(diff).not.toContain('old_string')
+
+    const unknown = render({
+      toolUseId: 'mcp-1', toolName: 'mcp__service__lookup', description: 'Lookup item', subcalls: [],
+      input: JSON.stringify({ item_id: 'item-1', include_history: true }),
+      output: JSON.stringify({ status: 'found', count: 1 }),
+    })
+    expect(unknown).toContain('item id')
+    expect(unknown).toContain('include history')
+    expect(unknown).toContain('found')
+    expect(unknown).not.toContain('&quot;item_id&quot;')
+  })
+
+  it('keeps foreground Bash only in its tool group while retaining background and subagent lifecycle rows', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'bash-1', toolName: 'Bash', detail: JSON.stringify({ command: 'pnpm test' }) },
+      { turn: 2, step: 1, ordinal: 2, kind: 'subagent', phase: 'started', taskId: 'foreground', title: 'Run tests' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'tool-result', phase: 'completed', toolUseId: 'bash-1', detail: 'passed' },
+      { turn: 2, step: 1, ordinal: 4, kind: 'subagent', phase: 'started', taskId: 'background', title: 'Watch logs' },
+      { turn: 2, step: 1, ordinal: 5, kind: 'subagent', phase: 'started', taskId: 'agent', title: 'Explore code' },
+    ]
+    const tasks = [
+      { taskId: 'foreground', description: 'Run tests', status: 'completed' as const, taskType: 'local_bash' },
+      { taskId: 'background', description: 'Watch logs', status: 'running' as const, taskType: 'local_bash', backgrounded: true },
+      { taskId: 'agent', description: 'Explore code', status: 'running' as const, subagentType: 'Explore' },
+    ]
+
+    expect(transcriptItemsForStep(activities, 2, 1)).toEqual([
+      expect.objectContaining({ kind: 'tools', tools: [expect.objectContaining({ toolUseId: 'bash-1' })] }),
+    ])
+
+    const items = transcriptItemsForStep(activities, 2, 1, tasks)
+    expect(items).toHaveLength(3)
+    expect(items[0]).toMatchObject({ kind: 'tools', tools: [{ toolUseId: 'bash-1', output: 'passed' }] })
+    expect(items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'foreground' }) }) }),
+    ]))
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'background' }) }) }),
+      expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'agent' }) }) }),
+    ]))
+    expect(tasksForTurn([
+      { ...tasks[0]!, originTurn: 2 },
+      { ...tasks[1]!, originTurn: 2 },
+      { ...tasks[2]!, originTurn: 2 },
+    ], 2).map(task => task.taskId)).toEqual(['background', 'agent'])
+  })
+
+  it('hides uncorrelated lifecycle noise while keeping classified background work', () => {
+    const uncorrelated: ClaudeActivityEvent = {
+      turn: 2, step: 1, ordinal: 1, kind: 'subagent', phase: 'updated', title: 'Claude subagent update',
+    }
+    const unknownTask: ClaudeActivityEvent = {
+      turn: 2, step: 1, ordinal: 2, kind: 'subagent', phase: 'started', taskId: 'unknown', title: 'Push branch',
+    }
+    const background: ClaudeActivityEvent = {
+      turn: 2, step: 1, ordinal: 3, kind: 'subagent', phase: 'completed', taskId: 'background', title: 'Run full test suite',
+    }
+    expect(transcriptItemsForStep([uncorrelated, unknownTask, background], 2, 1, [
+      { taskId: 'background', description: 'Run full test suite', status: 'completed', taskType: 'local_bash', backgrounded: true },
+    ])).toEqual([
+      expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'background' }) }) }),
+    ])
+  })
+
   it('folds task lifecycle messages sharing a taskId into one settled row', () => {
     const started: ClaudeActivityEvent = {
       turn: 2,
@@ -376,7 +493,9 @@ describe('Claude sidecar conversation projection', () => {
       summary: 'Inspect files',
     }
 
-    expect(activityRowsForStep([started, completed], 2, 1)).toEqual([expect.objectContaining({
+    expect(activityRowsForStep([started, completed], 2, 1, [
+      { taskId: 'background-1', description: 'Inspect files', status: 'completed', backgrounded: true },
+    ])).toEqual([expect.objectContaining({
       running: false,
       activity: expect.objectContaining({ taskId: 'background-1', phase: 'completed' }),
     })])
@@ -393,16 +512,16 @@ describe('Claude sidecar conversation projection', () => {
       title: 'Running inspect files',
     }
     expect(activityRowsForStep([progress], 2, 1, [
-      { taskId: 'subagent-1', description: 'inspect files', status: 'completed' },
+      { taskId: 'subagent-1', description: 'inspect files', status: 'completed', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({
       running: false,
       activity: expect.objectContaining({ phase: 'completed', title: 'inspect files' }),
     })])
     expect(activityRowsForStep([progress], 2, 1, [
-      { taskId: 'subagent-1', description: 'inspect files', status: 'running' },
+      { taskId: 'subagent-1', description: 'inspect files', status: 'running', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({ running: true })])
     expect(activityRowsForStep([progress], 2, 1, [
-      { taskId: 'subagent-1', description: 'inspect files', status: 'failed' },
+      { taskId: 'subagent-1', description: 'inspect files', status: 'failed', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({
       running: false,
       activity: expect.objectContaining({ phase: 'failed', isError: true }),
@@ -411,9 +530,9 @@ describe('Claude sidecar conversation projection', () => {
 
   it('selects task groups, client-local clear state, activity, and origin-turn launchers', () => {
     const tasks = [
-      { taskId: 'running-2', description: 'two', status: 'running' as const, originTurn: 2 },
-      { taskId: 'running-3', description: 'three', status: 'running' as const, originTurn: 3 },
-      { taskId: 'done', description: 'done', status: 'completed' as const, originTurn: 2 },
+      { taskId: 'running-2', description: 'two', status: 'running' as const, originTurn: 2, backgrounded: true },
+      { taskId: 'running-3', description: 'three', status: 'running' as const, originTurn: 3, subagentType: 'Explore' },
+      { taskId: 'done', description: 'done', status: 'completed' as const, originTurn: 2, subagentType: 'general-purpose' },
     ]
     expect(visibleTaskGroups(tasks, new Set())).toMatchObject({
       running: [{ taskId: 'running-2' }, { taskId: 'running-3' }],
@@ -437,7 +556,7 @@ describe('Claude sidecar conversation projection', () => {
     expect(activitiesForTask(activities, 'running-2')).toEqual([activities[0]])
   })
 
-  it('renders a turn-bound Tasks launcher only when that turn has tasks', () => {
+  it('renders a compact turn-bound Tasks launcher only for background work and subagents', () => {
     const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActivityTail, {
       matched: { turn },
       t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
@@ -445,10 +564,26 @@ describe('Claude sidecar conversation projection', () => {
       useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
     }))
     expect(render([])).toBe('')
-    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3 }])).toBe('')
-    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2 }])).toContain('tasksTurnRunning')
-    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2 }])).toContain('tasksTurnCompleted')
-    expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2 }])).toContain('tasksTurnFailed')
+    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3, backgrounded: true }])).toBe('')
+    expect(render([{ taskId: 'foreground', description: 'foreground', status: 'completed', originTurn: 2, taskType: 'local_bash' }])).toBe('')
+    const running = render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true }])
+    expect(running).toContain('tasksTurnRunning')
+    expect(running).toContain('tasksOpen')
+    expect(running).toContain('min-height:32px')
+    expect(running).toContain('border-radius:999px')
+    expect(running).not.toContain('✓')
+    const mixed = render([
+      { taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true },
+      { taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' },
+      { taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' },
+    ])
+    expect(mixed).toContain('tasksTurnRunning')
+    expect(mixed).toContain('✓ 1')
+    expect(mixed).toContain('× 1')
+    const done = render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' }])
+    expect(done).toContain('tasksTurnCompleted')
+    expect(done).not.toContain('✓ 1')
+    expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' }])).toContain('tasksTurnFailed')
   })
 
   it('renders the active task node reactively for the owning turn', () => {
@@ -459,25 +594,56 @@ describe('Claude sidecar conversation projection', () => {
       useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
     } as never))
     expect(render([])).toBe('')
-    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3 }])).toBe('')
-    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2 }])).toContain('tasksTurnRunning')
-    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2 }])).toContain('tasksTurnCompleted')
+    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3, backgrounded: true }])).toBe('')
+    expect(render([{ taskId: 'foreground', description: 'foreground', status: 'running', originTurn: 2, taskType: 'local_bash' }])).toBe('')
+    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true }])).toContain('tasksTurnRunning')
+    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' }])).toContain('tasksTurnCompleted')
   })
 
-  it('mounts the active task node at turn/start and hides it at turn/end', async () => {
+  it('mounts live Claude activity at step/start and hides the active task node at turn/end', async () => {
     const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
     const stepStart = { type: 'step/start', seq: 2, time: 2, data: { turn: 2, step: 1 } }
     const active = await projectConversation([turnStart, stepStart])
     expect(active.chat.map(node => [node.kind, node.data])).toEqual([
+      ['claude-activity-step', { turn: 2, step: 1 }],
       ['claude-active-tasks', { turn: 2 }],
     ])
+    expect(active.chat[0]?.anchorSeq).toBeLessThan(active.chat[1]?.anchorSeq ?? 0)
 
     const completed = await projectConversation([
       turnStart,
       stepStart,
       { type: 'turn/end', seq: 3, time: 3, data: { turn: 2 } },
     ])
-    expect(completed.chat).toEqual([])
+    expect(completed.chat.map(node => [node.kind, node.data])).toEqual([
+      ['claude-activity-step', { turn: 2, step: 1 }],
+    ])
+  })
+
+  it('keeps cancelled partial Claude activity before the next user message', async () => {
+    const projection = await projectConversation([
+      { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
+      { type: 'step/end', seq: 3, time: 3, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 4, time: 4, data: { turn: 1 } },
+      {
+        type: 'user/message',
+        seq: 5,
+        time: 5,
+        data: {
+          id: 'after-cancel',
+          role: 'user',
+          content: [{ type: 'text', text: 'Use a different approach' }],
+          source: { kind: 'user' },
+        },
+      },
+    ])
+
+    expect(projection.chat.map(node => node.kind)).toEqual([
+      'claude-activity-step',
+      'test-user',
+    ])
+    expect(projection.chat[0]?.anchorSeq).toBeLessThan(projection.chat[1]?.anchorSeq ?? 0)
   })
 
   it('keeps an active turn task launcher after its direct user message before assistant output', async () => {
@@ -518,10 +684,12 @@ describe('Claude sidecar conversation projection', () => {
     }
 
     const chat = assembler.snapshot('chat') as readonly ChatConversationViewNode[]
-    expect(chat.slice(-2).map(node => node.kind)).toEqual([
+    expect(chat.slice(-3).map(node => node.kind)).toEqual([
       'test-user',
+      'claude-activity-step',
       'claude-active-tasks',
     ])
+    expect(chat.at(-3)?.anchorSeq).toBeLessThan(chat.at(-2)?.anchorSeq ?? 0)
     expect(chat.at(-2)?.anchorSeq).toBeLessThan(chat.at(-1)?.anchorSeq ?? 0)
     expect(chat.at(-1)).toMatchObject({
       kind: 'claude-active-tasks',
@@ -580,8 +748,8 @@ describe('Claude sidecar conversation projection', () => {
         owned: true,
         activities: [],
         tasks: { tasks: [
-          { taskId: 'turn-2', description: 'Task for selected turn', status: 'completed', originTurn: 2 },
-          { taskId: 'turn-3', description: 'Task for other turn', status: 'completed', originTurn: 3 },
+          { taskId: 'turn-2', description: 'Task for selected turn', status: 'completed', originTurn: 2, subagentType: 'Explore' },
+          { taskId: 'turn-3', description: 'Task for other turn', status: 'completed', originTurn: 3, backgrounded: true },
         ] },
       })) as never,
     }))
@@ -593,6 +761,9 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('margin:8px')
     expect(markup).toContain('border-radius:12px')
     expect(markup).toContain('box-shadow:0 4px 16px')
+    expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="tasksClose"[^>]*><svg\b/u)
+    expect(markup).not.toContain('>×</button>')
+    expect(markup).toContain('.dshClaudePanelIconButton:hover')
   })
 
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {
@@ -636,9 +807,9 @@ describe('Claude sidecar conversation projection', () => {
       assistant(3, 1, 'native'),
     ])
     expect(native.timeline.turns.get(2)?.data.get('claudeCode')).toBeUndefined()
-    // The generic active-turn anchor exists, but its renderer remains null
-    // because a native turn has no Claude sidecar tasks.
-    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant', 'claude-active-tasks'])
+    // Generic live anchors exist, but their renderers stay null when a native
+    // turn has no Claude sidecar activities or tasks.
+    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant', 'claude-active-tasks', 'claude-activity-step'])
   })
 
   it('selects the turn tail from engine-owned turn data', () => {

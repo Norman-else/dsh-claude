@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -13,8 +14,9 @@ import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCod
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
+import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
-import { ClaudeProjectionStore } from './projection.ts'
+import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, prepareRepository } from './repository-setup-api.ts'
@@ -26,6 +28,7 @@ import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     details: { kind: 'single'; scope: 'session' }
+    'shell.overlay': { kind: 'list'; scope: 'root' }
   }
 }
 
@@ -38,6 +41,27 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     'settings.claude-code': ClaudeCodeSettingsKey
   }
+}
+
+function MaximizedDiff({
+  source, t, sessionId, closeDetails, restore,
+}: {
+  source: ClaudeProjectionSource
+  t: ClaudeDiffPanelInjected['t']
+  sessionId: string
+  closeDetails: () => void
+  restore: () => void
+}) {
+  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
+  return <ClaudeDiffOverlay onRestore={restore}><ClaudeDiffPanel
+    useClaudeProjection={useClaudeProjection}
+    t={t}
+    sessionId={sessionId}
+    maximized
+    closeDetails={closeDetails}
+    toggleMaximized={restore}
+  /></ClaudeDiffOverlay>
 }
 
 export const name = 'dsh-claude-client'
@@ -69,20 +93,33 @@ export function apply(ctx: ClientContext): void {
     locale: namespace,
   }, ClaudeActivityNode))
   const layout = ctx.get('layout') as LayoutFace | undefined
-  // Only one plugin-owned details surface exists at a time. While closed, the
-  // built-in tool details view (priority 0) owns the single slot again.
+  // Keep the plugin details registration mounted while its maximized overlay is
+  // visible so its session-bound state survives the round trip.
   let disposePluginDetails: (() => void) | undefined
+  let disposeDiffOverlay: (() => void) | undefined
   let disposeExpandedDetailsResize: (() => void) | undefined
   let detailsSessionId: string | undefined
+  const restoreDiff = (): void => {
+    if (disposeDiffOverlay === undefined) return
+    disposeDiffOverlay()
+    disposeDiffOverlay = undefined
+    layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  }
   const closePluginDetails = (): void => {
-    if (disposePluginDetails === undefined) return
+    if (disposePluginDetails === undefined && disposeDiffOverlay === undefined && disposeExpandedDetailsResize === undefined && detailsSessionId === undefined) return
+    disposeDiffOverlay?.()
+    disposeDiffOverlay = undefined
     disposeExpandedDetailsResize?.()
     disposeExpandedDetailsResize = undefined
-    disposePluginDetails()
+    disposePluginDetails?.()
     disposePluginDetails = undefined
     detailsSessionId = undefined
     layout?.closeDetails()
   }
+  ctx.effect(() => ctx.slots.onEntryError((key, entry) => {
+    if (key === 'shell.overlay' && entry.options.id === 'claude-diff-overlay') restoreDiff()
+  }), 'dsh-claude: diff overlay recovery')
   const openTasksPanel = (sessionId: string, turn: number): void => {
     closePluginDetails()
     try {
@@ -101,24 +138,64 @@ export function apply(ctx: ClientContext): void {
   }
   const openDiffPanel = (sessionId: string): void => {
     closePluginDetails()
-    try {
-      disposePluginDetails = ctx.slots.register({
-        name: 'details',
-        priority: -10,
-        locale: namespace,
-        inject: (): ClaudeDiffPanelInjected => ({ t, closeDetails: closePluginDetails }),
-      }, ClaudeDiffPanel)
-    } catch {
+    detailsSessionId = sessionId
+    const registerDetails = (): boolean => {
+      try {
+        disposePluginDetails = ctx.slots.register({
+          name: 'details',
+          priority: -10,
+          locale: namespace,
+          inject: (): ClaudeDiffPanelInjected => ({
+            t,
+            sessionId,
+            maximized: false,
+            closeDetails: closePluginDetails,
+            toggleMaximized: maximizeDiff,
+          }),
+        }, ClaudeDiffPanel)
+      } catch {
+        disposePluginDetails = undefined
+        return false
+      }
+      layout?.openDetails()
+      return true
+    }
+    const maximizeDiff = (): void => {
+      if (disposeDiffOverlay !== undefined) {
+        restoreDiff()
+        return
+      }
+      disposeExpandedDetailsResize?.()
+      disposeExpandedDetailsResize = undefined
+      layout?.closeDetails()
+      try {
+        disposeDiffOverlay = ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'claude-diff-overlay',
+          locale: namespace,
+        }, () => <MaximizedDiff
+          source={projections.source(sessionId)}
+          t={t}
+          sessionId={sessionId}
+          closeDetails={closePluginDetails}
+          restore={restoreDiff}
+        />)
+      } catch {
+        disposeDiffOverlay = undefined
+        layout?.openDetails()
+        disposeExpandedDetailsResize = enableExpandedDetailsResize()
+      }
+    }
+    if (!registerDetails()) {
+      detailsSessionId = undefined
       return
     }
-    detailsSessionId = sessionId
-    layout?.openDetails()
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
   ctx.effect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closePluginDetails()
     const observer = new MutationObserver(() => {
-      if (detailsSessionId !== undefined && document.querySelector('[data-details-collapsed]') !== null) {
+      if (detailsSessionId !== undefined && disposeDiffOverlay === undefined && document.querySelector('[data-details-collapsed]') !== null) {
         closePluginDetails()
       }
     })
@@ -147,7 +224,9 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-repository-status',
-    order: 20,
+    // DSH's QueueDock owns terminal order 20 and uses a negative bottom
+    // margin to join the composer card. Keep this readout ahead of it.
+    order: 19,
     locale: namespace,
     inject: (sessionId: string): ClaudeRepositoryStatusInjected => ({
       t,

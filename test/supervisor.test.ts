@@ -961,6 +961,53 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('queues the next turn until cancellation cleanup finishes', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const controller = new AbortController()
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
+    const firstQuery = transport.queries[0]!
+    firstQuery.push(init())
+    await vi.waitFor(() => expect(runtime.snapshots()[0]?.claudeSessionId).toBe('claude-session-1'))
+
+    let finishInterrupt!: () => void
+    firstQuery.interrupt.mockImplementation(() => new Promise(resolve => {
+      finishInterrupt = () => resolve(undefined)
+    }))
+    controller.abort()
+    await expect(collect(first)).rejects.toMatchObject({ name: 'AbortError' })
+
+    owner.events.push(
+      { type: 'turn/end', data: { turn: 1 }, seq: owner.events.length, time: 3 },
+      { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length + 1, time: 4 },
+      { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 2, time: 5 },
+    )
+    const secondPromise = runtime.runTurn({ agent: owner.agent, prompt: 'use a different approach' })
+    let secondState: 'pending' | 'resolved' | 'rejected' = 'pending'
+    void secondPromise.then(
+      () => { secondState = 'resolved' },
+      () => { secondState = 'rejected' },
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    expect(secondState).toBe('pending')
+
+    finishInterrupt()
+    const second = await secondPromise
+    const secondQuery = transport.queries[1]!
+    expect(secondQuery.options.resume).toBe('claude-session-1')
+    const input = secondQuery.input[Symbol.asyncIterator]()
+    await input.next() // startup handshake
+    await expect(input.next()).resolves.toMatchObject({
+      value: { message: { content: 'use a different approach' } },
+      done: false,
+    })
+    secondQuery.push(init())
+    secondQuery.push(result('changed direction'))
+    await expect(collect(second)).resolves.toContainEqual({ type: 'complete', text: 'changed direction' })
+    await runtime.dispose()
+  })
+
   it('evicts an idle query after the configured timeout', async () => {
     vi.useFakeTimers()
     try {
@@ -978,6 +1025,58 @@ describe('Claude supervisor', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('upserts assistant deltas and orders consecutive tools between model text segments', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'inspect and explain' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('I will '))
+    await vi.waitFor(async () => {
+      const texts = (await projection(runtime)).activities.filter(activity => activity.kind === 'text')
+      expect(texts).toEqual([expect.objectContaining({ text: 'I will ' })])
+    })
+    query.push(delta('inspect.'))
+    await vi.waitFor(async () => {
+      const texts = (await projection(runtime)).activities.filter(activity => activity.kind === 'text')
+      expect(texts).toEqual([expect.objectContaining({ text: 'I will inspect.' })])
+    })
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    query.push({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tool-2', name: 'Grep', input: { pattern: 'answer' } }],
+      },
+    } as SDKMessage)
+    query.push({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tool-2', content: 'matched' }],
+      },
+      tool_use_result: 'matched',
+    } as SDKMessage)
+    query.push(delta('The cause is clear.'))
+    query.push(result('I will inspect.The cause is clear.'))
+    await collect(output)
+
+    const visible = (await projection(runtime)).activities.filter(activity => (
+      activity.kind === 'text' || activity.kind === 'tool-call' || activity.kind === 'tool-result'
+    ))
+    expect(visible.map(activity => [activity.kind, activity.ordinal, activity.text ?? activity.toolUseId])).toEqual([
+      ['text', 1, 'I will inspect.'],
+      ['tool-call', 2, 'tool-1'],
+      ['tool-result', 3, 'tool-1'],
+      ['tool-call', 4, 'tool-2'],
+      ['tool-result', 5, 'tool-2'],
+      ['text', 6, 'The cause is clear.'],
+    ])
+    await runtime.dispose()
   })
 
   it('keeps root Claude tools exclusively in the ordered sidecar transcript', async () => {

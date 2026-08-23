@@ -224,7 +224,7 @@ describe('DSH stream mapping', () => {
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
   })
 
-  it('leaves visible text to the sidecar transcript and emits one empty assistant anchor', async () => {
+  it('emits only usage and an empty assistant completion anchor while sidecar owns visible text', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'hel' },
       { type: 'text-delta', text: 'lo' },
@@ -239,7 +239,7 @@ describe('DSH stream mapping', () => {
     ])
   })
 
-  it('consumes all sidecar-owned task report segments before one finish', async () => {
+  it('keeps every task-report segment in the sidecar before one empty assistant finish', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'Tasks are still running.' },
       { type: 'segment-complete', text: 'Tasks are still running.' },

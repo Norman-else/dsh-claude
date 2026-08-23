@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -23,6 +23,7 @@ export interface ClaudeTaskLauncherProps extends ClaudeActivityTailInjected {
 }
 
 export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLauncherProps) {
+  const [interactive, setInteractive] = useState(false)
   const summary = useMemo(
     () => summarizeTurnTasks(tasksForTurn(tasks, turn)),
     [tasks, turn],
@@ -34,20 +35,37 @@ export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLaun
       ? t('tasksTurnFailed', { failed: summary.failed, completed: summary.completed })
       : t('tasksTurnCompleted', { count: summary.completed })
   const glyph = summary.state === 'running' ? '●' : summary.state === 'failed' ? '×' : '✓'
+  const settled = summary.state === 'running' && (summary.completed > 0 || summary.failed > 0)
   return (
-    <div data-claude-task-launcher={turn}>
-      <button type="button" style={styles.tasksTurnLauncher} onClick={() => openTasks(turn)}>
+    <div data-claude-task-launcher={turn} style={styles.tasksTurnLauncherWrap}>
+      <button
+        type="button"
+        className="dsh-claude-task-launcher"
+        style={{ ...styles.tasksTurnLauncher, ...(interactive ? styles.tasksTurnLauncherInteractive : {}) }}
+        aria-label={t('tasksOpen')}
+        onMouseEnter={() => setInteractive(true)}
+        onMouseLeave={() => setInteractive(false)}
+        onFocus={() => setInteractive(true)}
+        onBlur={() => setInteractive(false)}
+        onClick={() => openTasks(turn)}
+      >
         <span
           className={summary.state === 'running' ? 'dsh-claude-act-running' : undefined}
           style={{
-            ...styles.tasksTurnLauncherDot,
-            ...(summary.state === 'failed' ? styles.iconChipError : {}),
-            ...(summary.state === 'completed' ? styles.tasksTurnLauncherDone : {}),
+            ...styles.tasksTurnLauncherIcon,
+            ...(summary.state === 'failed' ? styles.tasksTurnLauncherIconError : {}),
+            ...(summary.state === 'completed' ? styles.tasksTurnLauncherIconDone : {}),
           }}
           aria-hidden="true"
         >{glyph}</span>
-        <span>{label}</span>
-        <span aria-hidden="true">›</span>
+        <span style={styles.tasksTurnLauncherTitle}>{label}</span>
+        {settled ? (
+          <span style={styles.tasksTurnLauncherSettled}>
+            {summary.completed === 0 ? null : <span>{`✓ ${summary.completed}`}</span>}
+            {summary.failed === 0 ? null : <span style={{ color: 'var(--dsw-alias-state-error-primary)' }}>{`× ${summary.failed}`}</span>}
+          </span>
+        ) : null}
+        <span style={{ ...styles.tasksTurnLauncherChevron, ...(interactive ? styles.tasksTurnLauncherChevronInteractive : {}) }} aria-hidden="true">›</span>
       </button>
     </div>
   )

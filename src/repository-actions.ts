@@ -1,0 +1,308 @@
+import { createHash } from 'node:crypto'
+import { basename } from 'node:path'
+import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+
+const MAX_OUTPUT_BYTES = 256 * 1024
+const MAX_PATCH_CHARS = 64 * 1024
+const MAX_MESSAGE_CHARS = 512
+const MAX_PR_TEXT_CHARS = 8 * 1024
+const GIT_TIMEOUT_MS = 15_000
+const REMOTE_TIMEOUT_MS = 60_000
+const GENERATE_TIMEOUT_MS = 60_000
+
+type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'create-pr'
+
+interface CommandResult {
+  readonly exitCode: number | null
+  readonly stdout: string
+  readonly stderr: string
+  readonly lossy: boolean
+}
+
+export interface RepositoryActionFile {
+  readonly path: string
+  readonly staged: boolean
+  readonly unstaged: boolean
+  readonly untracked: boolean
+}
+
+export interface RepositoryActionPreview {
+  readonly root: string
+  readonly branch: string
+  readonly head: string
+  readonly fingerprint: string
+  readonly files: readonly RepositoryActionFile[]
+  readonly patch: string
+  readonly truncated: boolean
+  readonly hasStaged: boolean
+  readonly hasUnstaged: boolean
+  readonly hasUntracked: boolean
+}
+
+export interface RepositoryActionRequest {
+  readonly action: RepositoryActionKind
+  readonly fingerprint: string
+  readonly message: string
+  readonly includeUnstaged: boolean
+  readonly prTitle?: string
+  readonly prBody?: string
+  readonly baseBranch?: string
+  readonly draft?: boolean
+}
+
+export interface RepositoryActionResult {
+  readonly commit: string
+  readonly pushed: boolean
+  readonly pullRequestUrl?: string
+}
+
+export class RepositoryActionError extends Error {
+  readonly code: string
+  readonly commit?: string
+
+  constructor(code: string, message: string, commit?: string) {
+    super(message)
+    this.name = 'RepositoryActionError'
+    this.code = code
+    if (commit !== undefined) this.commit = commit
+  }
+}
+
+async function collect(handle: SubprocessHandle): Promise<CommandResult> {
+  const outcome = await handle.done
+  const stdout = handle.collected.stdout?.readFrom(0)
+  const stderr = handle.collected.stderr?.readFrom(0)
+  return {
+    exitCode: outcome.exitCode,
+    stdout: stdout?.text ?? '',
+    stderr: stderr?.text ?? '',
+    lossy: stdout?.lossy === true || stderr?.lossy === true,
+  }
+}
+
+function safeText(value: string, maximum: number, label: string): string {
+  const text = value.trim()
+  if (text.length === 0 || text.length > maximum || /[\0\r]/u.test(text)) {
+    throw new RepositoryActionError('invalid-request', `${label} is invalid.`)
+  }
+  return text
+}
+
+export function isProtectedWarpPath(path: string): boolean {
+  return basename(path.replaceAll('\\', '/')).toLocaleLowerCase('en-US') === 'warp.md'
+}
+
+export function parseRepositoryActionStatus(output: string): readonly RepositoryActionFile[] {
+  const files = new Map<string, RepositoryActionFile>()
+  const records = output.includes('\0') ? output.split('\0') : output.split(/\r?\n/u)
+  for (let position = 0; position < records.length; position += 1) {
+    const line = records[position] ?? ''
+    if (line.length < 4) continue
+    const index = line[0] ?? ' '
+    const worktree = line[1] ?? ' '
+    let path = line.slice(3)
+    const rename = path.lastIndexOf(' -> ')
+    if (rename >= 0) path = path.slice(rename + 4)
+    if (output.includes('\0') && (index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C')) position += 1
+    if (path.length === 0 || path.includes('\0') || isProtectedWarpPath(path)) continue
+    files.set(path, {
+      path,
+      staged: index !== ' ' && index !== '?',
+      unstaged: worktree !== ' ' && worktree !== '?',
+      untracked: index === '?' && worktree === '?',
+    })
+  }
+  return [...files.values()].sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function fallbackCommitMessage(files: readonly RepositoryActionFile[]): string {
+  if (files.length === 1) return `Update ${files[0]?.path ?? 'repository files'}`
+  return `Update ${files.length} repository files`
+}
+
+function normalizedGeneratedMessage(value: string, fallback: string): string {
+  const first = value.split(/\r?\n/u).map(line => line.trim()).find(Boolean)
+  if (first === undefined) return fallback
+  const message = first.replace(/^['"`]+|['"`]+$/gu, '').replace(/[\0\r\n]/gu, ' ').trim()
+  return message.length === 0 || message.length > 72 ? fallback : message
+}
+
+function validPrUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' && url.hostname === 'github.com' ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function validPullRequestBody(value: string): boolean {
+  const body = value.trim()
+  const match = /^Summary:\s+([^\r\n]+)\r?\n\r?\nChanges:\s*\r?\n([\s\S]+)$/u.exec(body)
+  const summary = match?.[1]?.trim()
+  const changes = match?.[2]?.trim()
+  if (summary === undefined || summary.length === 0 || changes === undefined || changes.length === 0) return false
+  return !/^#{1,6}\s|^[A-Za-z][A-Za-z ]+:\s*$/mu.test(changes)
+}
+
+export class RepositoryActionService {
+  readonly #runtime: RepositoryActionRuntime
+  readonly #claudeExecutable: string
+  readonly #invalidate: (cwd: string) => void
+  #gitExecutable?: Promise<string>
+  #ghExecutable?: Promise<string>
+  #pending: Promise<unknown> = Promise.resolve()
+
+  constructor(runtime: RepositoryActionRuntime, claudeExecutable: string, invalidate: (cwd: string) => void = () => {}) {
+    this.#runtime = runtime
+    this.#claudeExecutable = claudeExecutable
+    this.#invalidate = invalidate
+  }
+
+  preview(cwd: string): Promise<RepositoryActionPreview> {
+    return this.#preview(cwd)
+  }
+
+  async generateMessage(cwd: string, fingerprint: string): Promise<string> {
+    const preview = await this.#preview(cwd)
+    if (preview.fingerprint !== fingerprint) throw new RepositoryActionError('repository-changed', 'Repository changes have changed. Refresh the commit panel.')
+    const fallback = fallbackCommitMessage(preview.files)
+    const prompt = [
+      'Write one concise English git commit subject (imperative mood, maximum 72 characters).',
+      'Return only the subject without quotes, markdown, body, or explanation.',
+      `Files: ${preview.files.map(file => file.path).join(', ')}`,
+      `Diff:\n${preview.patch.slice(0, 24 * 1024)}`,
+    ].join('\n')
+    try {
+      const result = await this.#run(this.#claudeExecutable, ['-p', '--tools', '', '--output-format', 'text', prompt], preview.root, GENERATE_TIMEOUT_MS)
+      return result.exitCode === 0 && !result.lossy ? normalizedGeneratedMessage(result.stdout, fallback) : fallback
+    } catch {
+      return fallback
+    }
+  }
+
+  execute(cwd: string, request: RepositoryActionRequest): Promise<RepositoryActionResult> {
+    const operation = this.#pending.then(() => this.#execute(cwd, request))
+    this.#pending = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  async #execute(cwd: string, request: RepositoryActionRequest): Promise<RepositoryActionResult> {
+    const message = safeText(request.message, MAX_MESSAGE_CHARS, 'Commit message')
+    const before = await this.#preview(cwd)
+    if (before.fingerprint !== request.fingerprint) throw new RepositoryActionError('repository-changed', 'Repository changes have changed. Refresh the commit panel.')
+    if (before.files.length === 0) throw new RepositoryActionError('nothing-to-commit', 'There are no changes to commit.')
+    const git = await this.#git()
+    await this.#rejectStagedWarp(git, before.root)
+    if (request.includeUnstaged) {
+      const paths = before.files.filter(file => file.unstaged || file.untracked).map(file => file.path)
+      if (paths.length > 0) await this.#mustRun(git, ['add', '--', ...paths], before.root, GIT_TIMEOUT_MS, 'stage-failed', 'Changes could not be staged.')
+    }
+    await this.#rejectStagedWarp(git, before.root)
+    const staged = await this.#run(git, ['diff', '--cached', '--quiet', '--exit-code', '--'], before.root, GIT_TIMEOUT_MS)
+    if (staged.exitCode === 0) throw new RepositoryActionError('nothing-to-commit', 'There are no staged changes to commit.')
+    if (staged.exitCode !== 1) throw new RepositoryActionError('repository-unavailable', 'The staged changes could not be verified.')
+    await this.#mustRun(git, ['commit', '-m', message, '--'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'Git commit failed.')
+    const oid = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'commit-failed', 'The new commit could not be verified.')).stdout.trim()
+    this.#invalidate(before.root)
+    if (request.action === 'commit') return { commit: oid, pushed: false }
+    try {
+      await this.#push(git, before.root, before.branch)
+    } catch (error) {
+      throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.', oid)
+    }
+    if (request.action === 'commit-push') return { commit: oid, pushed: true }
+    const title = safeText(request.prTitle ?? message, 256, 'Pull request title')
+    const body = safeText(request.prBody ?? '', MAX_PR_TEXT_CHARS, 'Pull request description')
+    if (!validPullRequestBody(body)) {
+      throw new RepositoryActionError('invalid-pr-description', 'Pull request description must contain only Summary and Changes sections.', oid)
+    }
+    let gh: string
+    try {
+      gh = await this.#gh()
+    } catch (error) {
+      throw new RepositoryActionError('gh-unavailable', error instanceof Error ? error.message : 'GitHub CLI is unavailable.', oid)
+    }
+    const args = ['pr', 'create', '--title', title, '--body', body]
+    if (request.draft !== false) args.push('--draft')
+    if (request.baseBranch !== undefined) args.push('--base', safeText(request.baseBranch, 512, 'Base branch'))
+    const created = await this.#run(gh, args, before.root, REMOTE_TIMEOUT_MS)
+    const url = created.exitCode === 0 && !created.lossy ? validPrUrl(created.stdout) : undefined
+    if (url === undefined) throw new RepositoryActionError('pr-failed', 'The pull request could not be created.', oid)
+    return { commit: oid, pushed: true, pullRequestUrl: url }
+  }
+
+  async #preview(cwd: string): Promise<RepositoryActionPreview> {
+    const git = await this.#git()
+    const rootResult = await this.#mustRun(git, ['rev-parse', '--path-format=absolute', '--show-toplevel'], cwd, GIT_TIMEOUT_MS, 'not-repository', 'The session directory is not a Git repository.')
+    const root = rootResult.stdout.trim()
+    const [branchResult, headResult, statusResult, stagedPatch, unstagedPatch] = await Promise.all([
+      this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root, GIT_TIMEOUT_MS),
+      this.#run(git, ['rev-parse', 'HEAD'], root, GIT_TIMEOUT_MS),
+      this.#run(git, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], root, GIT_TIMEOUT_MS),
+      this.#run(git, ['diff', '--cached', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
+      this.#run(git, ['diff', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
+    ])
+    if (branchResult.exitCode !== 0) throw new RepositoryActionError('detached-head', 'A detached HEAD cannot be committed from this panel.')
+    if (headResult.exitCode !== 0 || statusResult.exitCode !== 0 || statusResult.lossy) throw new RepositoryActionError('repository-unavailable', 'Repository state is unavailable.')
+    const files = parseRepositoryActionStatus(statusResult.stdout)
+    const patch = `${stagedPatch.stdout}${stagedPatch.stdout.length > 0 && unstagedPatch.stdout.length > 0 ? '\n' : ''}${unstagedPatch.stdout}`.slice(0, MAX_PATCH_CHARS)
+    const branch = branchResult.stdout.trim()
+    const head = headResult.stdout.trim()
+    const fingerprint = createHash('sha256').update([head, branch, statusResult.stdout, stagedPatch.stdout, unstagedPatch.stdout].join('\0')).digest('hex')
+    return {
+      root,
+      branch,
+      head,
+      fingerprint,
+      files,
+      patch,
+      truncated: stagedPatch.lossy || unstagedPatch.lossy || stagedPatch.stdout.length + unstagedPatch.stdout.length > MAX_PATCH_CHARS,
+      hasStaged: files.some(file => file.staged),
+      hasUnstaged: files.some(file => file.unstaged),
+      hasUntracked: files.some(file => file.untracked),
+    }
+  }
+
+  async #rejectStagedWarp(git: string, cwd: string): Promise<void> {
+    const staged = await this.#run(git, ['diff', '--cached', '--name-only', '--'], cwd, GIT_TIMEOUT_MS)
+    if (staged.exitCode !== 0 || staged.lossy) throw new RepositoryActionError('repository-unavailable', 'Staged files could not be verified.')
+    if (staged.stdout.split(/\r?\n/u).some(path => path.length > 0 && isProtectedWarpPath(path))) {
+      throw new RepositoryActionError('protected-warp-file', 'WARP.md files cannot be committed. Unstage them before continuing.')
+    }
+  }
+
+  async #push(git: string, cwd: string, branch: string): Promise<void> {
+    const upstream = await this.#run(git, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], cwd, GIT_TIMEOUT_MS)
+    const args = upstream.exitCode === 0 ? ['push'] : ['push', '--set-upstream', 'origin', branch]
+    await this.#mustRun(git, args, cwd, REMOTE_TIMEOUT_MS, 'push-failed', 'Git push failed.')
+  }
+
+  #git(): Promise<string> {
+    this.#gitExecutable ??= this.#runtime.resolveExecutable('git')
+    return this.#gitExecutable
+  }
+
+  #gh(): Promise<string> {
+    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh').catch(() => { throw new RepositoryActionError('gh-unavailable', 'GitHub CLI is unavailable.') })
+    return this.#ghExecutable
+  }
+
+  async #mustRun(executable: string, args: readonly string[], cwd: string, timeoutMs: number, code: string, message: string): Promise<CommandResult> {
+    const result = await this.#run(executable, args, cwd, timeoutMs)
+    if (result.exitCode !== 0 || result.lossy) throw new RepositoryActionError(code, message)
+    return result
+  }
+
+  #run(executable: string, args: readonly string[], cwd: string, timeoutMs: number, maxBytes = MAX_OUTPUT_BYTES): Promise<CommandResult> {
+    return collect(this.#runtime.spawn({
+      argv: [executable, ...args],
+      cwd,
+      stdio: { stdin: 'ignore', stdout: { maxBytes }, stderr: { maxBytes: MAX_OUTPUT_BYTES } },
+      graceMs: 1_000,
+      signal: AbortSignal.timeout(timeoutMs),
+      env: {},
+    }))
+  }
+}

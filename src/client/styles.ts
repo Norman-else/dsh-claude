@@ -321,19 +321,36 @@ export const tasksTurnMeta: CSSProperties = {
   lineHeight: '17px',
 }
 
-export const tasksClose: CSSProperties = {
-  width: 26,
-  height: 26,
-  display: 'grid',
-  placeItems: 'center',
-  border: 'none',
-  borderRadius: 7,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 15,
-  lineHeight: '1',
-  cursor: 'pointer',
+export const panelIconButtonClass = 'dshClaudePanelIconButton'
+
+export const panelIconButtonCss = `
+.${panelIconButtonClass} {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
 }
+.${panelIconButtonClass}:hover {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.${panelIconButtonClass}:active {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent);
+}
+.${panelIconButtonClass}:focus-visible {
+  outline: 2px solid var(--dsw-static-blue-450);
+  outline-offset: 1px;
+}
+`
 
 export const tasksBody: CSSProperties = {
   flex: 1,
@@ -568,29 +585,83 @@ export const tasksBadge: CSSProperties = {
 
 /* Claude task launcher attached to the owning conversation turn. */
 
+export const tasksTurnLauncherWrap: CSSProperties = {
+  margin: '10px 0 4px',
+}
+
 export const tasksTurnLauncher: CSSProperties = {
+  maxWidth: '100%',
+  minHeight: 32,
+  boxSizing: 'border-box',
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 7,
-  margin: '6px 0 2px',
-  padding: '5px 8px',
-  border: 'none',
-  borderRadius: 8,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary)',
+  gap: 8,
+  padding: '5px 10px 5px 12px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 999,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 12,
-  lineHeight: '18px',
+  fontSize: 13,
+  lineHeight: '20px',
+  textAlign: 'left',
   cursor: 'pointer',
+  transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
 }
 
-export const tasksTurnLauncherDot: CSSProperties = {
+export const tasksTurnLauncherInteractive: CSSProperties = {
+  borderColor: 'var(--dsw-static-blue-450)',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  boxShadow: '0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-450) 14%, transparent)',
+}
+
+export const tasksTurnLauncherIcon: CSSProperties = {
+  width: 16,
+  height: 16,
+  flex: 'none',
+  display: 'inline-grid',
+  placeItems: 'center',
   color: 'var(--dsw-static-blue-450)',
-  fontSize: 9,
+  fontSize: 12,
+  lineHeight: 1,
+  fontWeight: 700,
 }
 
-export const tasksTurnLauncherDone: CSSProperties = {
-  color: 'var(--dsw-alias-state-success-primary, var(--dsw-alias-label-tertiary))',
+export const tasksTurnLauncherIconError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const tasksTurnLauncherIconDone: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary, var(--dsw-static-green-500))',
+}
+
+export const tasksTurnLauncherTitle: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontWeight: 500,
+}
+
+export const tasksTurnLauncherSettled: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  gap: 8,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const tasksTurnLauncherChevron: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 16,
+  lineHeight: 1,
+  transition: 'transform 120ms ease, color 120ms ease',
+}
+
+export const tasksTurnLauncherChevronInteractive: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  transform: 'translateX(2px)',
 }
 
 /* Claude repository setup controls on the blank-session hero. */
@@ -1266,6 +1337,12 @@ export const diffPanel: CSSProperties = {
   boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
 }
 
+export const diffPanelMaximized: CSSProperties = {
+  width: '100%',
+  height: '100%',
+  margin: 0,
+}
+
 export const diffHeader: CSSProperties = {
   boxSizing: 'border-box',
   height: 49,
@@ -1286,6 +1363,50 @@ export const diffHeaderTitle: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 15,
   fontWeight: 650,
+}
+
+export const diffHeaderActions: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 5,
+}
+
+export const diffSplitButton: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'stretch',
+}
+
+export const diffCommitButton: CSSProperties = {
+  minHeight: 28,
+  padding: '4px 10px',
+  border: 'none',
+  borderRadius: '7px 0 0 7px',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  font: 'inherit',
+  fontSize: 12,
+  fontWeight: 650,
+  cursor: 'pointer',
+}
+
+export const diffActionDisabled: CSSProperties = {
+  opacity: 0.45,
+  cursor: 'default',
+}
+
+export const diffCommitMenuButton: CSSProperties = {
+  width: 28,
+  minHeight: 28,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: 'none',
+  borderLeft: '1px solid color-mix(in srgb, #fff 32%, transparent)',
+  borderRadius: '0 7px 7px 0',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  font: 'inherit',
+  cursor: 'pointer',
 }
 
 export const diffHeaderBranch: CSSProperties = {
@@ -1417,4 +1538,165 @@ export const diffEmpty: CSSProperties = {
   margin: 16,
   color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 11,
+}
+
+export const diffModalCss = `
+.dshClaudeRepositoryActionModal {
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+}
+.dshClaudeRepositoryActionModalContent {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.dshClaudeRepositoryActionModalContent > div:first-child {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--dsw-alias-bg-layer-2);
+}
+.dshClaudeRepositoryActionModalContent h2 {
+  font-size: 24px;
+  line-height: 32px;
+}
+.dshClaudeRepositoryActionModalContent > p {
+  font-size: 18px;
+  line-height: 28px;
+}
+.dshClaudeRepositoryActionModal input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+`
+
+export const diffModalBody: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 16,
+  width: '100%',
+  minWidth: 0,
+  boxSizing: 'border-box',
+}
+
+export const diffModalMeta: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 16,
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalMetaText: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const diffModalFiles: CSSProperties = {
+  minWidth: 0,
+  maxHeight: 300,
+  overflowX: 'hidden',
+  overflowY: 'auto',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 8,
+}
+
+export const diffModalFile: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 12,
+  minWidth: 0,
+  padding: '10px 14px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 15,
+  lineHeight: '22px',
+}
+
+export const diffModalFilePath: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const diffModalFileState: CSSProperties = {
+  flex: 'none',
+}
+
+export const diffModalField: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 16,
+  lineHeight: '24px',
+  fontWeight: 550,
+}
+
+export const diffModalTextarea: CSSProperties = {
+  ...settingTextInput,
+  minHeight: 140,
+  padding: '10px 14px',
+  fontSize: 16,
+  lineHeight: '24px',
+  resize: 'vertical',
+}
+
+export const diffModalTextInput: CSSProperties = {
+  ...settingTextInput,
+  minHeight: 44,
+  padding: '9px 14px',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalCheckbox: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalFooter: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 12,
+}
+
+export const diffModalButton: CSSProperties = {
+  minHeight: 42,
+  padding: '8px 18px',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalStatus: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalError: CSSProperties = {
+  margin: '10px 0 0',
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 16,
+  lineHeight: '24px',
+}
+
+export const diffModalSuccess: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-state-success-primary)',
+  fontSize: 16,
+  lineHeight: '24px',
 }

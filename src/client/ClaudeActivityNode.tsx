@@ -20,18 +20,30 @@ export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-st
 const EMPTY_TASKS = [] as const
 
 const ACTIVITY_CSS = [
-  '.dsh-claude-flow{display:flex;flex-direction:column;gap:4px}',
+  '.dsh-claude-flow{display:flex;flex-direction:column;gap:10px}',
   '.dsh-claude-transcript-text{color:var(--dsw-alias-label-primary);font-size:15px;line-height:24px;overflow-wrap:anywhere}',
   '.dsh-claude-tool-group-native{overflow:visible}',
   '.dsh-claude-tool-group-native>.dsh-claude-flow-row{padding:0}',
-  '.dsh-claude-tool-list{overflow:hidden;margin-top:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}',
+  '.dsh-claude-tool-list{max-height:min(420px,calc(100vh - 320px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;margin-top:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;scrollbar-gutter:stable}',
   '.dsh-claude-tool-item{border-top:1px solid var(--dsw-alias-border-l1)}',
   '.dsh-claude-tool-item:first-child{border-top:0}',
   '.dsh-claude-tool-summary-row{display:flex;align-items:center;min-height:34px;gap:8px;padding:0 10px;cursor:pointer;list-style:none}',
   '.dsh-claude-tool-summary-row::-webkit-details-marker{display:none}',
   '.dsh-claude-tool-summary-row::after{content:"›";margin-left:2px;flex:none;align-self:center;color:var(--dsw-alias-label-secondary);font-size:22px;line-height:1;transform-origin:center;transition:transform .15s ease}',
   '.dsh-claude-tool-item[open]>.dsh-claude-tool-summary-row::after{transform:rotate(90deg)}',
-  '.dsh-claude-tool-content{padding:0 10px 8px}',
+  '.dsh-claude-tool-content{min-width:0;padding:0 10px 8px}',
+  '.dsh-claude-tool-content>*{max-width:100%;box-sizing:border-box}',
+  '.dsh-claude-tool-section{margin-top:8px}',
+  '.dsh-claude-tool-section-title{margin-bottom:4px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;text-transform:uppercase;letter-spacing:.04em}',
+  '.dsh-claude-tool-fields{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;font-size:13px;line-height:20px}',
+  '.dsh-claude-tool-field-key{color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-claude-tool-field-value{min-width:0;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.dsh-claude-tool-paths{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none;font:var(--dsw-font-markdown-code-block-small)}',
+  '.dsh-claude-tool-path{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}',
+  '.dsh-claude-tool-code{max-height:260px;overflow:auto;margin:0;padding:8px 0;border-radius:8px;background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small)}',
+  '.dsh-claude-tool-code-line{display:grid;grid-template-columns:44px minmax(max-content,1fr);min-height:18px}',
+  '.dsh-claude-tool-line-number{padding-right:10px;text-align:right;user-select:none;color:var(--dsw-alias-label-caption);border-right:1px solid var(--dsw-alias-border-l1)}',
+  '.dsh-claude-tool-line-text{padding:0 10px;white-space:pre}',
   '.dsh-claude-tool-label{width:72px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-claude-tool-description{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:20px;color:var(--dsw-alias-label-primary)}',
   '.dsh-claude-tool-stats{display:inline-flex;gap:4px;flex:none;font-size:13px;line-height:20px}',
@@ -128,9 +140,127 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
   )
 }
 
-function ToolDetail({ label, value }: { label: string; value: string | undefined }) {
+type ToolRecord = Record<string, unknown>
+
+function parsedValue(value: string | undefined): unknown {
+  if (value === undefined || value.length === 0) return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return value
+  }
+}
+
+function record(value: unknown): ToolRecord | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as ToolRecord : undefined
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function displayValue(value: unknown): string {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map(displayValue).join(', ')
+  return record(value) === undefined ? String(value) : Object.entries(value as ToolRecord)
+    .map(([key, item]) => `${key}: ${displayValue(item)}`)
+    .join('\n')
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="dsh-claude-tool-section"><div className="dsh-claude-tool-section-title">{title}</div>{children}</section>
+}
+
+function Fields({ value, omit = [] }: { value: ToolRecord; omit?: readonly string[] }) {
+  const entries = Object.entries(value).filter(([key, item]) => !omit.includes(key) && item !== undefined && item !== '')
+  if (entries.length === 0) return null
+  return <div className="dsh-claude-tool-fields">{entries.map(([key, item]) => (
+    <div key={key} style={{ display: 'contents' }}>
+      <span className="dsh-claude-tool-field-key">{key.replaceAll('_', ' ')}</span>
+      <span className="dsh-claude-tool-field-value">{displayValue(item)}</span>
+    </div>
+  ))}</div>
+}
+
+function Paths({ paths }: { paths: readonly string[] }) {
+  if (paths.length === 0) return null
+  return <ul className="dsh-claude-tool-paths">{paths.map((path, index) => <li className="dsh-claude-tool-path" key={`${path}:${index}`}>{path}</li>)}</ul>
+}
+
+function Source({ content, start = 1 }: { content: string; start?: number }) {
+  return <div className="dsh-claude-tool-code">{content.split(/\r?\n/u).map((line, index) => (
+    <div className="dsh-claude-tool-code-line" key={index}>
+      <span className="dsh-claude-tool-line-number">{start + index}</span>
+      <span className="dsh-claude-tool-line-text">{line || ' '}</span>
+    </div>
+  ))}</div>
+}
+
+function TextDetail({ title, value }: { title: string; value: string | undefined }) {
   if (value === undefined || value.length === 0) return null
-  return <pre className="dsh-claude-tool-detail">{`${label}\n${value}`}</pre>
+  return <Section title={title}><pre className="dsh-claude-tool-detail">{value}</pre></Section>
+}
+
+function filenameList(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translate }) {
+  const inputValue = parsedValue(tool.input)
+  const outputValue = parsedValue(tool.output)
+  const input = record(inputValue)
+  const output = record(outputValue)
+  const outputTitle = tool.isError === true ? t('toolError') : t('toolOutput')
+
+  if (tool.diffs !== undefined) {
+    return <><DiffBlock diffs={[...tool.diffs]} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
+  }
+
+  if (tool.toolName === 'Read') {
+    const file = record(output?.file)
+    const path = text(file?.filePath) ?? text(input?.file_path)
+    const content = text(file?.content) ?? (typeof outputValue === 'string' ? outputValue : undefined)
+    const offset = numberValue(input?.offset) ?? 1
+    return <>
+      {path === undefined ? null : <Section title="File"><div className="dsh-claude-tool-path">{path}</div></Section>}
+      {input === undefined ? null : <Section title={t('toolInput')}><Fields value={input} omit={['file_path']} /></Section>}
+      {content === undefined ? null : <Section title={outputTitle}><Source content={content} start={offset} /></Section>}
+    </>
+  }
+
+  if (tool.toolName === 'Grep' || tool.toolName === 'Glob') {
+    const filenames = filenameList(output?.filenames)
+    return <>
+      {input === undefined ? <TextDetail title={t('toolInput')} value={typeof inputValue === 'string' ? inputValue : undefined} /> : <Section title={t('toolInput')}><Fields value={input} /></Section>}
+      {filenames.length === 0
+        ? <TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : output === undefined ? undefined : displayValue(output)} />
+        : <Section title={outputTitle}><Paths paths={filenames} /></Section>}
+    </>
+  }
+
+  if (tool.toolName === 'Bash' || tool.toolName === 'PowerShell') {
+    const command = text(input?.command)
+    const stdout = text(output?.stdout)
+    const stderr = text(output?.stderr)
+    const terminal = [stdout, stderr].filter((value): value is string => value !== undefined).join('\n')
+    return <>
+      <TextDetail title="Command" value={command ?? (typeof inputValue === 'string' ? inputValue : undefined)} />
+      {input === undefined ? null : <Section title={t('toolInput')}><Fields value={input} omit={['command']} /></Section>}
+      <TextDetail title={outputTitle} value={terminal || (typeof outputValue === 'string' ? outputValue : undefined)} />
+    </>
+  }
+
+  return <>
+    {input === undefined ? <TextDetail title={t('toolInput')} value={typeof inputValue === 'string' ? inputValue : undefined} /> : <Section title={t('toolInput')}><Fields value={input} /></Section>}
+    {output === undefined ? <TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /> : <Section title={outputTitle}><Fields value={output} /></Section>}
+  </>
 }
 
 export function ClaudeTranscriptToolItem({ tool, t }: { tool: ClaudeTranscriptTool; t: Translate }) {
@@ -154,9 +284,7 @@ export function ClaudeTranscriptToolItem({ tool, t }: { tool: ClaudeTranscriptTo
             ))}
           </div>
         )}
-        {tool.diffs === undefined ? <ToolDetail label={t('toolInput')} value={tool.input} /> : null}
-        {tool.diffs === undefined ? null : <DiffBlock diffs={[...tool.diffs]} />}
-        <ToolDetail label={tool.isError === true ? t('toolError') : t('toolOutput')} value={tool.output} />
+        <ToolPresentation tool={tool} t={t} />
       </div>
     </details>
   )

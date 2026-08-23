@@ -141,8 +141,10 @@ interface ActiveTurn {
   sawActivity: boolean
   sawTextDelta: boolean
   text: string
-  /** Offset already persisted as visible transcript text within the current result segment. */
-  persistedTextLength: number
+  /** Visible prose for the current top-level assistant segment. */
+  transcriptText: string
+  /** Stable sidecar ordinal reused while the current assistant segment grows. */
+  transcriptTextOrdinal: number | undefined
   thinking: string
   aborted: boolean
   deniedToolUseIds: Set<string>
@@ -259,6 +261,7 @@ function rootCallSummary(toolName: string, input: unknown): string {
 
 export class ClaudeSupervisor {
   readonly #entries = new Map<string, SupervisorEntry>()
+  readonly #interruptions = new Map<string, Promise<void>>()
   readonly #runtime: Pick<SubprocessRuntime, 'spawn'>
   readonly #approval: Pick<ApprovalService, 'request'>
   readonly #userQuestions: Pick<UserQuestionService, 'ask'>
@@ -320,6 +323,8 @@ export class ClaudeSupervisor {
   }
 
   runTurn(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
+    const interruption = this.#interruptions.get(request.agent.id as string)
+    if (interruption !== undefined) return interruption.then(() => this.runTurn(request))
     const operation = this.#admissionGate.then(() => this.#runTurnAdmitted(request))
     this.#admissionGate = operation.then(() => undefined, () => undefined)
     return operation
@@ -384,7 +389,8 @@ export class ClaudeSupervisor {
       sawActivity: false,
       sawTextDelta: false,
       text: '',
-      persistedTextLength: 0,
+      transcriptText: '',
+      transcriptTextOrdinal: undefined,
       thinking: '',
       aborted: false,
       deniedToolUseIds: new Set(),
@@ -422,7 +428,7 @@ export class ClaudeSupervisor {
       return active.output
     }
     if (request.signal !== undefined) {
-      const abortListener = () => { void this.#interrupt(entry as SupervisorEntry) }
+      const abortListener = () => { void this.#startInterrupt(entry as SupervisorEntry) }
       active.abortListener = abortListener
       request.signal.addEventListener('abort', abortListener, { once: true })
     }
@@ -713,6 +719,8 @@ export class ClaudeSupervisor {
         if (message.parentToolUseId !== undefined) return
         active.sawTextDelta = true
         active.text += message.text
+        active.transcriptText += message.text
+        await this.#upsertTranscriptText(active)
         active.output.push({ type: 'text-delta', text: message.text })
         return
       case 'assistant-text':
@@ -724,6 +732,8 @@ export class ClaudeSupervisor {
           // content block) do not duplicate the text.
           active.sawTextDelta = true
           active.text += message.text
+          active.transcriptText += message.text
+          await this.#upsertTranscriptText(active)
           active.output.push({ type: 'text-delta', text: message.text })
         }
         return
@@ -742,7 +752,7 @@ export class ClaudeSupervisor {
         })
         return
       case 'tool-call':
-        if (message.parentToolUseId === undefined) await this.#flushTranscriptText(active)
+        if (message.parentToolUseId === undefined) this.#closeTranscriptTextSegment(active)
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-call' : 'subagent',
           phase: 'started',
@@ -884,7 +894,7 @@ export class ClaudeSupervisor {
     active.promptUuid = randomUUID()
     active.sawTextDelta = false
     active.text = ''
-    active.persistedTextLength = 0
+    this.#closeTranscriptTextSegment(active)
     active.thinking = ''
     await this.#appendSafely(active, {
       kind: 'status',
@@ -940,13 +950,15 @@ export class ClaudeSupervisor {
     }
     if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
       active.text = result.text
+      active.transcriptText = result.text
+      await this.#upsertTranscriptText(active)
       active.output.push({ type: 'text-delta', text: result.text })
     }
-    await this.#flushTranscriptText(active)
+    await this.#upsertTranscriptText(active)
     active.output.push({ type: 'segment-complete', text: active.text })
     active.sawTextDelta = false
     active.text = ''
-    active.persistedTextLength = 0
+    this.#closeTranscriptTextSegment(active)
     active.thinking = ''
   }
 
@@ -957,7 +969,7 @@ export class ClaudeSupervisor {
   ): Promise<void> {
     if (entry.active !== active) return
     if (active.aborted) {
-      await this.#flushTranscriptText(active)
+      await this.#upsertTranscriptText(active)
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'failed',
@@ -992,9 +1004,11 @@ export class ClaudeSupervisor {
     if (!result.success) {
       if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
         active.text = result.text
+        active.transcriptText = result.text
+        await this.#upsertTranscriptText(active)
         active.output.push({ type: 'text-delta', text: result.text })
       }
-      await this.#flushTranscriptText(active)
+      await this.#upsertTranscriptText(active)
       const message = result.errors?.join('\n')
         ?? (result.terminalReason !== undefined ? `Claude Code failed the turn (${result.terminalReason})` : 'Claude Code failed the turn')
       await this.#appendSafely(active, {
@@ -1008,9 +1022,11 @@ export class ClaudeSupervisor {
     } else {
       if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
         active.text = result.text
+        active.transcriptText = result.text
+        await this.#upsertTranscriptText(active)
         active.output.push({ type: 'text-delta', text: result.text })
       }
-      await this.#flushTranscriptText(active)
+      await this.#upsertTranscriptText(active)
       if (active.phase === 'primary' && this.#hasRunningTasks(entry, active)) {
         active.phase = 'waiting-tasks'
         await this.#appendSafely(active, {
@@ -1038,19 +1054,27 @@ export class ClaudeSupervisor {
     this.#armIdleTimer(entry)
   }
 
-  async #flushTranscriptText(active: ActiveTurn): Promise<void> {
-    const text = active.text.slice(active.persistedTextLength)
-    if (text.length === 0) return
+  async #upsertTranscriptText(active: ActiveTurn): Promise<void> {
+    if (active.transcriptText.length === 0) return
+    const ordinal = active.transcriptTextOrdinal ?? active.cursor.nextOrdinal++
+    active.transcriptTextOrdinal = ordinal
     try {
-      await this.#appendActivity(active, {
+      await this.#sidecar.appendActivity(active.agent.id as string, {
         kind: 'text',
-        phase: 'completed',
-        text,
+        phase: 'updated',
+        text: active.transcriptText,
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        ordinal,
       })
-      active.persistedTextLength = active.text.length
     } catch {
-      // Transcript persistence is presentational and must not change a settled Claude outcome.
+      // Transcript persistence is presentational and must not change a Claude outcome.
     }
+  }
+
+  #closeTranscriptTextSegment(active: ActiveTurn): void {
+    active.transcriptText = ''
+    active.transcriptTextOrdinal = undefined
   }
 
   async #appendActivity(active: ActiveTurn, activity: ClaudeActivityInput): Promise<void> {
@@ -1069,13 +1093,23 @@ export class ClaudeSupervisor {
     await this.#appendActivity(active, activity).catch(() => undefined)
   }
 
+  #startInterrupt(entry: SupervisorEntry): Promise<void> {
+    const existing = this.#interruptions.get(entry.sessionId)
+    if (existing !== undefined) return existing
+    const interruption = this.#interrupt(entry).finally(() => {
+      this.#interruptions.delete(entry.sessionId)
+    })
+    this.#interruptions.set(entry.sessionId, interruption)
+    return interruption
+  }
+
   async #interrupt(entry: SupervisorEntry): Promise<void> {
     const active = entry.active
     if (active === undefined || entry.state === 'interrupting') return
     entry.state = 'interrupting'
     active.aborted = true
     active.output.fail(abortFailure())
-    await this.#flushTranscriptText(active)
+    await this.#upsertTranscriptText(active)
     let interruptError: unknown
     try {
       const receipt = await withTimeout(entry.query.interrupt(), CLAUDE_INTERRUPT_TIMEOUT_MS, 'Claude Code interrupt')
@@ -1104,7 +1138,7 @@ export class ClaudeSupervisor {
     const active = entry.active
     const stderr = entry.process?.stderrTail()
     if (active !== undefined) {
-      await this.#flushTranscriptText(active)
+      await this.#upsertTranscriptText(active)
       if (active.signal !== undefined && active.abortListener !== undefined) {
         active.signal.removeEventListener('abort', active.abortListener)
       }

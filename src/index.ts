@@ -19,7 +19,9 @@ import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeD
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { RepositoryStatusService } from './repository-status.ts'
 import { RepositorySetupService } from './repository-setup.ts'
+import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
+import { registerRepositoryActionRoute } from './repository-action-routes.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
@@ -311,6 +313,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     })
     registerClaudeGlobalSettingsRoute(webCtx)
     registerRepositorySetupRoute(webCtx, repositorySetup)
+    const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
+    registerRepositoryActionRoute(webCtx, repositoryActions, sessionId => {
+      const agent = webCtx.agents.get(sessionId as never)
+      if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
+      return agent.session.header.cwd
+    })
     registerClaudeProjectionRoute(webCtx, sidecar, sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
