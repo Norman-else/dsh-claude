@@ -16,6 +16,15 @@ export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjec
   sessionId: string
 }
 
+const RATE_LIMIT_TITLE_PREFIX = 'Claude rate limit'
+const RATE_LIMIT_BLOCKING_TITLE = 'Claude rate limit is blocking requests'
+
+/** Whether the newest quota update in the activity feed reports a blocked state. */
+export function rateLimitBlocked(activities: readonly { readonly title?: string }[]): boolean {
+  const latest = activities.findLast(activity => activity.title?.startsWith(RATE_LIMIT_TITLE_PREFIX) === true)
+  return latest?.title === RATE_LIMIT_BLOCKING_TITLE
+}
+
 export function repositorySummary(repository: RepositoryStatus, t: ClaudeRepositoryStatusInjected['t']): readonly string[] {
   if (repository.status === 'not-repository') return [t('repositoryNotGit')]
   if (repository.status === 'unavailable') return [t('repositoryUnavailable')]
@@ -161,12 +170,14 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const aheadCount = repository.ahead ?? 0
   const pushable = repository.remote !== undefined && repository.detached !== true && (aheadCount > 0 || repository.upstream === false)
   const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  const rateLimited = rateLimitBlocked(projection.activities)
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame}>
         <div style={styles.repositoryBar}>
           <span style={styles.repositoryPrIcon}><PullRequestIcon /></span>
           <span style={styles.repositoryPrimary}>{repository.status === 'not-repository' ? t('repositoryNotGit') : t('repositoryUnavailable')}</span>
+          {rateLimited ? <StatusItem label={t('repositoryRateLimited')} tone="warning" /> : null}
         </div>
       </div>
     )
@@ -180,6 +191,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
         <span style={styles.repositoryBranch}>{branch}</span>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
         <span style={styles.repositoryStatusItems}>
+          {rateLimited ? <StatusItem label={t('repositoryRateLimited')} tone="warning" /> : null}
           {hasDiff || pushable ? (
             <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
               {hasDiff && repository.diff !== undefined ? <>

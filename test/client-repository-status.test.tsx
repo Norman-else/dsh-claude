@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeDiffPanel, actionLabel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
-import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
+import { ClaudeRepositoryStatus, PullRequestHoverCard, rateLimitBlocked, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 import type { ClaudeClientProjection } from '../src/client/projection.ts'
@@ -172,6 +172,31 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('href="https://github.com/Mercaso/premier-store-os/pull/12"')
     expect(statusMarkup).toContain('target="_blank"')
     expect(statusMarkup).toContain('rel="noopener noreferrer"')
+  })
+
+  it('surfaces a quota badge while the newest rate limit update is blocking', () => {
+    expect(rateLimitBlocked([])).toBe(false)
+    expect(rateLimitBlocked([{ title: 'Claude rate limit is blocking requests' }])).toBe(true)
+    expect(rateLimitBlocked([
+      { title: 'Claude rate limit is blocking requests' },
+      { title: 'Claude rate limit status changed' },
+    ])).toBe(false)
+    expect(rateLimitBlocked([
+      { title: 'Claude rate limit status changed' },
+      { title: 'Claude API retry' },
+      { title: 'Claude rate limit is blocking requests' },
+    ])).toBe(true)
+    const markup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook({
+        ...projection,
+        activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'status', title: 'Claude rate limit is blocking requests' } as never],
+      })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(markup).toContain('repositoryRateLimited')
   })
 
   it('keeps the diff entry visible while commits are waiting to be pushed', () => {

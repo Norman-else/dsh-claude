@@ -358,13 +358,15 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
     }]
   }
   if (value.type === 'rate_limit_event') {
-    // The CLI pushes subscription-quota status after API activity. Only a
-    // non-allowed state is a real warning; healthy updates stay audit-only.
+    // The CLI pushes subscription-quota status after API activity. Every
+    // update stays audit-only ('status' never enters the conversation flow);
+    // a blocking state surfaces through the repository status bar badge that
+    // reads these titles from the projection instead.
     const info = record(value.rate_limit_info)
     const status = string(info?.status)
     const blocking = status !== undefined && status !== 'allowed'
     return [{
-      kind: blocking ? 'warning' : 'status',
+      kind: 'status',
       title: blocking ? 'Claude rate limit is blocking requests' : 'Claude rate limit status changed',
       detail: value.rate_limit_info,
     }]
