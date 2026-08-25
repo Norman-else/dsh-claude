@@ -260,6 +260,13 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     actionController.current = undefined
     setDialog(undefined)
   }, [dialog?.submitting])
+  // Successful commit/push confirmations dismiss themselves after a short
+  // beat; a fresh PR stays open because its link is the point of the dialog.
+  useEffect(() => {
+    if (dialog?.commit === undefined || dialog.error !== undefined || dialog.pullRequestUrl !== undefined) return
+    const timer = setTimeout(closeDialog, 1_200)
+    return () => clearTimeout(timer)
+  }, [closeDialog, dialog?.commit, dialog?.error, dialog?.pullRequestUrl])
   const openAction = useCallback((action: RepositoryActionKind) => {
     actionController.current?.abort()
     setMenuOpen(false)
