@@ -21,8 +21,11 @@ const RATE_LIMIT_BLOCKING_TITLE = 'Claude rate limit is blocking requests'
 
 /** Whether the newest quota update in the activity feed reports a blocked state. */
 export function rateLimitBlocked(activities: readonly { readonly title?: string }[]): boolean {
-  const latest = activities.findLast(activity => activity.title?.startsWith(RATE_LIMIT_TITLE_PREFIX) === true)
-  return latest?.title === RATE_LIMIT_BLOCKING_TITLE
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const title = activities[index]?.title
+    if (title?.startsWith(RATE_LIMIT_TITLE_PREFIX) === true) return title === RATE_LIMIT_BLOCKING_TITLE
+  }
+  return false
 }
 
 export function repositorySummary(repository: RepositoryStatus, t: ClaudeRepositoryStatusInjected['t']): readonly string[] {
