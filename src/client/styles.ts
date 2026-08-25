@@ -583,85 +583,144 @@ export const tasksBadge: CSSProperties = {
   fontWeight: 600,
 }
 
-/* Claude task launcher attached to the owning conversation turn. */
+/* Claude task badge attached to the owning conversation turn (minimal entry:
+ * a status-ringed count pill at the turn tail, hover reveals the task list). */
 
-export const tasksTurnLauncherWrap: CSSProperties = {
-  margin: '10px 0 4px',
+export const tasksBadgeWrap: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  margin: '8px 0 4px',
 }
 
-export const tasksTurnLauncher: CSSProperties = {
-  maxWidth: '100%',
-  minHeight: 32,
-  boxSizing: 'border-box',
+export const tasksBadgeSeat: CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+}
+
+export const tasksTurnBadge: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 8,
-  padding: '5px 10px 5px 12px',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  borderRadius: 999,
-  background: 'var(--dsw-alias-bg-layer-1)',
-  color: 'var(--dsw-alias-label-primary)',
+  gap: 5,
+  padding: '2px 4px',
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
-  textAlign: 'left',
+  fontSize: 11,
+  lineHeight: '16px',
+  fontVariantNumeric: 'tabular-nums',
   cursor: 'pointer',
-  transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
+  transition: 'color 120ms ease, opacity 120ms ease',
 }
 
-export const tasksTurnLauncherInteractive: CSSProperties = {
-  borderColor: 'var(--dsw-static-blue-450)',
-  background: 'var(--dsw-alias-bg-layer-2)',
-  boxShadow: '0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-450) 14%, transparent)',
+export const tasksBadgeHovered: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
-export const tasksTurnLauncherIcon: CSSProperties = {
-  width: 16,
-  height: 16,
+export const tasksBadgeDone: CSSProperties = {
+  opacity: 0.7,
+}
+
+export const tasksBadgeDot: CSSProperties = {
+  width: 8,
+  height: 8,
   flex: 'none',
-  display: 'inline-grid',
-  placeItems: 'center',
-  color: 'var(--dsw-static-blue-450)',
+  borderRadius: 999,
+  background: 'var(--dsw-static-blue-450)',
+}
+
+export const tasksBadgeDotError: CSSProperties = {
+  background: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const tasksBadgeDotDone: CSSProperties = {
+  background: 'var(--dsw-alias-state-success-primary, var(--dsw-static-green-500))',
+}
+
+export const tasksBadgeCount: CSSProperties = {
+  fontWeight: 600,
+}
+
+export const tasksHoverCard: CSSProperties = {
+  position: 'absolute',
+  right: 0,
+  bottom: 'calc(100% + 8px)',
+  zIndex: 40,
+  minWidth: 240,
+  maxWidth: 340,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  padding: '10px 12px',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  boxShadow: '0 8px 24px color-mix(in srgb, #000 24%, transparent)',
   fontSize: 12,
+  lineHeight: '18px',
+  pointerEvents: 'auto',
+}
+
+export const tasksHoverHeader: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontWeight: 600,
+}
+
+export const tasksHoverRow: CSSProperties = {
+  minWidth: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 7,
+}
+
+export const tasksHoverGlyph: CSSProperties = {
+  width: 12,
+  flex: 'none',
+  textAlign: 'center',
+  fontSize: 10,
   lineHeight: 1,
   fontWeight: 700,
 }
 
-export const tasksTurnLauncherIconError: CSSProperties = {
+export const tasksHoverGlyphRunning: CSSProperties = {
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const tasksHoverGlyphError: CSSProperties = {
   color: 'var(--dsw-alias-state-error-primary)',
 }
 
-export const tasksTurnLauncherIconDone: CSSProperties = {
+export const tasksHoverGlyphDone: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary, var(--dsw-static-green-500))',
 }
 
-export const tasksTurnLauncherTitle: CSSProperties = {
+export const tasksHoverDesc: CSSProperties = {
   minWidth: 0,
+  flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  fontWeight: 500,
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
-export const tasksTurnLauncherSettled: CSSProperties = {
-  flex: 'none',
-  display: 'inline-flex',
-  gap: 8,
-  color: 'var(--dsw-alias-label-tertiary)',
-  fontVariantNumeric: 'tabular-nums',
-}
-
-export const tasksTurnLauncherChevron: CSSProperties = {
+export const tasksHoverType: CSSProperties = {
   flex: 'none',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 16,
-  lineHeight: 1,
-  transition: 'transform 120ms ease, color 120ms ease',
+  fontSize: 10,
 }
 
-export const tasksTurnLauncherChevronInteractive: CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-  transform: 'translateX(2px)',
+export const tasksHoverMore: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const tasksHoverHint: CSSProperties = {
+  marginTop: 2,
+  paddingTop: 6,
+  borderTop: '1px solid var(--dsw-alias-border-l1)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
 }
 
 /* Claude repository setup controls on the blank-session hero. */
