@@ -4,6 +4,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
+import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, type FailingCheck } from './pr-feedback-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
@@ -11,6 +12,8 @@ import * as styles from './styles.ts'
 export interface ClaudeRepositoryStatusInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   openDiff: () => void
+  /** Submit the composer, seeding the given draft text when it is empty. */
+  submitPrompt?: (draft: string) => void
 }
 
 export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjected {
@@ -164,6 +167,169 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
   )
 }
 
+export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }: {
+  sessionId: string
+  pullNumber: number
+  t: ClaudeRepositoryStatusInjected['t']
+  submitPrompt?: (draft: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [checks, setChecks] = useState<readonly FailingCheck[]>([])
+  const [error, setError] = useState<string>()
+  const frameRef = useRef<HTMLSpanElement>(null)
+  const controller = useRef<AbortController>()
+  useEffect(() => () => controller.current?.abort(), [])
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (event.target instanceof Node && frameRef.current?.contains(event.target) !== true) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => { document.removeEventListener('pointerdown', closeOnOutsidePointer) }
+  }, [open])
+  const toggle = (): void => {
+    const next = !open
+    setOpen(next)
+    if (!next) return
+    controller.current?.abort()
+    const aborter = new AbortController()
+    controller.current = aborter
+    setLoading(true)
+    setError(undefined)
+    void loadFailingChecks(sessionId, pullNumber, aborter.signal).then(value => {
+      setChecks(value)
+      setLoading(false)
+    }, (reason: unknown) => {
+      if (aborter.signal.aborted) return
+      setError(reason instanceof Error ? reason.message : t('diffActionFailed'))
+      setLoading(false)
+    })
+  }
+  return (
+    <span ref={frameRef} style={styles.repositoryChecksFrame}>
+      <button type="button" style={styles.repositoryChecksTrigger} aria-haspopup="dialog" aria-expanded={open} aria-label={t('repositoryChecksOpen')} onClick={toggle}>
+        <StatusItem label={t('repositoryChecks_failing')} tone="error" />
+      </button>
+      {open ? (
+        <span role="dialog" aria-label={t('checksCardTitle')} style={styles.repositoryChecksCard}>
+          <strong style={styles.repositoryChecksTitle}>{t('checksCardTitle')}</strong>
+          {loading ? <span style={styles.repositoryChecksHint}>{t('checksCardLoading')}</span> : null}
+          {error === undefined ? null : <span role="alert" style={styles.repositoryChecksError}>{error}</span>}
+          {checks.map(check => (
+            <span key={check.name} style={styles.repositoryChecksItem}>
+              {check.link === undefined
+                ? <span style={styles.repositoryChecksName}>{check.name}</span>
+                : <a href={check.link} target="_blank" rel="noopener noreferrer" style={styles.repositoryChecksName}>{check.name}</a>}
+              {check.description === undefined ? null : <span style={styles.repositoryChecksDesc}>{check.description}</span>}
+            </span>
+          ))}
+          {!loading && error === undefined && checks.length === 0 ? <span style={styles.repositoryChecksHint}>{t('checksCardEmpty')}</span> : null}
+          {submitPrompt !== undefined && checks.length > 0 ? (
+            <button type="button" style={styles.repositoryChecksFix} onClick={() => { submitPrompt(composeChecksPrompt(checks)); setOpen(false) }}>{t('checksCardFix')}</button>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+interface UpdateDialogState {
+  readonly loading: boolean
+  readonly submitting: boolean
+  readonly fingerprint?: string
+  readonly error?: string
+  readonly pushed?: string
+  readonly conflicts?: readonly string[]
+}
+
+export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: {
+  sessionId: string
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+  submitPrompt?: (draft: string) => void
+}) {
+  const [dialog, setDialog] = useState<UpdateDialogState>()
+  const controller = useRef<AbortController>()
+  const pullRequest = repository.pullRequest
+  const base = pullRequest?.baseBranch
+  const behind = repository.baseBehind ?? 0
+  useEffect(() => () => controller.current?.abort(), [])
+  useEffect(() => {
+    if (dialog?.pushed === undefined || dialog.error !== undefined) return
+    const timer = setTimeout(() => setDialog(undefined), 1_200)
+    return () => clearTimeout(timer)
+  }, [dialog?.error, dialog?.pushed])
+  if (pullRequest === undefined || pullRequest.state !== 'open' || base === undefined
+    || repository.detached === true || repository.dirty === true || behind <= 0) return null
+  const openDialog = (): void => {
+    controller.current?.abort()
+    setDialog({ loading: true, submitting: false })
+    const aborter = new AbortController()
+    controller.current = aborter
+    void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
+      setDialog({ loading: false, submitting: false, fingerprint: preview.fingerprint })
+    }, (reason: unknown) => {
+      if (!aborter.signal.aborted) setDialog({ loading: false, submitting: false, error: reason instanceof Error ? reason.message : t('diffActionFailed') })
+    })
+  }
+  const closeDialog = (): void => {
+    if (dialog?.submitting === true) return
+    controller.current?.abort()
+    controller.current = undefined
+    setDialog(undefined)
+  }
+  const confirmUpdate = (): void => {
+    if (dialog?.fingerprint === undefined || dialog.submitting) return
+    const { error: _error, ...pending } = dialog
+    setDialog({ ...pending, submitting: true })
+    void executeRepositoryAction(sessionId, {
+      action: 'update-branch',
+      fingerprint: dialog.fingerprint,
+      message: '',
+      includeUnstaged: false,
+      baseBranch: base,
+    }).then(result => {
+      setDialog({
+        ...pending,
+        submitting: false,
+        ...(result.conflicts !== undefined && result.conflicts.length > 0 ? { conflicts: result.conflicts } : { pushed: result.commit }),
+      })
+    }, (reason: unknown) => {
+      setDialog({ ...pending, submitting: false, error: reason instanceof Error ? reason.message : t('diffActionFailed') })
+    })
+  }
+  const settled = dialog?.pushed !== undefined || dialog?.conflicts !== undefined
+  return (
+    <>
+      <button type="button" style={styles.repositoryUpdateTrigger} title={t('diffUpdateBranchBehind', { base, count: behind })} onClick={openDialog}>↓{behind} {t('repositoryUpdateBranch')}</button>
+      {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('repositoryUpdateBranch')} closeLabel={t('diffCancel')} description={t('diffUpdateBranchDescription', { base })} footer={
+        <div style={styles.diffModalFooter}>
+          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{settled ? t('diffDone') : t('diffCancel')}</button>
+          {!settled ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.loading === true || dialog?.submitting === true || dialog?.fingerprint === undefined} onClick={confirmUpdate}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+        </div>
+      }>
+        {dialog === undefined ? null : <div style={styles.diffModalBody}>
+          <div style={styles.diffModalMeta}>
+            <strong style={styles.diffModalMetaText} title={pullRequest.title}>{repository.branch ?? t('repositoryUnknownBranch')} ← origin/{base}</strong>
+            <span style={styles.diffModalFileState}>{t('diffUpdateBranchBehind', { base, count: behind })}</span>
+          </div>
+          {dialog.pushed === undefined ? null : <p style={styles.diffModalSuccess}>{t('diffUpdateBranchCompleted', { commit: dialog.pushed.slice(0, 8) })}</p>}
+          {dialog.conflicts === undefined ? null : <>
+            <p style={styles.diffModalStatus}>{t('diffUpdateBranchConflicts')}</p>
+            <ul style={styles.diffModalConflicts}>{dialog.conflicts.map(file => <li key={file}>{file}</li>)}</ul>
+            {submitPrompt === undefined ? null : (
+              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(base, dialog.conflicts ?? [])); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
+            )}
+          </>}
+          {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
+        </div>}
+      </Modal>
+    </>
+  )
+}
+
 export const MERGE_METHODS: readonly RepositoryMergeMethod[] = ['merge', 'squash', 'rebase']
 
 interface MergeDialogState {
@@ -255,7 +421,7 @@ export function MergePullRequestControl({ sessionId, repository, t }: {
   )
 }
 
-export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff }: ClaudeRepositoryStatusProps) {
+export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const projection = useClaudeProjection(value => value)
   const repository = projection.repository
@@ -305,14 +471,17 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
               {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
             </span>
           ) : <>
-            <StatusItem
-              label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
-              tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : pullRequest.checks === 'pending' ? 'warning' : 'neutral'}
-            />
+            {pullRequest.checks === 'failing'
+              ? <FailingChecksControl sessionId={sessionId} pullNumber={pullRequest.number} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
+              : <StatusItem
+                  label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
+                  tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'pending' ? 'warning' : 'neutral'}
+                />}
             <StatusItem
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
             />
+            <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />
           </>}
         </span>

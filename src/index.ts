@@ -22,6 +22,8 @@ import { RepositorySetupService } from './repository-setup.ts'
 import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
+import { PullRequestFeedbackService } from './pr-feedback.ts'
+import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
@@ -344,11 +346,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     registerClaudeGlobalSettingsRoute(webCtx)
     registerRepositorySetupRoute(webCtx, repositorySetup)
     const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
-    registerRepositoryActionRoute(webCtx, repositoryActions, sessionId => {
+    const cwdForClaudeSession = (sessionId: string): string | undefined => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       return agent.session.header.cwd
-    })
+    }
+    registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
+    registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(webCtx.subprocess), cwdForClaudeSession)
     const ownsClaudeSession = (sessionId: string): boolean => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID

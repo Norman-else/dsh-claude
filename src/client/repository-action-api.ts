@@ -67,7 +67,8 @@ function preview(value: unknown): RepositoryActionPreview {
 function result(value: unknown): RepositoryActionResult {
   const input = record(value)
   if (input === undefined || typeof input.commit !== 'string' || typeof input.pushed !== 'boolean'
-    || (input.pullRequestUrl !== undefined && typeof input.pullRequestUrl !== 'string')) throw new Error('Invalid repository action result.')
+    || (input.pullRequestUrl !== undefined && typeof input.pullRequestUrl !== 'string')
+    || (input.conflicts !== undefined && (!Array.isArray(input.conflicts) || input.conflicts.some(item => typeof item !== 'string')))) throw new Error('Invalid repository action result.')
   return input as unknown as RepositoryActionResult
 }
 

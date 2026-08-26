@@ -90,6 +90,9 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   diffFilesShort: '{count} files',
   repositoryMergeMenu: 'Open merge options',
   diffMergePr: 'Merge',
+  repositoryChecksOpen: 'Show failing checks',
+  repositoryUpdateBranch: 'Update branch',
+  diffUpdateBranchBehind: '{count} behind {base}',
 }
 
 const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string => {
@@ -329,11 +332,12 @@ describe('Claude repository status UI', () => {
       'push': false,
       'create-pr': false,
       'merge-pr': true,
+      'update-branch': false,
     })
     expect(repositoryActionAvailability({
       ...repository,
       pullRequest: { ...repository.pullRequest, state: 'merged' as const },
-    })).toEqual({ 'commit': true, 'commit-push': true, 'push': false, 'create-pr': true, 'merge-pr': false })
+    })).toEqual({ 'commit': true, 'commit-push': true, 'push': false, 'create-pr': true, 'merge-pr': false, 'update-branch': false })
     const { pullRequest: _pullRequest, remote: _remote, ...localOnly } = repository
     expect(repositoryActionAvailability(localOnly)).toEqual({
       'commit': true,
@@ -341,8 +345,9 @@ describe('Claude repository status UI', () => {
       'push': false,
       'create-pr': false,
       'merge-pr': false,
+      'update-branch': false,
     })
-    const none = { 'commit': false, 'commit-push': false, 'push': false, 'create-pr': false, 'merge-pr': false }
+    const none = { 'commit': false, 'commit-push': false, 'push': false, 'create-pr': false, 'merge-pr': false, 'update-branch': false }
     expect(repositoryActionAvailability({ ...repository, dirty: false })).toEqual({ ...none, 'merge-pr': true })
     expect(repositoryActionAvailability({ ...repository, detached: true })).toEqual(none)
     expect(repositoryActionAvailability(undefined)).toEqual(none)
@@ -356,6 +361,7 @@ describe('Claude repository status UI', () => {
       'push': true,
       'create-pr': true,
       'merge-pr': false,
+      'update-branch': false,
     })
     const { ahead: _ahead, ...neverPushed } = { ...committed, upstream: false }
     expect(repositoryActionAvailability(neverPushed)).toMatchObject({
@@ -363,6 +369,8 @@ describe('Claude repository status UI', () => {
       'create-pr': true,
     })
     expect(repositoryActionAvailability({ ...repository, ahead: 2 })).toMatchObject({ 'push': true, 'create-pr': false })
+    expect(repositoryActionAvailability({ ...repository, dirty: false, baseBehind: 2 })).toMatchObject({ 'update-branch': true })
+    expect(repositoryActionAvailability({ ...repository, baseBehind: 2 })).toMatchObject({ 'update-branch': false })
   })
 
   it('disables the Commit button when the working tree has nothing to commit', () => {
@@ -498,5 +506,30 @@ describe('pull request merge control', () => {
     expect(render({ ...repository.pullRequest, draft: true })).not.toContain('aria-label="Open merge options"')
     expect(render({ ...repository.pullRequest, state: 'merged' as never })).not.toContain('aria-label="Open merge options"')
     expect(render(undefined)).not.toContain('aria-label="Open merge options"')
+  })
+})
+
+describe('pull request feedback controls', () => {
+  const render = (overrides: Partial<typeof repository>): string => renderToStaticMarkup(<ClaudeRepositoryStatus
+    sessionId="session"
+    useSessions={sessionsHook(false)}
+    useClaudeProjection={hook({ ...projection, repository: { ...repository, ...overrides } as never })}
+    t={t}
+    openDiff={vi.fn()}
+    submitPrompt={vi.fn()}
+  />)
+
+  it('offers Update branch only for clean checkouts behind the base', () => {
+    const behind = render({ dirty: false, baseBehind: 2 })
+    expect(behind).toContain('Update branch')
+    expect(behind).toContain('↓2')
+    expect(render({ dirty: true, baseBehind: 2 })).not.toContain('Update branch')
+    expect(render({ dirty: false })).not.toContain('Update branch')
+  })
+
+  it('turns failing checks into a details trigger', () => {
+    const failing = render({ pullRequest: { ...repository.pullRequest, checks: 'failing' as const } })
+    expect(failing).toContain('aria-label="Show failing checks"')
+    expect(render({})).not.toContain('aria-label="Show failing checks"')
   })
 })
