@@ -183,7 +183,6 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
   const number = pullRequest?.number
   const checks = pullRequest?.checks
   const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
-  const [hovered, setHovered] = useState(false)
   useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
   // Submitting while a turn runs would queue or steer (interrupt) it depending
   // on the user's Enter-while-busy setting, so wait for idle instead; the
@@ -215,25 +214,10 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
     setAutoFixEnabled(sessionId, next)
   }
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={enabled}
-      title={t('autoFixTitle')}
-      style={{ ...styles.heroWorktreeToggle, ...(enabled || hovered ? styles.heroWorktreeToggleActive : {}) }}
-      onMouseEnter={() => { setHovered(true) }}
-      onMouseLeave={() => { setHovered(false) }}
-      onClick={toggle}
-    >
-      <span aria-hidden="true" style={{ ...styles.heroWorktreeCheckbox, ...(enabled ? styles.heroWorktreeCheckboxChecked : {}) }}>
-        {enabled ? (
-          <svg viewBox="0 0 12 12" style={styles.heroWorktreeCheckboxIcon}>
-            <path d="m2.5 6.2 2.1 2.1 4.9-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
-          </svg>
-        ) : null}
-      </span>
+    <label title={t('autoFixTitle')} style={{ ...styles.repositoryAutoFix, ...(enabled ? styles.repositoryAutoFixActive : {}) }}>
+      <input type="checkbox" checked={enabled} aria-label={t('autoFixLabel')} style={styles.repositoryAutoFixInput} onChange={toggle} />
       {t('autoFixLabel')}
-    </button>
+    </label>
   )
 }
 

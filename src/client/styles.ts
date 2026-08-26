@@ -1366,6 +1366,33 @@ export const diffTriggerMuted: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+export const repositoryAutoFix: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  minHeight: 26,
+  padding: '0 4px',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  fontWeight: 550,
+  whiteSpace: 'nowrap',
+  userSelect: 'none',
+  cursor: 'pointer',
+}
+
+export const repositoryAutoFixActive: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+}
+
+export const repositoryAutoFixInput: CSSProperties = {
+  width: 14,
+  height: 14,
+  margin: 0,
+  accentColor: 'var(--dsw-static-blue-450)',
+  cursor: 'pointer',
+}
+
 export const repositoryUpdateTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',

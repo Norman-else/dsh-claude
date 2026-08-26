@@ -531,7 +531,10 @@ describe('pull request feedback controls', () => {
   })
 
   it('offers the auto-fix watcher only when a prompt can be submitted for an open PR', () => {
-    expect(render({})).toContain('role="checkbox" aria-checked="false" title="Watch and fix"')
+    const markup = render({})
+    expect(markup).toContain('title="Watch and fix"')
+    expect(markup).toContain('type="checkbox"')
+    expect(markup).not.toContain('checked=""')
     expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('title="Watch and fix"')
     const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"
