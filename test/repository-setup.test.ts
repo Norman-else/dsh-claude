@@ -106,7 +106,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
     ])
-    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true)
     expect(result).toMatchObject({ mode: 'worktree', root, branch: expect.stringMatching(/^claude\/main-/), leaseId: expect.any(String) })
     expect(result.path.startsWith(worktreeRoot)).toBe(true)
@@ -116,7 +116,7 @@ describe('repository setup service', () => {
       sessionId: 'session-1',
       pluginGeneratedBranch: true,
     })
-    await service.cleanupSession('session-1')
+    await service.cleanupOrphans([])
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
     expect(fake.spawn.mock.calls[4]?.[0].argv).toEqual([
       '/bin/git', '-c', 'credential.interactive=never', 'fetch', '--all', '--prune',
@@ -175,7 +175,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
     ])
-    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true, 'feature/user-owned')
     await service.bindLease(result.leaseId ?? '', 'session-explicit')
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases[0]).toMatchObject({
@@ -183,7 +183,7 @@ describe('repository setup service', () => {
       pluginGeneratedBranch: false,
     })
 
-    await service.cleanupSession('session-explicit')
+    await service.cleanupOrphans([])
 
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
     expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'worktree', 'remove', '--', result.path])
@@ -276,11 +276,54 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '? local.txt\n' },
     ])
-    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true)
     await service.bindLease(result.leaseId ?? '', 'session-2')
-    await service.cleanupSession('session-2')
+    await service.cleanupOrphans([])
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toHaveLength(1)
     expect(fake.spawn.mock.calls).toHaveLength(7)
+    expect(result.path.length).toBeGreaterThan(0)
+  })
+
+  it('retains workspace-referenced and freshly created worktree leases', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const fresh = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await fresh.setup(root, 'main', true)
+    // A just-created lease sits inside the registration grace period.
+    await fresh.cleanupOrphans([])
+    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toHaveLength(1)
+    // A referenced lease is retained even with the grace period elapsed, and
+    // the path comparison tolerates case and separator spelling differences.
+    const aged = new RepositorySetupService(runtime([]), { leasePath, worktreeRoot, cleanupGraceMs: 0 })
+    await aged.cleanupOrphans([result.path.toUpperCase()])
+    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toHaveLength(1)
+    expect(fake.spawn.mock.calls).toHaveLength(6)
+  })
+
+  it('drops a lease and prunes Git metadata when the worktree directory is gone', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '', exitCode: 128 },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
+    await service.setup(root, 'main', true)
+    await service.cleanupOrphans([])
+    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
+    expect(fake.spawn.mock.calls.at(-1)?.[0].argv).toEqual(['/bin/git', 'worktree', 'prune'])
   })
 })

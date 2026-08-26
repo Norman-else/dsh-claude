@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
@@ -10,6 +10,7 @@ const GIT_FETCH_TIMEOUT_MS = 60_000
 const MAX_PATH_CHARS = 4_096
 const MAX_BRANCH_CHARS = 512
 const LEASE_SCHEMA_VERSION = 1
+const CLEANUP_GRACE_MS = 10 * 60_000
 
 type RepositorySetupRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
 
@@ -58,6 +59,7 @@ export interface RepositorySetupServiceOptions {
   readonly leasePath?: string
   readonly worktreeRoot?: string
   readonly branchPrefix?: () => Promise<string>
+  readonly cleanupGraceMs?: number
 }
 
 export class RepositorySetupError extends Error {
@@ -118,6 +120,16 @@ function slug(value: string, fallback: string): string {
   return normalized.slice(0, 48) || fallback
 }
 
+/** Comparable form for path identity: resolved, forward slashes, case-folded
+ *  so Windows drive-letter or case spelling differences cannot hide a match. */
+function comparablePath(value: string): string {
+  return resolve(value).replaceAll('\\', '/').toLocaleLowerCase('en-US')
+}
+
+function pathExists(value: string): Promise<boolean> {
+  return stat(value).then(() => true, () => false)
+}
+
 function lease(value: unknown): WorktreeLease | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const input = value as Record<string, unknown>
@@ -141,6 +153,7 @@ export class RepositorySetupService {
   readonly #leasePath: string
   readonly #worktreeRoot: string
   readonly #branchPrefix: () => Promise<string>
+  readonly #cleanupGraceMs: number
   #gitPath: Promise<string> | undefined
   #pending: Promise<unknown> = Promise.resolve()
 
@@ -149,6 +162,7 @@ export class RepositorySetupService {
     this.#leasePath = options.leasePath ?? dshHomePath('plugins', 'dsh-claude', 'worktrees.json')
     this.#worktreeRoot = options.worktreeRoot ?? dshHomePath('plugins', 'dsh-claude', 'worktrees')
     this.#branchPrefix = options.branchPrefix ?? (async () => 'claude')
+    this.#cleanupGraceMs = options.cleanupGraceMs ?? CLEANUP_GRACE_MS
   }
 
   async listBranches(cwd: string): Promise<RepositoryBranchList> {
@@ -226,20 +240,39 @@ export class RepositorySetupService {
     })
   }
 
-  cleanupSession(sessionId: string): Promise<void> {
+  /** Reconcile leases against the set of directories still referenced by a
+   *  workspace: an unreferenced lease's clean worktree is removed. Fresh
+   *  leases are retained for a grace period so a worktree created moments ago
+   *  cannot be swept before its workspace registration lands, and dirty
+   *  worktrees are always retained to avoid losing uncommitted work. */
+  cleanupOrphans(activePaths: readonly string[]): Promise<void> {
+    const active = new Set(activePaths.map(comparablePath))
     return this.#serialize(async () => {
       const leases = await this.#readLeases()
       const retained: WorktreeLease[] = []
       let changed = false
       const git = await this.#git()
+      const now = Date.now()
       for (const item of leases) {
-        if (item.sessionId !== sessionId) {
+        const age = now - Date.parse(item.createdAt)
+        if (active.has(comparablePath(item.path)) || !(age >= this.#cleanupGraceMs)) {
           retained.push(item)
           continue
         }
         try {
           const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], item.path)
-          if (status.exitCode !== 0 || status.lossy || status.stdout.trim().length > 0) {
+          if (status.exitCode !== 0 || status.lossy) {
+            if (await pathExists(item.path)) {
+              retained.push(item)
+            } else {
+              // The directory is already gone; drop the lease and let Git
+              // forget the stale worktree registration.
+              await this.#run(git, ['worktree', 'prune'], item.root).catch(() => undefined)
+              changed = true
+            }
+            continue
+          }
+          if (status.stdout.trim().length > 0) {
             retained.push(item)
             continue
           }
@@ -253,7 +286,8 @@ export class RepositorySetupService {
           }
           changed = true
         } catch {
-          retained.push(item)
+          if (await pathExists(item.root)) retained.push(item)
+          else changed = true // the repository itself is gone; the lease is dead weight
         }
       }
       if (changed) await this.#writeLeases(retained)

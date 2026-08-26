@@ -303,7 +303,32 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.on('agent/disposed', async ({ agent }) => {
     reviewComments.disposeSession(agent.id as string)
     await supervisor.disposeSession(agent.id as string)
-    await repositorySetup.cleanupSession(agent.id as string)
+  })
+  // Deleting a workspace from the sidebar is a durable-registry mutation with
+  // no agent lifecycle edge, so worktree cleanup reconciles leases against
+  // the workspace registry instead: unreferenced clean worktrees are removed
+  // on boot and on a slow interval. workspaceRegistry is not part of this
+  // plugin's typed host surface yet; inject through an untyped escape hatch
+  // so older Hosts without the service simply never start the sweep.
+  const injectWorkspaceRegistry = ctx.inject as unknown as (
+    deps: readonly string[],
+    callback: (sweepCtx: Context & { workspaceRegistry: { list(): readonly { readonly path: string }[] } }) => void,
+  ) => void
+  injectWorkspaceRegistry(['workspaceRegistry'], sweepCtx => {
+    const sweep = (): void => {
+      try {
+        const paths = sweepCtx.workspaceRegistry.list().map(workspace => workspace.path)
+        void repositorySetup.cleanupOrphans(paths).catch(() => undefined)
+      } catch {
+        // The registry can be mid-teardown; skip this pass.
+      }
+    }
+    sweepCtx.effect(() => {
+      sweep()
+      const timer = setInterval(sweep, 60_000)
+      timer.unref?.()
+      return () => clearInterval(timer)
+    }, 'dsh-claude: worktree reconciliation')
   })
   ctx.effect(() => () => reviewComments.dispose(), 'dsh-claude: review comments store')
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
