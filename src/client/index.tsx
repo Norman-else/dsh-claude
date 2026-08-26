@@ -22,7 +22,7 @@ import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
-import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository } from './repository-setup-api.ts'
+import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
@@ -173,6 +173,7 @@ export function apply(ctx: ClientContext): void {
           openSession: id => { sessions.open(id as SessionId) },
           loadStatus: loadRepositoryStatusFor,
           sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
+          projectionFor: id => projections.source(id),
         }),
       }, ClaudePullRequestsPanel)
     } catch {
@@ -388,6 +389,46 @@ export function apply(ctx: ClientContext): void {
           targetInput.submit()
           sourceInput.setDraft('')
           for (const imageId of imageIds) sourceInput.removeImage(imageId)
+        },
+        prepareMany: async (cwd, branch, tickets, onProgress) => {
+          const sourceScope = sessions.scope(sourceSessionId)
+          if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+          const sourceInput = conversation.input.for(sourceScope)
+          // One shared draft applies to every ticket; images stay behind
+          // because a single attachment cannot be split across sessions.
+          const rawDraft = sourceInput.state.getSnapshot().draft
+          const failures: string[] = []
+          for (const [index, ticket] of tickets.entries()) {
+            const report = (stage: RepositoryPreparationStage): void => {
+              onProgress({ ticketKey: ticket.key, index, total: tickets.length, stage })
+            }
+            try {
+              report('inspecting')
+              const prepared = await prepareRepository(cwd, branch, true, ticket.key, report)
+              void assignJiraTicket(ticket.key).catch((reason: unknown) => {
+                console.warn(`dsh-claude: could not assign ${ticket.key}: ${reason instanceof Error ? reason.message : String(reason)}`)
+              })
+              report('creating-workspace')
+              const workspace = await workspaces.create({ path: prepared.path })
+              report('starting-session')
+              const targetSessionId = await workspaces.connectWorkspace(workspace.workspaceId)
+              const targetScope = sessions.scope(targetSessionId)
+              if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+              const presetResponse = await connection.api.agentPresets.select({ sessionId: targetSessionId, agentPreset: 'claude' })
+              if (!presetResponse.result.ok) throw new Error(presetResponse.result.error.message)
+              sessions.noteAgentPreset(targetSessionId, presetResponse.result.value.agentPreset)
+              const targetInput = conversation.input.for(targetScope)
+              report('transferring-draft')
+              targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
+              if (prepared.leaseId !== undefined) await bindRepositoryLease(prepared.leaseId, targetSessionId)
+              report('submitting')
+              targetInput.submit()
+            } catch (cause) {
+              failures.push(`${ticket.key}: ${cause instanceof Error ? cause.message : String(cause)}`)
+            }
+          }
+          if (failures.length < tickets.length) sourceInput.setDraft('')
+          if (failures.length > 0) throw new Error(failures.join(' · '))
         },
       }),
     }, ClaudeHeroRepositoryControls))

@@ -9,6 +9,13 @@ import { loadRepositoryBranches, type RepositoryPreparationStage } from './repos
 import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
 
+export interface BatchTicketProgress {
+  ticketKey: string
+  index: number
+  total: number
+  stage: RepositoryPreparationStage
+}
+
 export interface ClaudeHeroRepositoryControlsInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   prepare: (
@@ -17,6 +24,13 @@ export interface ClaudeHeroRepositoryControlsInjected {
     worktree: boolean,
     onProgress: (stage: RepositoryPreparationStage) => void,
     ticket?: JiraTicket,
+  ) => Promise<void>
+  /** Kick off one worktree + session per ticket; the hero session stays put. */
+  prepareMany: (
+    cwd: string,
+    branch: string,
+    tickets: readonly JiraTicket[],
+    onProgress: (progress: BatchTicketProgress) => void,
   ) => Promise<void>
 }
 
@@ -56,6 +70,13 @@ export function filterRepositoryBranches(branches: readonly string[], query: str
     : branches.filter(branch => branch.toLocaleLowerCase().includes(normalized))
 }
 
+/** Toggle a ticket's membership in the multi-select, keyed by ticket key. */
+export function toggleTicketSelection(tickets: readonly JiraTicket[], ticket: JiraTicket): readonly JiraTicket[] {
+  return tickets.some(item => item.key === ticket.key)
+    ? tickets.filter(item => item.key !== ticket.key)
+    : [...tickets, ticket]
+}
+
 export function branchMenuNavigationIndex(current: number, count: number, key: 'ArrowDown' | 'ArrowUp' | 'Home' | 'End'): number {
   if (count <= 0) return 0
   if (key === 'Home') return 0
@@ -91,10 +112,12 @@ function progressLabelKey(stage: RepositoryPreparationStage): ClaudeCodeSettings
 }
 
 export function WorktreeProgressCard({
-  stage, error, t, onDismiss,
+  stage, error, context, t, onDismiss,
 }: {
   stage: RepositoryPreparationStage
   error?: string
+  /** Batch annotation shown beside the title, e.g. "PSOS-1 · 1/3". */
+  context?: string
   t: ClaudeHeroRepositoryControlsInjected['t']
   onDismiss: () => void
 }) {
@@ -112,7 +135,10 @@ export function WorktreeProgressCard({
           </svg>
         ) : <span aria-hidden="true" style={styles.heroWorktreeProgressError}>×</span>}
         <div style={styles.heroWorktreeProgressCopy}>
-          <strong style={styles.heroWorktreeProgressTitle}>{error === undefined ? t('repositoryProgressTitle') : t('repositoryProgressFailed')}</strong>
+          <strong style={styles.heroWorktreeProgressTitle}>
+            {error === undefined ? t('repositoryProgressTitle') : t('repositoryProgressFailed')}
+            {context === undefined ? null : <span style={styles.heroWorktreeProgressContext}> {context}</span>}
+          </strong>
           <span style={styles.heroWorktreeProgressCurrent}>{error ?? t(progressLabelKey(stage))}</span>
         </div>
         {error === undefined ? null : (
@@ -145,7 +171,7 @@ function TicketIcon() {
 
 export function ClaudeHeroRepositoryCapsule({
   branches, selected, worktree, busy, menuOpen, worktreeLabel, searchPlaceholder, emptySearchLabel,
-  onMenuOpenChange, onSelect, onWorktreeChange,
+  worktreeLocked = false, onMenuOpenChange, onSelect, onWorktreeChange,
 }: {
   branches: readonly string[]
   selected: string
@@ -155,6 +181,8 @@ export function ClaudeHeroRepositoryCapsule({
   worktreeLabel: string
   searchPlaceholder: string
   emptySearchLabel: string
+  /** Multi-ticket kickoff always builds worktrees; the toggle locks checked. */
+  worktreeLocked?: boolean
   onMenuOpenChange: (open: boolean) => void
   onSelect: (branch: string) => void
   onWorktreeChange: (checked: boolean) => void
@@ -268,11 +296,11 @@ export function ClaudeHeroRepositoryCapsule({
       <button
         type="button"
         role="checkbox"
-        aria-checked={worktree}
-        disabled={busy}
+        aria-checked={worktreeLocked || worktree}
+        disabled={busy || worktreeLocked}
         style={{
           ...styles.heroWorktreeToggle,
-          ...(worktree || worktreeHovered ? styles.heroWorktreeToggleActive : {}),
+          ...(worktreeLocked || worktree || worktreeHovered ? styles.heroWorktreeToggleActive : {}),
           ...(worktreeFocused ? styles.heroWorktreeToggleFocused : {}),
         }}
         onMouseEnter={() => { setWorktreeHovered(true) }}
@@ -281,8 +309,8 @@ export function ClaudeHeroRepositoryCapsule({
         onBlur={() => { setWorktreeFocused(false) }}
         onClick={() => { onWorktreeChange(!worktree) }}
       >
-        <span aria-hidden="true" style={{ ...styles.heroWorktreeCheckbox, ...(worktree ? styles.heroWorktreeCheckboxChecked : {}) }}>
-          {worktree ? (
+        <span aria-hidden="true" style={{ ...styles.heroWorktreeCheckbox, ...(worktreeLocked || worktree ? styles.heroWorktreeCheckboxChecked : {}) }}>
+          {worktreeLocked || worktree ? (
             <svg viewBox="0 0 12 12" style={styles.heroWorktreeCheckboxIcon}>
               <path d="m2.5 6.2 2.1 2.1 4.9-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
             </svg>
@@ -295,7 +323,7 @@ export function ClaudeHeroRepositoryCapsule({
 }
 
 export function ClaudeHeroRepositoryControls({
-  sessionId, useSessions, useWorkspaces, input, t, prepare,
+  sessionId, useSessions, useWorkspaces, input, t, prepare, prepareMany,
 }: ClaudeHeroRepositoryControlsProps) {
   const cwd = useSessions(state => state.byId[sessionId]?.cwd)
   const workspacePath = useWorkspaces(state => state.items.find(item => item.sessionIds.includes(sessionId))?.path)
@@ -309,7 +337,9 @@ export function ClaudeHeroRepositoryControls({
   const [progressError, setProgressError] = useState<string>()
   const [error, setError] = useState<string>()
   const [jiraConnected, setJiraConnected] = useState(false)
-  const [ticket, setTicket] = useState<JiraTicket>()
+  const [tickets, setTickets] = useState<readonly JiraTicket[]>([])
+  const [batchProgress, setBatchProgress] = useState<BatchTicketProgress>()
+  const [batchDone, setBatchDone] = useState<number>()
   const [ticketMenuOpen, setTicketMenuOpen] = useState(false)
   const [ticketQuery, setTicketQuery] = useState('')
   const [ticketResults, setTicketResults] = useState<readonly JiraTicket[]>()
@@ -354,7 +384,9 @@ export function ClaudeHeroRepositoryControls({
     setProgressStage(undefined)
     setProgressError(undefined)
     setError(undefined)
-    setTicket(undefined)
+    setTickets([])
+    setBatchProgress(undefined)
+    setBatchDone(undefined)
     setTicketMenuOpen(false)
     setTicketQuery('')
     setTicketResults(undefined)
@@ -373,12 +405,12 @@ export function ClaudeHeroRepositoryControls({
   const availableBranches = branches === undefined ? [] : repositoryBranchOptions(branches)
   // A ticket alone routes the submission through prepare: without a worktree it
   // stays on the selected branch, with one it opens a worktree named after the key.
-  const changed = branches !== undefined && selected.length > 0 && (worktree || ticket !== undefined || selected !== branches.current)
+  const changed = branches !== undefined && selected.length > 0 && (worktree || tickets.length > 0 || selected !== branches.current)
   useEffect(() => {
     if (!changed || portal === undefined || busy) return
     const submit = (event: KeyboardEvent | MouseEvent): void => {
       // A ticket seeds the draft itself, so an empty composer may still submit.
-      if (pendingRef.current || (input.draft.trim().length === 0 && ticket === undefined)) return
+      if (pendingRef.current || (input.draft.trim().length === 0 && tickets.length === 0)) return
       const intercept = event instanceof KeyboardEvent ? shouldInterceptKey(event) : shouldInterceptClick(event)
       if (!intercept) return
       event.preventDefault()
@@ -386,8 +418,30 @@ export function ClaudeHeroRepositoryControls({
       pendingRef.current = true
       setBusy(true)
       setProgressError(undefined)
-      setProgressStage(worktree ? 'inspecting' : undefined)
       setError(undefined)
+      setBatchDone(undefined)
+      if (tickets.length > 1) {
+        const total = tickets.length
+        setBatchProgress({ ticketKey: tickets[0]?.key ?? '', index: 0, total, stage: 'inspecting' })
+        setProgressStage('inspecting')
+        void prepareMany(branches.root, selected, tickets, progress => {
+          setBatchProgress(progress)
+          setProgressStage(progress.stage)
+        }).then(() => {
+          setBatchDone(total)
+          setBatchProgress(undefined)
+          setProgressStage(undefined)
+          setTickets([])
+        }, (reason: unknown) => {
+          setProgressError(reason instanceof Error ? reason.message : String(reason))
+        }).finally(() => {
+          pendingRef.current = false
+          setBusy(false)
+        })
+        return
+      }
+      const ticket = tickets[0]
+      setProgressStage(worktree ? 'inspecting' : undefined)
       void prepare(branches.root, selected, worktree, stage => { if (worktree) setProgressStage(stage) }, ticket).catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
         if (worktree) setProgressError(message)
@@ -403,7 +457,7 @@ export function ClaudeHeroRepositoryControls({
       document.removeEventListener('keydown', submit, true)
       document.removeEventListener('click', submit, true)
     }
-  }, [branches, busy, changed, input.draft, portal, prepare, selected, ticket, worktree])
+  }, [branches, busy, changed, input.draft, portal, prepare, prepareMany, selected, tickets, worktree])
 
   // The ticket menu only exists once a Jira connection is configured.
   useEffect(() => {
@@ -446,8 +500,14 @@ export function ClaudeHeroRepositoryControls({
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     return () => { document.removeEventListener('pointerdown', closeOnOutsidePointer) }
   }, [ticketMenuOpen])
-  const chooseTicket = (next: JiraTicket | undefined): void => {
-    setTicket(next)
+  // Toggling keeps the menu open so several tickets can be picked in one go.
+  const toggleTicket = (next: JiraTicket): void => {
+    setTickets(current => toggleTicketSelection(current, next))
+    setError(undefined)
+    setBatchDone(undefined)
+  }
+  const clearTickets = (): void => {
+    setTickets([])
     setError(undefined)
     setTicketMenuOpen(false)
   }
@@ -466,6 +526,7 @@ export function ClaudeHeroRepositoryControls({
           worktreeLabel={t('repositoryWorktree')}
           searchPlaceholder={t('repositoryBranchSearch')}
           emptySearchLabel={t('repositoryBranchSearchEmpty')}
+          worktreeLocked={tickets.length > 1}
           onMenuOpenChange={setMenuOpen}
           onSelect={(branch) => {
             setSelected(branch)
@@ -486,7 +547,9 @@ export function ClaudeHeroRepositoryControls({
               onClick={() => { setTicketMenuOpen(!ticketMenuOpen) }}
             >
               <TicketIcon />
-              <span style={styles.heroBranchName}>{ticket === undefined ? t('heroTicket') : ticket.key}</span>
+              <span style={styles.heroBranchName}>
+                {tickets.length === 0 ? t('heroTicket') : tickets.length === 1 ? tickets[0]?.key : t('heroTicketCount', { count: tickets.length })}
+              </span>
               <IconChevronDownOutline14 />
             </button>
             {ticketMenuOpen ? (
@@ -503,38 +566,61 @@ export function ClaudeHeroRepositoryControls({
                     onChange={event => { setTicketQuery(event.currentTarget.value) }}
                   />
                 </label>
+                {tickets.length === 0 ? null : (
+                  <span style={styles.heroTicketChips}>
+                    {tickets.map(item => (
+                      <span key={item.key} style={styles.heroTicketChip}>
+                        {item.key}
+                        <button
+                          type="button"
+                          style={styles.heroTicketChipRemove}
+                          aria-label={t('heroTicketRemove', { key: item.key })}
+                          onClick={() => { toggleTicket(item) }}
+                        >×</button>
+                      </span>
+                    ))}
+                    {tickets.length > 1
+                      ? <button type="button" style={styles.heroTicketChipsClear} onClick={clearTickets}>{t('heroTicketNone')}</button>
+                      : null}
+                  </span>
+                )}
                 <span style={styles.heroBranchList}>
                   {ticketError !== undefined
                     ? <span style={styles.heroBranchEmpty}>{ticketError}</span>
                     : ticketResults === undefined
                       ? <span style={styles.heroBranchEmpty}>{t('heroTicketLoading')}</span>
-                      : <>
-                        {ticket === undefined ? null : (
-                          <button type="button" role="menuitem" style={styles.heroBranchItem} onClick={() => { chooseTicket(undefined) }}>
-                            <span style={styles.heroBranchItemName}>{t('heroTicketNone')}</span>
-                          </button>
-                        )}
-                        {ticketResults.length === 0 ? <span style={styles.heroBranchEmpty}>{t('heroTicketEmpty')}</span> : ticketResults.map(item => (
-                          <button key={item.key} type="button" role="menuitem" aria-current={item.key === ticket?.key ? 'true' : undefined} style={styles.heroBranchItem} onClick={() => { chooseTicket(item) }}>
+                      : ticketResults.length === 0 ? <span style={styles.heroBranchEmpty}>{t('heroTicketEmpty')}</span> : ticketResults.map(item => {
+                        const picked = tickets.some(entry => entry.key === item.key)
+                        return (
+                          <button key={item.key} type="button" role="menuitemcheckbox" aria-checked={picked} style={styles.heroBranchItem} onClick={() => { toggleTicket(item) }}>
+                            <span aria-hidden="true" style={{ ...styles.heroTicketCheckbox, ...(picked ? styles.heroWorktreeCheckboxChecked : {}) }}>
+                              {picked ? (
+                                <svg viewBox="0 0 12 12" style={styles.heroWorktreeCheckboxIcon}>
+                                  <path d="m2.5 6.2 2.1 2.1 4.9-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+                                </svg>
+                              ) : null}
+                            </span>
                             <span style={styles.heroTicketKey}>{item.key}</span>
                             <span style={styles.heroBranchItemName}>{item.summary}</span>
                             {item.status === undefined ? null : <span style={styles.heroTicketStatus}>{item.status}</span>}
                           </button>
-                        ))}
-                      </>}
+                        )
+                      })}
                 </span>
               </span>
             ) : null}
           </span>
         </span>}
         {error === undefined ? null : <span role="alert" style={styles.heroRepositoryError}>{error}</span>}
+        {batchDone === undefined ? null : <span role="status" style={styles.heroRepositoryStatus}>{t('heroBatchStarted', { count: batchDone })}</span>}
       </>}
       {progressStage === undefined || (!busy && progressError === undefined) ? null : (
         <WorktreeProgressCard
           stage={progressStage}
           {...(progressError === undefined ? {} : { error: progressError })}
+          {...(batchProgress === undefined ? {} : { context: `${batchProgress.ticketKey} · ${batchProgress.index + 1}/${batchProgress.total}` })}
           t={t}
-          onDismiss={() => { setProgressStage(undefined); setProgressError(undefined) }}
+          onDismiss={() => { setProgressStage(undefined); setProgressError(undefined); setBatchProgress(undefined) }}
         />
       )}
     </span>

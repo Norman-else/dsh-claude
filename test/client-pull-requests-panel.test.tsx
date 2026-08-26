@@ -1,6 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudePullRequestsPanel, claudeSessionRows, type OverviewSessionRow } from '../src/client/ClaudePullRequestsPanel.tsx'
+import {
+  ClaudePullRequestsPanel,
+  claudeSessionRows,
+  overviewAttention,
+  type OverviewProjectionSource,
+  type OverviewSessionRow,
+} from '../src/client/ClaudePullRequestsPanel.tsx'
+import type { ClaudeActivityEvent } from '../src/events.ts'
+import { EMPTY_CLAUDE_PROJECTION } from '../src/client/projection.ts'
 
 const byId: Record<string, OverviewSessionRow> = {
   a: { id: 'a', displayTitle: 'Login fix', cwd: '/repo-a', agentPreset: 'claude', running: false },
@@ -30,5 +38,37 @@ describe('Claude pull requests overview', () => {
     expect(markup).toContain('overviewLoading')
     const empty = renderToStaticMarkup(<ClaudePullRequestsPanel t={t} closeDetails={vi.fn()} openSession={vi.fn()} loadStatus={vi.fn()} sessions={store({})} />)
     expect(empty).toContain('overviewEmpty')
+  })
+
+  it('derives what a session is blocked on from the latest prompt activity', () => {
+    const base = { turn: 1, step: 1 }
+    const pending: ClaudeActivityEvent[] = [
+      { ...base, ordinal: 0, kind: 'tool-call', phase: 'completed' },
+      { ...base, ordinal: 1, kind: 'permission', phase: 'started' },
+    ]
+    expect(overviewAttention(pending)).toBe('permission')
+    expect(overviewAttention([...pending, { ...base, ordinal: 1, kind: 'permission', phase: 'completed' }])).toBeUndefined()
+    expect(overviewAttention([...pending, { ...base, ordinal: 2, kind: 'question', phase: 'started' }])).toBe('question')
+    expect(overviewAttention([])).toBeUndefined()
+  })
+
+  it('shows attention badges and context usage from the session projection', () => {
+    const projection = {
+      ...EMPTY_CLAUDE_PROJECTION,
+      activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'permission' as const, phase: 'started' as const }],
+      contextUsage: { model: 'claude', totalTokens: 50, maxTokens: 100, percentage: 50, categories: [] },
+    }
+    const projectionFor = (): OverviewProjectionSource => ({ subscribe: () => () => {}, getSnapshot: () => projection })
+    const markup = renderToStaticMarkup(<ClaudePullRequestsPanel
+      t={t}
+      closeDetails={vi.fn()}
+      openSession={vi.fn()}
+      loadStatus={vi.fn()}
+      sessions={store(byId)}
+      projectionFor={projectionFor}
+    />)
+    // Only the running session (b) surfaces the pending permission badge.
+    expect(markup.split('overviewNeedsPermission')).toHaveLength(2)
+    expect(markup).toContain('overviewContextUsage')
   })
 })

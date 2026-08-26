@@ -14,8 +14,10 @@ import {
   filterRepositoryBranches,
   repositoryBranchOptions,
   selectedBranchFirst,
+  toggleTicketSelection,
   WorktreeProgressCard,
 } from '../src/client/ClaudeHeroRepositoryControls.tsx'
+import type { JiraTicket } from '../src/client/jira-api.ts'
 import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 
 describe('Claude hero repository capsule', () => {
@@ -115,6 +117,45 @@ describe('Claude hero repository capsule', () => {
     expect(markup).toContain('Worktree creation failed')
     expect(markup).toContain('Git could not refresh remote references.')
     expect(markup).toContain('aria-label="Dismiss Worktree progress"')
+  })
+
+  it('toggles ticket selection by key and preserves order', () => {
+    const first: JiraTicket = { key: 'PSOS-1', summary: 'One', url: 'https://x/browse/PSOS-1' }
+    const second: JiraTicket = { key: 'PSOS-2', summary: 'Two', url: 'https://x/browse/PSOS-2' }
+    const one = toggleTicketSelection([], first)
+    const two = toggleTicketSelection(one, second)
+    expect(two.map(ticket => ticket.key)).toEqual(['PSOS-1', 'PSOS-2'])
+    expect(toggleTicketSelection(two, first).map(ticket => ticket.key)).toEqual(['PSOS-2'])
+  })
+
+  it('locks the Worktree toggle checked during a multi-ticket kickoff', () => {
+    const markup = renderToStaticMarkup(<ClaudeHeroRepositoryCapsule
+      branches={['main']}
+      selected="main"
+      worktree={false}
+      busy={false}
+      menuOpen={false}
+      worktreeLabel="Worktree"
+      searchPlaceholder="Search branches"
+      emptySearchLabel="No matching branches"
+      worktreeLocked
+      onMenuOpenChange={vi.fn()}
+      onSelect={vi.fn()}
+      onWorktreeChange={vi.fn()}
+    />)
+    expect(markup).toContain('aria-checked="true"')
+    expect(markup).toMatch(/role="checkbox"[^>]*disabled/)
+  })
+
+  it('annotates batch progress with the active ticket', () => {
+    const t = (key: ClaudeCodeSettingsKey): string => en[key]
+    const markup = renderToStaticMarkup(<WorktreeProgressCard
+      stage="creating-worktree"
+      context="PSOS-1 · 1/3"
+      t={t}
+      onDismiss={vi.fn()}
+    />)
+    expect(markup).toContain('PSOS-1 · 1/3')
   })
 
   it('filters branches case-insensitively with trimmed input', () => {

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryStatus } from '../repository-status.ts'
+import type { ClaudeActivityEvent } from '../events.ts'
 import { autoFixEnabled } from './auto-fix.ts'
+import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 
@@ -19,15 +21,33 @@ export interface OverviewSessionsStore {
   getSnapshot(): { readonly byId: Readonly<Record<string, OverviewSessionRow | undefined>> }
 }
 
+export interface OverviewProjectionSource {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): ClaudeClientProjection
+}
+
 export interface ClaudePullRequestsPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   closeDetails: () => void
   openSession: (sessionId: string) => void
   loadStatus: (cwd: string, signal?: AbortSignal) => Promise<RepositoryStatus>
   sessions: OverviewSessionsStore
+  /** Live sidecar projection per session, for attention badges and context usage. */
+  projectionFor?: (sessionId: string) => OverviewProjectionSource
 }
 
 export const OVERVIEW_REFRESH_MS = 30_000
+
+/** What a running session is blocked on: the latest permission or question
+ *  activity that is still in its started phase. */
+export function overviewAttention(activities: readonly ClaudeActivityEvent[]): 'permission' | 'question' | undefined {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index]
+    if (activity === undefined || (activity.kind !== 'permission' && activity.kind !== 'question')) continue
+    return activity.phase === 'started' ? activity.kind : undefined
+  }
+  return undefined
+}
 
 /** Claude sessions worth listing: non-blank, with a checkout; running first. */
 export function claudeSessionRows(byId: Readonly<Record<string, OverviewSessionRow | undefined>>): readonly OverviewSessionRow[] {
@@ -47,7 +67,24 @@ function repositoryName(remote: string | undefined): string | undefined {
   return remote?.split('/').at(-1)
 }
 
-export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStatus, sessions }: ClaudePullRequestsPanelInjected) {
+function OverviewAttention({ source, running, t }: {
+  source: OverviewProjectionSource
+  running: boolean
+  t: ClaudePullRequestsPanelInjected['t']
+}) {
+  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  // A pending prompt only blocks a live turn; stale ones from interrupted
+  // turns would otherwise flag idle sessions forever.
+  const attention = running ? overviewAttention(snapshot.activities) : undefined
+  const usage = snapshot.contextUsage
+  return <>
+    {attention === 'permission' ? <Badge label={t('overviewNeedsPermission')} tone="warning" /> : null}
+    {attention === 'question' ? <Badge label={t('overviewNeedsAnswer')} tone="warning" /> : null}
+    {usage === undefined ? null : <span>{t('overviewContextUsage', { percentage: usage.percentage })}</span>}
+  </>
+}
+
+export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStatus, sessions, projectionFor }: ClaudePullRequestsPanelInjected) {
   const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot)
   const rows = useMemo(() => claudeSessionRows(snapshot.byId), [snapshot.byId])
   const cwdKey = useMemo(() => [...new Set(rows.map(row => row.cwd ?? ''))].sort().join('\0'), [rows])
@@ -106,6 +143,7 @@ export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStat
                   ? <Badge label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)} tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'} />
                   : null}
                 {autoFixEnabled(row.id) ? <Badge label={t('overviewAutoFix')} tone="success" /> : null}
+                {projectionFor === undefined ? null : <OverviewAttention source={projectionFor(row.id)} running={row.running === true} t={t} />}
               </span>
             </button>
           )

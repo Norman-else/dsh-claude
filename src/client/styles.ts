@@ -994,6 +994,11 @@ export const heroWorktreeProgressCurrent: CSSProperties = {
   overflowWrap: 'anywhere',
 }
 
+export const heroWorktreeProgressContext: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+  fontWeight: 500,
+}
+
 export const heroWorktreeProgressDismiss: CSSProperties = {
   width: 24,
   height: 24,
@@ -1668,6 +1673,67 @@ export const heroTicketKey: CSSProperties = {
   fontSize: 11,
   fontWeight: 650,
   letterSpacing: 0.2,
+}
+
+export const heroTicketChips: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: 6,
+  padding: '2px 2px 6px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 12%, transparent))',
+}
+
+export const heroTicketChip: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '2px 4px 2px 8px',
+  border: '1px solid color-mix(in srgb, var(--dsw-static-blue-450) 40%, transparent)',
+  borderRadius: 999,
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: 0.2,
+}
+
+export const heroTicketChipRemove: CSSProperties = {
+  width: 16,
+  height: 16,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: 'none',
+  borderRadius: 999,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: 1,
+  cursor: 'pointer',
+}
+
+export const heroTicketChipsClear: CSSProperties = {
+  padding: '2px 4px',
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  cursor: 'pointer',
+}
+
+export const heroTicketCheckbox: CSSProperties = {
+  width: 15,
+  height: 15,
+  boxSizing: 'border-box',
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 4,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  transition: 'border-color 120ms ease, background 120ms ease',
 }
 
 export const heroTicketStatus: CSSProperties = {
