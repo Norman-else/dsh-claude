@@ -1295,6 +1295,12 @@ export const repositoryItem: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
+export const repositoryItemLabel: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+
 export const repositoryItemDot: CSSProperties = {
   width: 6,
   height: 6,
