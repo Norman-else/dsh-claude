@@ -122,7 +122,8 @@ const sidecarRoots: string[] = []
 const sidecars = new WeakMap<ClaudeSupervisor, ClaudeSidecarRepository>()
 
 afterEach(async () => {
-  await Promise.all(sidecarRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  // Sidecar appends can still be landing when a test ends; let rm retry ENOTEMPTY.
+  await Promise.all(sidecarRoots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })))
 })
 
 function supervisor(
