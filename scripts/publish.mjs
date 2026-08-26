@@ -147,11 +147,21 @@ if (!alreadyPublished) {
 }
 
 if (!releaseExists) {
+  // GitHub's generated notes only enumerate merged pull requests, so direct
+  // commits would otherwise leave the release body empty. Prepend the full
+  // commit list; the generated PR list and compare link are appended after it.
+  const previousTag = run('git', ['describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD'], {
+    capture: true,
+    allowFailure: true,
+  })
+  const range = previousTag.status === 0 ? [`${previousTag.stdout.trim()}..HEAD`] : []
+  const subjects = capture('git', ['log', '--format=- %s (%h)', ...range])
   run('gh', [
     'release', 'create', tag,
     '--target', head,
     '--title', tag,
     '--generate-notes',
+    ...(subjects.length === 0 ? [] : ['--notes', `## Commits\n\n${subjects}\n`]),
   ])
 }
 
