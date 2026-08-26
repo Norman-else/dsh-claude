@@ -11,6 +11,7 @@ import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/
 import type { ClaudeActivityEvent } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
+import { selectStepActivities } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -341,7 +342,7 @@ export function ClaudeTranscriptToolGroup({
 export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
   ensureCss()
   const marker = node.data
-  const activities = useClaudeProjection(value => value.activities)
+  const activities = useClaudeProjection(value => selectStepActivities(value, marker.turn, marker.step))
   const tasks = useClaudeProjection(value => value.tasks?.tasks ?? EMPTY_TASKS)
   const items = useMemo(
     () => transcriptItemsForStep(activities, marker.turn, marker.step, tasks),

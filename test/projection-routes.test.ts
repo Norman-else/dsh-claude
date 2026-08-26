@@ -114,4 +114,41 @@ describe('Claude sidecar projection route', () => {
     await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/session`, { method: 'POST' }), method)
     expect(method.statusCode).toBe(405)
   })
+
+  it('streams a snapshot line, forwards live deltas, and unsubscribes on close', async () => {
+    const ctx = context()
+    let listener: ((delta: unknown) => void) | undefined
+    let unsubscribed = false
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 2, activities: [] }),
+      subscribe: (_sessionId: string, callback: (delta: unknown) => void) => {
+        listener = callback
+        return () => { unsubscribed = true }
+      },
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(ctx, sidecar, () => true)
+    const closeHandlers: (() => void)[] = []
+    const res = {
+      statusCode: 0,
+      body: '',
+      headers: {} as Record<string, string>,
+      writeHead(status: number, headers: Record<string, string>) { this.statusCode = status; this.headers = headers; return this },
+      flushHeaders() {},
+      write(chunk: string) { this.body += chunk; return true },
+      end() {},
+      on(event: string, callback: () => void) { if (event === 'close') closeHandlers.push(callback); return this },
+    } as unknown as ServerResponse & { statusCode: number; body: string; headers: Record<string, string> }
+    const pending = ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent('session/a')}/stream`), res)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('ndjson')
+    const first = JSON.parse(res.body.split('\n')[0]!)
+    expect(first).toMatchObject({ type: 'snapshot', revision: 2, owned: true, reviewComments: [] })
+    listener!({ kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
+    const lines = res.body.trim().split('\n')
+    expect(JSON.parse(lines[1]!)).toEqual({ type: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
+    for (const callback of closeHandlers) callback()
+    await pending
+    expect(unsubscribed).toBe(true)
+  })
 })

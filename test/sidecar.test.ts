@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { ClaudeSidecarRepository, parseClaudeSidecar } from '../src/sidecar.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ClaudeSidecarRepository, parseClaudeSidecar, type ClaudeSidecarDelta } from '../src/sidecar.ts'
 
 const roots: string[] = []
 
@@ -160,5 +160,53 @@ describe('Claude sidecar repository', () => {
     expect(current.binding?.claudeSessionId).toBe('new')
     expect(current.contextUsage?.model).toBe('new')
     expect(current.activities).toHaveLength(1)
+  })
+
+  it('streams transcript appends to subscribers before any disk write', async () => {
+    const store = await repository()
+    const deltas: ClaudeSidecarDelta[] = []
+    const unsubscribe = store.subscribe('session', delta => deltas.push(delta))
+    store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'Hel' })
+    store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'Hello' })
+    store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'Rewritten' })
+    expect(deltas).toEqual([
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Hel' },
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo' },
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Rewritten' },
+    ])
+    const live = await store.read('session')
+    expect(live.revision).toBe(3)
+    expect(live.activities).toEqual([expect.objectContaining({ kind: 'text', text: 'Rewritten' })])
+    await expect(readdir(store.root)).resolves.toHaveLength(0)
+    await store.flushTranscriptText('session')
+    await expect(readdir(store.root)).resolves.toHaveLength(1)
+    const durable = await store.read('session')
+    expect(durable.activities).toEqual([expect.objectContaining({ kind: 'text', text: 'Rewritten' })])
+    unsubscribe()
+  })
+
+  it('coalesces transcript persistence into the trailing flush window', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = await repository()
+      store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'streaming' })
+      await expect(readdir(store.root)).resolves.toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(150)
+      await store.read('session')
+      await expect(readdir(store.root)).resolves.toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('notifies subscribers of durable activity, task, and usage writes', async () => {
+    const store = await repository()
+    const kinds: string[] = []
+    const unsubscribe = store.subscribe('session', delta => kinds.push(delta.kind))
+    await store.appendActivity('session', { turn: 1, step: 1, ordinal: 0, kind: 'status', title: 'started' })
+    await store.writeTasks('session', [{ taskId: 't', description: 'work', status: 'running' }])
+    await store.writeContextUsage('session', { model: 'default', totalTokens: 1, maxTokens: 10, percentage: 10, categories: [] })
+    expect(kinds).toEqual(['activity', 'tasks', 'contextUsage'])
+    unsubscribe()
   })
 })

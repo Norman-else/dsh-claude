@@ -970,6 +970,7 @@ export class ClaudeSupervisor {
     if (entry.active !== active) return
     if (active.aborted) {
       await this.#upsertTranscriptText(active)
+      await this.#flushTranscript(active)
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'failed',
@@ -1009,6 +1010,7 @@ export class ClaudeSupervisor {
         active.output.push({ type: 'text-delta', text: result.text })
       }
       await this.#upsertTranscriptText(active)
+      await this.#flushTranscript(active)
       const message = result.errors?.join('\n')
         ?? (result.terminalReason !== undefined ? `Claude Code failed the turn (${result.terminalReason})` : 'Claude Code failed the turn')
       await this.#appendSafely(active, {
@@ -1042,6 +1044,7 @@ export class ClaudeSupervisor {
         phase: 'completed',
         title: 'Claude Code turn completed',
       })
+      await this.#flushTranscript(active)
       active.output.push({ type: 'complete', text: active.text })
       active.output.close()
     }
@@ -1059,9 +1062,9 @@ export class ClaudeSupervisor {
     const ordinal = active.transcriptTextOrdinal ?? active.cursor.nextOrdinal++
     active.transcriptTextOrdinal = ordinal
     try {
-      await this.#sidecar.appendActivity(active.agent.id as string, {
-        kind: 'text',
-        phase: 'updated',
+      // Hot path: notify live subscribers synchronously; disk persistence is
+      // coalesced inside the repository and flushed at segment/turn edges.
+      this.#sidecar.appendTranscriptText(active.agent.id as string, {
         text: active.transcriptText,
         turn: active.cursor.turn,
         step: active.cursor.step,
@@ -1072,7 +1075,12 @@ export class ClaudeSupervisor {
     }
   }
 
+  async #flushTranscript(active: ActiveTurn): Promise<void> {
+    await this.#sidecar.flushTranscriptText(active.agent.id as string).catch(() => undefined)
+  }
+
   #closeTranscriptTextSegment(active: ActiveTurn): void {
+    void this.#flushTranscript(active)
     active.transcriptText = ''
     active.transcriptTextOrdinal = undefined
   }
@@ -1139,6 +1147,7 @@ export class ClaudeSupervisor {
     const stderr = entry.process?.stderrTail()
     if (active !== undefined) {
       await this.#upsertTranscriptText(active)
+      await this.#flushTranscript(active)
       if (active.signal !== undefined && active.abortListener !== undefined) {
         active.signal.removeEventListener('abort', active.abortListener)
       }

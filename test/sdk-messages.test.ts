@@ -46,6 +46,27 @@ describe('Claude SDK message normalization', () => {
     }))).toEqual([{ kind: 'tool-result', toolUseId: 'tool-1', output: { content: 'file contents' }, isError: false }])
   })
 
+  it('ignores replayed and string-content user messages instead of failing the protocol', () => {
+    // CLI ≥ 2.1.238 replays prior user messages on resume, including
+    // local-command output echoes whose content is a plain string.
+    expect(normalizeSdkMessage(sdk({
+      type: 'user',
+      isReplay: true,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'old' }] },
+    }))).toEqual([])
+    expect(normalizeSdkMessage(sdk({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: '<local-command-stdout>Set model to fable</local-command-stdout>' },
+    }))).toEqual([])
+    expect(normalizeSdkMessage(sdk({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user' },
+    }))).toEqual([{ kind: 'protocol-error', title: 'Malformed Claude user message', detail: expect.anything() }])
+  })
+
   it('normalizes successful result usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'result',

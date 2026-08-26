@@ -15,6 +15,9 @@ export interface ClaudeClientProjection {
   readonly tasks?: ClaudeTasksEvent
   readonly repository?: RepositoryStatus
   readonly reviewComments?: readonly ReviewComment[]
+  /** Client-derived per-step activity slices with stable identities for
+   *  untouched steps, so streaming re-renders only the active step. */
+  readonly byStep?: ReadonlyMap<string, readonly ClaudeActivityEvent[]>
 }
 
 export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
@@ -25,13 +28,22 @@ export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
   activities: [],
 }
 
-const POLL_INTERVAL_MS = 2_000
+const RETRY_DELAY_MS = 2_000
+/** Coalesce stream deltas into at most one React notification per frame. */
+const FRAME_MS = 16
+/** Typewriter smoothing: drain newly arrived prose over roughly this window,
+ *  so the CLI's paragraph-sized deltas read as a continuous character flow. */
+const REVEAL_WINDOW_MS = 1_200
+/** A burst larger than this (redaction rewrite, reconnect catch-up) shows
+ *  instantly instead of animating for a long stretch. */
+const MAX_INSTANT_REVEAL = 4_000
 const MAX_ACTIVITIES = 10_000
 const MAX_COMMANDS = 2_000
 const MAX_REPOSITORY_TEXT_CHARS = 1_024
 const MAX_DIFF_CHARS = 256 * 1024
 const MAX_REVIEW_COMMENTS = 50
 const MAX_REVIEW_COMMENT_CHARS = 2_000
+const MAX_TRANSCRIPT_CHARS = 64_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -154,51 +166,310 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
   return input as unknown as ClaudeClientProjection
 }
 
+/** Validate one incremental delta payload with the same rules as a snapshot. */
+function validateEnvelopeFragment(fragment: Record<string, unknown>): void {
+  parseClaudeClientProjection({ schemaVersion: 1, revision: 0, owned: false, commands: [], activities: [], ...fragment })
+}
+
+export function stepKeyOf(turn: number, step: number): string {
+  return `${turn}:${step}`
+}
+
+const EMPTY_ACTIVITIES: readonly ClaudeActivityEvent[] = []
+
+/** Identity-stable per-step slice; untouched steps never re-render while
+ *  another step streams. Falls back to filtering for snapshot-only hooks. */
+export function selectStepActivities(
+  value: ClaudeClientProjection,
+  turn: number,
+  step: number,
+): readonly ClaudeActivityEvent[] {
+  const sliced = value.byStep?.get(stepKeyOf(turn, step))
+  if (sliced !== undefined) return sliced
+  const filtered = value.activities.filter(activity => activity.turn === turn && activity.step === step)
+  return filtered.length === 0 ? EMPTY_ACTIVITIES : filtered
+}
+
 export interface ClaudeProjectionSource extends HostObservable<ClaudeClientProjection> {
   dispose(): void
 }
 
-/** Create one lazy source: active subscribers trigger an immediate load and bounded polling. */
+function isAbort(error: unknown): boolean {
+  return (error as { name?: unknown } | null | undefined)?.name === 'AbortError'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms)
+    ;(timer as { unref?: () => void }).unref?.()
+  })
+}
+
+/** Create one lazy source: active subscribers open the Host NDJSON stream, and
+ *  a dropped stream reconnects with a fresh snapshot after a bounded delay. */
 export function createClaudeProjectionSource(
   sessionId: string,
   fetchProjection: typeof fetch = fetch,
-  pollIntervalMs = POLL_INTERVAL_MS,
+  retryDelayMs = RETRY_DELAY_MS,
 ): ClaudeProjectionSource {
   let snapshot = EMPTY_CLAUDE_PROJECTION
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let controller: AbortController | undefined
+  let revision = 0
+  let owned = false
+  let commands: readonly ClaudeCommandView[] = []
+  let contextUsage: ClaudeContextUsageEvent | undefined
+  let tasks: ClaudeTasksEvent | undefined
+  let repository: RepositoryStatus | undefined
+  let reviewComments: readonly ReviewComment[] | undefined
+  const byStep = new Map<string, ClaudeActivityEvent[]>()
+  const stepOrder: { turn: number; step: number; key: string }[] = []
+  /** Streaming prose still being revealed: full arrived text plus shown chars. */
+  const reveal = new Map<string, { full: ClaudeActivityEvent; shown: number }>()
   let disposed = false
+  let running = false
+  let controller: AbortController | undefined
+  let frame: ReturnType<typeof setTimeout> | number | undefined
+  let usedAnimationFrame = false
   const listeners = new Set<() => void>()
 
-  const schedule = (): void => {
-    if (disposed || listeners.size === 0) return
-    timer = setTimeout(() => { void refresh() }, pollIntervalMs)
+  const ensureStep = (turn: number, step: number): ClaudeActivityEvent[] => {
+    const key = stepKeyOf(turn, step)
+    const existing = byStep.get(key)
+    if (existing !== undefined) return existing
+    const created: ClaudeActivityEvent[] = []
+    byStep.set(key, created)
+    const at = stepOrder.findIndex(entry => entry.turn > turn || (entry.turn === turn && entry.step > step))
+    stepOrder.splice(at === -1 ? stepOrder.length : at, 0, { turn, step, key })
+    return created
   }
-  const refresh = async (): Promise<void> => {
-    if (disposed || listeners.size === 0) return
-    controller?.abort()
-    controller = new AbortController()
-    try {
-      const response = await fetchProjection(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent(sessionId)}`, {
-        headers: { accept: 'application/json' },
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error(`Claude projection request failed (${response.status})`)
-      const next = parseClaudeClientProjection(await response.json())
-      const commandCatalogChanged = JSON.stringify(next.commands) !== JSON.stringify(snapshot.commands)
-      const repositoryChanged = JSON.stringify(next.repository) !== JSON.stringify(snapshot.repository)
-      const reviewCommentsChanged = JSON.stringify(next.reviewComments) !== JSON.stringify(snapshot.reviewComments)
-      if (next.revision !== snapshot.revision || next.owned !== snapshot.owned || commandCatalogChanged || repositoryChanged || reviewCommentsChanged) {
-        snapshot = next
-        for (const listener of [...listeners]) listener()
+
+  const upsertActivity = (activity: ClaudeActivityEvent): void => {
+    const key = stepKeyOf(activity.turn, activity.step)
+    // Copy-on-write: only the touched step's slice changes identity.
+    const next = ensureStep(activity.turn, activity.step).slice()
+    const index = next.findIndex(item => item.ordinal === activity.ordinal)
+    if (index === -1) {
+      const at = next.findIndex(item => item.ordinal > activity.ordinal)
+      next.splice(at === -1 ? next.length : at, 0, activity)
+    } else {
+      next[index] = activity
+    }
+    byStep.set(key, next)
+  }
+
+  const reset = (activities: readonly ClaudeActivityEvent[]): void => {
+    byStep.clear()
+    stepOrder.length = 0
+    reveal.clear()
+    // Snapshot activities arrive globally sorted, so plain pushes stay ordered.
+    for (const activity of activities) ensureStep(activity.turn, activity.step).push(activity)
+  }
+
+  /** Advance every pending typewriter reveal by one frame's worth of characters.
+   *  The per-frame step scales with the backlog so any burst drains in roughly
+   *  REVEAL_WINDOW_MS. Returns whether another frame is still needed. */
+  const advanceReveals = (): boolean => {
+    let remaining = false
+    for (const [key, entry] of reveal) {
+      const total = entry.full.text?.length ?? 0
+      if (entry.shown >= total) {
+        reveal.delete(key)
+        continue
       }
-    } catch (error) {
-      // A polling or validation failure is transient. Keep the last verified
-      // snapshot visible and retry instead of making mounted UI disappear.
-      if (error instanceof DOMException && error.name === 'AbortError') return
+      const step = Math.max(1, Math.ceil((total - entry.shown) * FRAME_MS / REVEAL_WINDOW_MS))
+      entry.shown = Math.min(total, entry.shown + step)
+      upsertActivity({ ...entry.full, text: (entry.full.text ?? '').slice(0, entry.shown) })
+      if (entry.shown >= total) reveal.delete(key)
+      else remaining = true
+    }
+    return remaining
+  }
+
+  const publish = (): void => {
+    frame = undefined
+    if (disposed) return
+    const revealing = advanceReveals()
+    const activities: ClaudeActivityEvent[] = []
+    for (const entry of stepOrder) {
+      const slice = byStep.get(entry.key)
+      if (slice !== undefined) for (const item of slice) activities.push(item)
+    }
+    snapshot = {
+      schemaVersion: 1,
+      revision,
+      owned,
+      commands,
+      activities,
+      ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(tasks === undefined ? {} : { tasks }),
+      ...(repository === undefined ? {} : { repository }),
+      ...(reviewComments === undefined ? {} : { reviewComments }),
+      byStep: new Map(byStep),
+    }
+    for (const listener of [...listeners]) listener()
+    if (revealing) schedulePublish()
+  }
+
+  const cancelFrame = (): void => {
+    if (frame === undefined) return
+    if (usedAnimationFrame) {
+      (globalThis as { cancelAnimationFrame?: (handle: number) => void }).cancelAnimationFrame?.(frame as number)
+    } else {
+      clearTimeout(frame as ReturnType<typeof setTimeout>)
+    }
+    frame = undefined
+  }
+
+  const schedulePublish = (): void => {
+    if (disposed || frame !== undefined || listeners.size === 0) return
+    const raf = (globalThis as { requestAnimationFrame?: (callback: () => void) => number }).requestAnimationFrame
+    if (typeof raf === 'function') {
+      usedAnimationFrame = true
+      frame = raf(publish)
+    } else {
+      usedAnimationFrame = false
+      frame = setTimeout(publish, FRAME_MS)
+    }
+  }
+
+  const applyText = (event: Record<string, unknown>): boolean => {
+    const { turn, step, ordinal, append, text } = event
+    if (!nonNegativeInteger(turn) || !nonNegativeInteger(step) || !nonNegativeInteger(ordinal)) return false
+    if (append !== undefined && (typeof append !== 'string' || append.length > MAX_TRANSCRIPT_CHARS)) return false
+    if (text !== undefined && (typeof text !== 'string' || text.length > MAX_TRANSCRIPT_CHARS)) return false
+    if (append === undefined && text === undefined) return false
+    const revealKey = `${turn}:${step}:${ordinal}`
+    const slice = byStep.get(stepKeyOf(turn, step))
+    const existing = slice?.find(item => item.ordinal === ordinal)
+    const pending = reveal.get(revealKey)
+    if (existing === undefined && pending === undefined && typeof text !== 'string') {
+      // ponytail: an append without its base waits for the next snapshot line
+      return false
+    }
+    // Appends extend the full arrived text, which may be ahead of the
+    // currently revealed prefix stored in byStep.
+    const baseText = pending?.full.text ?? existing?.text ?? ''
+    const fullText = (typeof text === 'string' ? text : `${baseText}${append as string}`).slice(0, MAX_TRANSCRIPT_CHARS)
+    const template = pending?.full ?? existing ?? { turn, step, ordinal, kind: 'text' as const, phase: 'updated' as const }
+    const full = { ...template, text: fullText }
+    const shown = Math.min(pending?.shown ?? existing?.text?.length ?? 0, fullText.length)
+    if (fullText.length - shown > MAX_INSTANT_REVEAL) {
+      reveal.delete(revealKey)
+      upsertActivity(full)
+      return true
+    }
+    reveal.set(revealKey, { full, shown })
+    upsertActivity({ ...full, text: fullText.slice(0, shown) })
+    return true
+  }
+
+  const applyLine = (line: string): void => {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) return
+    let value: unknown
+    try {
+      value = JSON.parse(trimmed)
+    } catch {
+      return
+    }
+    const event = record(value)
+    if (event === undefined || typeof event.type !== 'string') return
+    try {
+      switch (event.type) {
+        case 'snapshot': {
+          const next = parseClaudeClientProjection(event)
+          revision = next.revision
+          owned = next.owned
+          commands = next.commands
+          contextUsage = next.contextUsage
+          tasks = next.tasks
+          repository = next.repository
+          reviewComments = next.reviewComments
+          reset(next.activities)
+          break
+        }
+        case 'text':
+          if (!applyText(event)) return
+          revision += 1
+          break
+        case 'activity':
+          validateEnvelopeFragment({ activities: [event.activity] })
+          upsertActivity(event.activity as ClaudeActivityEvent)
+          revision += 1
+          break
+        case 'contextUsage':
+          validateEnvelopeFragment({ contextUsage: event.value })
+          contextUsage = event.value as ClaudeContextUsageEvent
+          revision += 1
+          break
+        case 'tasks':
+          validateEnvelopeFragment({ tasks: event.value })
+          tasks = event.value as ClaudeTasksEvent
+          revision += 1
+          break
+        case 'meta':
+          validateEnvelopeFragment({
+            owned: event.owned,
+            commands: event.commands,
+            ...(event.repository === undefined ? {} : { repository: event.repository }),
+            ...(event.reviewComments === undefined ? {} : { reviewComments: event.reviewComments }),
+          })
+          owned = event.owned as boolean
+          commands = event.commands as readonly ClaudeCommandView[]
+          repository = event.repository as RepositoryStatus | undefined
+          reviewComments = event.reviewComments as readonly ReviewComment[] | undefined
+          revision += 1
+          break
+        default:
+          // ping and unknown line types are ignored
+          return
+      }
+    } catch {
+      // A malformed or oversized delta is transient; keep the last verified
+      // state visible instead of making mounted UI disappear.
+      return
+    }
+    schedulePublish()
+  }
+
+  const run = async (): Promise<void> => {
+    if (running) return
+    running = true
+    try {
+      while (!disposed && listeners.size > 0) {
+        controller = new AbortController()
+        try {
+          const response = await fetchProjection(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent(sessionId)}/stream`, {
+            headers: { accept: 'application/x-ndjson' },
+            signal: controller.signal,
+          })
+          if (!response.ok) throw new Error(`Claude projection stream failed (${response.status})`)
+          if (response.body === null) throw new Error('Claude projection stream is unavailable')
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          while (true) {
+            if (disposed || listeners.size === 0) {
+              await reader.cancel().catch(() => undefined)
+              break
+            }
+            const chunk = await reader.read()
+            buffer += decoder.decode(chunk.value, { stream: !chunk.done })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() ?? ''
+            for (const line of lines) applyLine(line)
+            if (chunk.done) break
+          }
+        } catch (error) {
+          // Abort is the ordinary unmount path; other failures retry below.
+          if (isAbort(error)) return
+        } finally {
+          controller = undefined
+        }
+        if (disposed || listeners.size === 0) return
+        await delay(retryDelayMs)
+      }
     } finally {
-      controller = undefined
-      schedule()
+      running = false
     }
   }
 
@@ -208,23 +479,21 @@ export function createClaudeProjectionSource(
       if (disposed) return () => {}
       const wasIdle = listeners.size === 0
       listeners.add(listener)
-      if (wasIdle) void refresh()
+      if (wasIdle) void run()
       return () => {
         listeners.delete(listener)
         if (listeners.size !== 0) return
-        if (timer !== undefined) clearTimeout(timer)
-        timer = undefined
         controller?.abort()
         controller = undefined
+        cancelFrame()
       }
     },
     dispose() {
       disposed = true
       listeners.clear()
-      if (timer !== undefined) clearTimeout(timer)
-      timer = undefined
       controller?.abort()
       controller = undefined
+      cancelFrame()
     },
   }
 }

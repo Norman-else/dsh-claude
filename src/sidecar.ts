@@ -23,6 +23,9 @@ import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION } from './constants.ts'
 
 const SIDECAR_SCHEMA_VERSION = 1
 const MAX_ACTIVITIES = 10_000
+/** Trailing window that coalesces per-token transcript persistence into one
+ *  atomic disk write; live subscribers are notified synchronously regardless. */
+const TEXT_FLUSH_MS = 150
 
 export interface ClaudeSidecarProjection {
   readonly schemaVersion: typeof SIDECAR_SCHEMA_VERSION
@@ -32,6 +35,14 @@ export interface ClaudeSidecarProjection {
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
 }
+
+/** Change notification published to live subscribers after each accepted write. */
+export type ClaudeSidecarDelta =
+  | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string }
+  | { kind: 'activity'; activity: ClaudeActivityEvent }
+  | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
+  | { kind: 'tasks'; value: ClaudeTasksEvent }
+  | { kind: 'sync' }
 
 export interface ClaudeSidecarRepositoryOptions {
   readonly root?: string
@@ -159,6 +170,14 @@ export class ClaudeSidecarRepository {
   readonly root: string
   readonly legacyRoot: string | undefined
   readonly #pending = new Map<string, Promise<unknown>>()
+  /** Latest durable projection per session; disk is read once and written through. */
+  readonly #latest = new Map<string, ClaudeSidecarProjection>()
+  readonly #listeners = new Map<string, Set<(delta: ClaudeSidecarDelta) => void>>()
+  /** Streaming transcript segments not yet persisted, keyed by activity key. */
+  readonly #live = new Map<string, Map<string, ClaudeActivityEvent>>()
+  /** Monotonic revision boost so merged reads advance while text stays in memory. */
+  readonly #boost = new Map<string, number>()
+  readonly #flushTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(options: ClaudeSidecarRepositoryOptions = {}) {
     this.root = options.root ?? dshHomePath('plugins', 'dsh-claude', 'sessions')
@@ -168,7 +187,120 @@ export class ClaudeSidecarRepository {
 
   async read(sessionId: string): Promise<ClaudeSidecarProjection> {
     await this.#pending.get(sessionId)?.catch(() => undefined)
-    return this.#readNow(sessionId)
+    return this.#merged(sessionId, await this.#base(sessionId))
+  }
+
+  /** Observe accepted changes for one session; returns the unsubscriber. */
+  subscribe(sessionId: string, listener: (delta: ClaudeSidecarDelta) => void): () => void {
+    let set = this.#listeners.get(sessionId)
+    if (set === undefined) {
+      set = new Set()
+      this.#listeners.set(sessionId, set)
+    }
+    set.add(listener)
+    return () => {
+      set.delete(listener)
+      if (set.size === 0) this.#listeners.delete(sessionId)
+    }
+  }
+
+  /** Record streaming assistant prose without touching the disk on the hot
+   *  path: subscribers are notified synchronously (as an append when the
+   *  redacted text grows in place) and persistence is coalesced. */
+  appendTranscriptText(
+    sessionId: string,
+    value: { turn: number; step: number; ordinal: number; text: string },
+  ): void {
+    const normalized = normalizeActivity({ kind: 'text', phase: 'updated', ...value })
+    const key = activityKey(normalized)
+    let overlay = this.#live.get(sessionId)
+    if (overlay === undefined) {
+      overlay = new Map()
+      this.#live.set(sessionId, overlay)
+    }
+    const previous = overlay.get(key)
+    overlay.set(key, normalized)
+    this.#boost.set(sessionId, (this.#boost.get(sessionId) ?? 0) + 1)
+    const text = normalized.text ?? ''
+    const base = { turn: normalized.turn, step: normalized.step, ordinal: normalized.ordinal }
+    // Redaction may rewrite earlier characters once a secret completes, so a
+    // non-prefix update falls back to a full-text replacement.
+    this.#notify(sessionId, previous?.text !== undefined && text.startsWith(previous.text)
+      ? { kind: 'text', ...base, append: text.slice(previous.text.length) }
+      : { kind: 'text', ...base, text })
+    this.#scheduleTextFlush(sessionId)
+  }
+
+  /** Persist any pending streaming transcript now (segment close, turn end). */
+  flushTranscriptText(sessionId: string): Promise<void> {
+    const timer = this.#flushTimers.get(sessionId)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.#flushTimers.delete(sessionId)
+    }
+    return this.#flushLive(sessionId)
+  }
+
+  #notify(sessionId: string, delta: ClaudeSidecarDelta): void {
+    const set = this.#listeners.get(sessionId)
+    if (set === undefined) return
+    for (const listener of [...set]) {
+      try {
+        listener(delta)
+      } catch {
+        // A subscriber failure must never affect durable state.
+      }
+    }
+  }
+
+  #merged(sessionId: string, base: ClaudeSidecarProjection): ClaudeSidecarProjection {
+    const overlay = this.#live.get(sessionId)
+    const boost = this.#boost.get(sessionId) ?? 0
+    if ((overlay === undefined || overlay.size === 0) && boost === 0) return base
+    return {
+      ...base,
+      revision: base.revision + boost,
+      ...(overlay === undefined || overlay.size === 0
+        ? {}
+        : { activities: mergeActivities(base.activities, [...overlay.values()]) }),
+    }
+  }
+
+  async #base(sessionId: string): Promise<ClaudeSidecarProjection> {
+    const cached = this.#latest.get(sessionId)
+    if (cached !== undefined) return cached
+    const loaded = await this.#readNow(sessionId)
+    this.#latest.set(sessionId, loaded)
+    return loaded
+  }
+
+  #scheduleTextFlush(sessionId: string): void {
+    if (this.#flushTimers.has(sessionId)) return
+    const timer = setTimeout(() => {
+      this.#flushTimers.delete(sessionId)
+      void this.#flushLive(sessionId)
+    }, TEXT_FLUSH_MS)
+    timer.unref?.()
+    this.#flushTimers.set(sessionId, timer)
+  }
+
+  async #flushLive(sessionId: string): Promise<void> {
+    const overlay = this.#live.get(sessionId)
+    if (overlay === undefined || overlay.size === 0) return
+    const entries = [...overlay.entries()]
+    try {
+      await this.#update(sessionId, current => ({
+        ...current,
+        activities: mergeActivities(current.activities, entries.map(([, value]) => value)),
+      }))
+    } catch {
+      // Keep the overlay; the next append or flush retries persistence.
+      return
+    }
+    for (const [key, value] of entries) {
+      if (overlay.get(key) === value) overlay.delete(key)
+    }
+    if (overlay.size === 0) this.#live.delete(sessionId)
   }
 
   writeBinding(
@@ -187,17 +319,17 @@ export class ClaudeSidecarRepository {
     return this.#update(sessionId, current => ({
       ...current,
       activities: mergeActivities(current.activities, [normalized]),
-    }))
+    }), false, { kind: 'activity', activity: normalized })
   }
 
   writeContextUsage(sessionId: string, value: ClaudeContextUsageInput): Promise<ClaudeSidecarProjection> {
     const normalized = normalizeContextUsage(value)
-    return this.#update(sessionId, current => ({ ...current, contextUsage: normalized }))
+    return this.#update(sessionId, current => ({ ...current, contextUsage: normalized }), false, { kind: 'contextUsage', value: normalized })
   }
 
   writeTasks(sessionId: string, value: readonly ClaudeTaskInfo[]): Promise<ClaudeSidecarProjection> {
     const normalized = normalizeTasksEvent(value)
-    return this.#update(sessionId, current => ({ ...current, tasks: normalized }))
+    return this.#update(sessionId, current => ({ ...current, tasks: normalized }), false, { kind: 'tasks', value: normalized })
   }
 
   importLegacy(sessionId: string, events: readonly SessionEvent[]): Promise<ClaudeSidecarProjection> {
@@ -214,7 +346,7 @@ export class ClaudeSidecarRepository {
       ...(current.binding !== undefined || importedBinding === undefined ? {} : { binding: normalizeBinding(importedBinding) }),
       ...(current.contextUsage !== undefined || importedUsage === undefined ? {} : { contextUsage: normalizeContextUsage(importedUsage) }),
       ...(current.tasks !== undefined || importedTasks === undefined ? {} : { tasks: normalizeTasksEvent(importedTasks.tasks) }),
-    }), true)
+    }), true, { kind: 'sync' })
   }
 
   #path(sessionId: string, root = this.root): string {
@@ -226,10 +358,11 @@ export class ClaudeSidecarRepository {
     sessionId: string,
     change: (current: ClaudeSidecarProjection) => Omit<ClaudeSidecarProjection, 'revision' | 'schemaVersion'> & Partial<Pick<ClaudeSidecarProjection, 'revision' | 'schemaVersion'>>,
     skipUnchanged = false,
+    delta?: ClaudeSidecarDelta,
   ): Promise<ClaudeSidecarProjection> {
     const previous = this.#pending.get(sessionId) ?? Promise.resolve()
     const operation = previous.catch(() => undefined).then(async () => {
-      const current = await this.#readNow(sessionId)
+      const current = await this.#base(sessionId)
       const changed = parseClaudeSidecar({
         ...change(current),
         schemaVersion: SIDECAR_SCHEMA_VERSION,
@@ -238,6 +371,8 @@ export class ClaudeSidecarRepository {
       if (skipUnchanged && JSON.stringify(changed) === JSON.stringify(current)) return current
       const next = { ...changed, revision: current.revision + 1 }
       await this.#writeNow(sessionId, next)
+      this.#latest.set(sessionId, next)
+      if (delta !== undefined) this.#notify(sessionId, delta)
       return next
     })
     this.#pending.set(sessionId, operation)

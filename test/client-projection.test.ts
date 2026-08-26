@@ -3,6 +3,7 @@ import {
   EMPTY_CLAUDE_PROJECTION,
   createClaudeProjectionSource,
   parseClaudeClientProjection,
+  selectStepActivities,
 } from '../src/client/projection.ts'
 
 const valid = {
@@ -11,6 +12,26 @@ const valid = {
   owned: true,
   commands: [],
   activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'warning' }],
+}
+
+const FRAME_MS = 16
+
+function ndjsonStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>
+  const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c } })
+  const encoder = new TextEncoder()
+  return {
+    response: new Response(stream, { status: 200 }),
+    push(value: unknown) { controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`)) },
+    pushRaw(line: string) { controller.enqueue(encoder.encode(line)) },
+    close() {
+      try {
+        controller.close()
+      } catch {
+        // already closed
+      }
+    },
+  }
 }
 
 async function flush(): Promise<void> {
@@ -82,131 +103,131 @@ describe('Claude client sidecar projection', () => {
     }
   })
 
-  it('loads immediately, polls while subscribed, and stops after unsubscribe', async () => {
+  it('applies the snapshot line and coalesces text appends into one frame', async () => {
     vi.useFakeTimers()
-    let revision = 0
-    const fetchProjection = vi.fn(async () => {
-      revision += 1
-      return new Response(JSON.stringify({ ...valid, revision }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
+    const stream = ndjsonStream()
+    const fetchProjection = vi.fn(async (url: RequestInfo | URL) => {
+      expect(String(url)).toContain(`${encodeURIComponent('session/a')}/stream`)
+      return stream.response
     }) as unknown as typeof fetch
     const source = createClaudeProjectionSource('session/a', fetchProjection, 100)
+    expect(source.getSnapshot()).toBe(EMPTY_CLAUDE_PROJECTION)
     const listener = vi.fn()
     const unsubscribe = source.subscribe(listener)
+    stream.push({
+      ...valid,
+      type: 'snapshot',
+      activities: [
+        { turn: 1, step: 1, ordinal: 0, kind: 'text', phase: 'updated', text: 'Hel' },
+        { turn: 2, step: 1, ordinal: 0, kind: 'warning' },
+      ],
+    })
     await flush()
-    expect(fetchProjection).toHaveBeenCalledTimes(1)
-    expect(fetchProjection.mock.calls[0]?.[0]).toContain('session%2Fa')
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
-    await vi.advanceTimersByTimeAsync(100)
-    expect(fetchProjection).toHaveBeenCalledTimes(2)
-    expect(source.getSnapshot().revision).toBe(2)
+    const otherStep = selectStepActivities(source.getSnapshot(), 2, 1)
+    expect(otherStep).toHaveLength(1)
+    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo' })
+    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 0, append: ' world' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    // Typewriter smoothing: the arrived burst reveals gradually, not at once.
+    const partial = selectStepActivities(source.getSnapshot(), 1, 1)[0]?.text ?? ''
+    expect(partial.length).toBeGreaterThan(3)
+    expect(partial.length).toBeLessThan(11)
+    expect('Hello world'.startsWith(partial)).toBe(true)
+    await vi.advanceTimersByTimeAsync(2_000)
+    const after = source.getSnapshot()
+    expect(selectStepActivities(after, 1, 1)[0]?.text).toBe('Hello world')
+    // Untouched steps keep referential identity so their nodes never re-render.
+    expect(selectStepActivities(after, 2, 1)).toBe(otherStep)
+    expect(listener.mock.calls.length).toBeGreaterThanOrEqual(2)
     unsubscribe()
-    await vi.advanceTimersByTimeAsync(500)
-    expect(fetchProjection).toHaveBeenCalledTimes(2)
     source.dispose()
   })
 
-  it('degrades a failed refresh to the empty projection and aborts on disposal', async () => {
+  it('applies activity and metadata delta lines', async () => {
     vi.useFakeTimers()
-    let calls = 0
-    let aborted = false
-    const fetchProjection = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-      calls += 1
-      if (calls === 1) return new Response(JSON.stringify(valid), { status: 200 })
-      return await new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => {
-          aborted = true
-          reject(new DOMException('aborted', 'AbortError'))
-        })
-      })
-    }) as unknown as typeof fetch
+    const stream = ndjsonStream()
+    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
     const source = createClaudeProjectionSource('session', fetchProjection, 100)
     const unsubscribe = source.subscribe(() => {})
+    stream.push({ ...valid, type: 'snapshot' })
+    stream.push({ type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
+    stream.push({
+      type: 'meta',
+      owned: true,
+      commands: [{ publicName: 'review', claudeName: 'review', description: 'Review changes', prefixed: false }],
+      repository: { status: 'ready', cwd: '/repo', root: '/repo', branch: 'feature/x', detached: false, worktree: false, dirty: true },
+      reviewComments: [],
+    })
+    stream.push({ type: 'contextUsage', value: { model: 'default', totalTokens: 5, maxTokens: 10, percentage: 50, categories: [] } })
     await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    const snapshot = source.getSnapshot()
+    expect(snapshot.activities.map(activity => activity.ordinal)).toEqual([0, 1])
+    expect(snapshot.commands[0]?.publicName).toBe('review')
+    expect(snapshot.repository?.branch).toBe('feature/x')
+    expect(snapshot.contextUsage?.totalTokens).toBe(5)
+    unsubscribe()
+    source.dispose()
+  })
+
+  it('reconnects with a fresh snapshot after the stream ends', async () => {
+    vi.useFakeTimers()
+    const first = ndjsonStream()
+    const second = ndjsonStream()
+    const responses = [first, second]
+    const fetchProjection = vi.fn(async () => responses.shift()!.response) as unknown as typeof fetch
+    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const unsubscribe = source.subscribe(() => {})
+    first.push({ ...valid, type: 'snapshot' })
+    first.close()
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
+    second.push({ ...valid, type: 'snapshot', revision: 5 })
     await vi.advanceTimersByTimeAsync(100)
-    source.dispose()
-    await flush()
-    expect(aborted).toBe(true)
-    expect(source.getSnapshot()).toEqual(valid)
-    unsubscribe()
-  })
-
-  it('publishes a command catalog change even when the sidecar revision is unchanged', async () => {
-    vi.useFakeTimers()
-    let commands = valid.commands
-    const fetchProjection = vi.fn(async () => new Response(JSON.stringify({ ...valid, revision: 0, commands }), { status: 200 })) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
-    const listener = vi.fn()
-    const unsubscribe = source.subscribe(listener)
-    await flush()
-    commands = [{
-      publicName: 'review',
-      claudeName: 'review',
-      description: 'Review changes',
-      prefixed: false,
-    }]
-    await vi.advanceTimersByTimeAsync(100)
-    expect(source.getSnapshot().commands).toEqual(commands)
-    expect(listener).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(fetchProjection).toHaveBeenCalledTimes(2)
+    expect(source.getSnapshot().revision).toBe(5)
     unsubscribe()
     source.dispose()
   })
 
-  it('publishes a repository change even when the sidecar revision is unchanged', async () => {
+  it('stops consuming after the last unsubscribe', async () => {
     vi.useFakeTimers()
-    let branch = 'main'
-    const fetchProjection = vi.fn(async () => new Response(JSON.stringify({
-      ...valid,
-      revision: 0,
-      repository: { status: 'ready', cwd: '/repo', root: '/repo', branch, detached: false, worktree: false, dirty: false },
-    }), { status: 200 })) as unknown as typeof fetch
+    const stream = ndjsonStream()
+    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
     const source = createClaudeProjectionSource('session', fetchProjection, 100)
-    const listener = vi.fn()
-    const unsubscribe = source.subscribe(listener)
+    const unsubscribe = source.subscribe(() => {})
+    stream.push({ ...valid, type: 'snapshot' })
     await flush()
-    branch = 'feature/status'
-    await vi.advanceTimersByTimeAsync(100)
-    expect(source.getSnapshot().repository?.branch).toBe('feature/status')
-    expect(listener).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().revision).toBe(1)
     unsubscribe()
+    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 9, text: 'late' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(source.getSnapshot().revision).toBe(1)
+    expect(fetchProjection).toHaveBeenCalledTimes(1)
     source.dispose()
   })
 
-  it('publishes a preset ownership change even when the sidecar revision is unchanged', async () => {
+  it('keeps the last verified state when lines are malformed or invalid', async () => {
     vi.useFakeTimers()
-    let owned = false
-    const fetchProjection = vi.fn(async () => new Response(JSON.stringify({ ...valid, revision: 0, owned }), { status: 200 })) as unknown as typeof fetch
+    const stream = ndjsonStream()
+    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
     const source = createClaudeProjectionSource('session', fetchProjection, 100)
-    const listener = vi.fn()
-    const unsubscribe = source.subscribe(listener)
+    const unsubscribe = source.subscribe(() => {})
+    stream.push({ ...valid, type: 'snapshot' })
+    stream.pushRaw('not json\n')
+    stream.push({ type: 'activity', activity: { turn: -1 } })
+    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 5, append: 'orphan append without base' })
     await flush()
-    expect(source.getSnapshot().owned).toBe(false)
-    owned = true
-    await vi.advanceTimersByTimeAsync(100)
-    expect(source.getSnapshot().owned).toBe(true)
-    expect(listener).toHaveBeenCalledTimes(1)
-    unsubscribe()
-    source.dispose()
-  })
-
-  it('keeps the last verified state when a non-abort refresh fails', async () => {
-    vi.useFakeTimers()
-    let calls = 0
-    const fetchProjection = vi.fn(async () => {
-      calls += 1
-      if (calls === 1) return new Response(JSON.stringify(valid), { status: 200 })
-      return new Response('{}', { status: 500 })
-    }) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
-    const listener = vi.fn()
-    const unsubscribe = source.subscribe(listener)
-    await flush()
-    await vi.advanceTimersByTimeAsync(100)
-    expect(source.getSnapshot()).toEqual(valid)
-    expect(listener).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().revision).toBe(1)
+    expect(source.getSnapshot().activities).toEqual(valid.activities)
     unsubscribe()
     source.dispose()
   })

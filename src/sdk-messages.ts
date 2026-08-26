@@ -110,8 +110,14 @@ function normalizeAssistant(message: Record<string, unknown>): NormalizedSdkMess
 }
 
 function normalizeUser(message: Record<string, unknown>): NormalizedSdkMessage[] {
+  // CLI ≥ 2.1.238 replays prior user messages (including local-command output
+  // echoes with plain string content) when resuming a session. Replays and
+  // block-less string echoes carry no tool results; they are not protocol
+  // failures and must never kill the session.
+  if (message.isReplay === true) return []
   const envelope = record(message.message)
   const content = envelope?.content
+  if (typeof content === 'string') return []
   if (!Array.isArray(content)) return [{ kind: 'protocol-error', title: 'Malformed Claude user message', detail: message }]
   const parentToolUseId = string(message.parent_tool_use_id)
   const normalized: NormalizedSdkMessage[] = []
