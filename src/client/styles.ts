@@ -1189,7 +1189,9 @@ export const queueActions: CSSProperties = {
 }
 
 export const repositoryBarMerged: CSSProperties = {
-  borderColor: 'color-mix(in srgb, #a78bfa 30%, var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent)))',
+  // Pure purple tint: mixing with the theme border token (white-alpha in dark
+  // themes) produced a bright, near-white line.
+  borderColor: 'color-mix(in srgb, #a78bfa 35%, transparent)',
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 

@@ -253,7 +253,7 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('>Clean up<')
     expect(statusMarkup).toContain('2h ago')
     expect(statusMarkup).toContain('#a78bfa')
-    expect(statusMarkup).toContain('color-mix(in srgb, #a78bfa 30%')
+    expect(statusMarkup).toContain('color-mix(in srgb, #a78bfa 35%, transparent)')
     expect(statusMarkup).not.toContain('Checks passing')
     expect(statusMarkup).not.toContain('Approved')
     expect(statusMarkup).toContain('<circle cx="12" cy="8" r="1.6"></circle>')
