@@ -305,7 +305,9 @@ export function ClaudeHeroRepositoryCapsule({
         }}
         onMouseEnter={() => { setWorktreeHovered(true) }}
         onMouseLeave={() => { setWorktreeHovered(false) }}
-        onFocus={() => { setWorktreeFocused(true) }}
+        // The focus ring is for keyboard users; click focus lingering after a
+        // toggle would otherwise leave a permanent halo around the checkbox.
+        onFocus={event => { setWorktreeFocused(event.currentTarget.matches(':focus-visible')) }}
         onBlur={() => { setWorktreeFocused(false) }}
         onClick={() => { onWorktreeChange(!worktree) }}
       >
@@ -553,7 +555,7 @@ export function ClaudeHeroRepositoryControls({
               <IconChevronDownOutline14 />
             </button>
             {ticketMenuOpen ? (
-              <span role="menu" style={styles.heroBranchMenu} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTicketMenuOpen(false) } }}>
+              <span role="menu" style={{ ...styles.heroBranchMenu, ...styles.heroTicketMenu }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTicketMenuOpen(false) } }}>
                 <label style={styles.heroBranchSearch}>
                   <IconSearchOutline16 />
                   <input

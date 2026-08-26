@@ -765,7 +765,7 @@ export const heroBranchTrigger: CSSProperties = {
   background: 'transparent',
   color: 'inherit',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '18px',
   cursor: 'pointer',
 }
@@ -816,7 +816,7 @@ export const heroBranchSearchInput: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '18px',
 }
 
@@ -830,8 +830,8 @@ export const heroBranchList: CSSProperties = {
 
 export const heroBranchItem: CSSProperties = {
   width: '100%',
-  height: 34,
-  minHeight: 34,
+  height: 36,
+  minHeight: 36,
   display: 'flex',
   alignItems: 'center',
   gap: 8,
@@ -841,7 +841,7 @@ export const heroBranchItem: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '18px',
   textAlign: 'left',
   cursor: 'pointer',
@@ -860,11 +860,11 @@ export const heroBranchItemName: CSSProperties = {
 }
 
 export const heroBranchEmpty: CSSProperties = {
-  height: 34,
+  height: 36,
   display: 'grid',
   placeItems: 'center',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 12,
+  fontSize: 13,
 }
 
 export const heroRepositoryDivider: CSSProperties = {
@@ -886,7 +886,7 @@ export const heroWorktreeToggle: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: '18px',
   whiteSpace: 'nowrap',
   cursor: 'pointer',
@@ -1667,10 +1667,15 @@ export const diffModalConflictResolve: CSSProperties = {
   cursor: 'pointer',
 }
 
+/** Ticket summaries need room; the branch menu's 280px truncates them badly. */
+export const heroTicketMenu: CSSProperties = {
+  width: 420,
+}
+
 export const heroTicketKey: CSSProperties = {
   flex: 'none',
-  color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 11,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
   fontWeight: 650,
   letterSpacing: 0.2,
 }
@@ -1693,7 +1698,7 @@ export const heroTicketChip: CSSProperties = {
   borderRadius: 999,
   background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
   color: 'var(--dsw-alias-label-primary)',
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   letterSpacing: 0.2,
 }
@@ -1718,7 +1723,7 @@ export const heroTicketChipsClear: CSSProperties = {
   border: 'none',
   background: 'transparent',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 11,
+  fontSize: 12,
   cursor: 'pointer',
 }
 
@@ -1738,10 +1743,10 @@ export const heroTicketCheckbox: CSSProperties = {
 
 export const heroTicketStatus: CSSProperties = {
   flex: 'none',
-  maxWidth: 90,
+  maxWidth: 110,
   overflow: 'hidden',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 11,
+  fontSize: 12,
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }
