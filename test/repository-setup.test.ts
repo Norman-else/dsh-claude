@@ -27,11 +27,11 @@ function handle(stdout: string, exitCode = 0, stderr = '', lossy = false): Subpr
   }
 }
 
-function runtime(results: Array<{ stdout?: string; exitCode?: number }>) {
+function runtime(results: Array<{ stdout?: string; exitCode?: number; stderr?: string }>) {
   const spawn = vi.fn((_spec: SubprocessSpawnSpec) => {
     const result = results.shift()
     if (result === undefined) throw new Error('unexpected command')
-    return handle(result.stdout ?? '', result.exitCode)
+    return handle(result.stdout ?? '', result.exitCode, result.stderr ?? '')
   })
   return { spawn, resolveExecutable: vi.fn(async () => '/bin/git') }
 }
@@ -161,6 +161,42 @@ describe('repository setup service', () => {
     }).setup(second.root, 'main', true, 'feature/exact-name')
     expect(explicit.branch).toBe('feature/exact-name')
     expect(explicitRuntime.spawn.mock.calls[5]?.[0].argv).toContain('feature/exact-name')
+  })
+
+  it('reuses an existing explicitly named branch after pruning stale registrations', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'PSOS-5694\nmain\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await service.setup(root, 'main', true, 'PSOS-5694')
+    expect(result).toMatchObject({ mode: 'worktree', branch: 'PSOS-5694' })
+    expect(fake.spawn.mock.calls[5]?.[0].argv).toEqual(['/bin/git', 'worktree', 'prune'])
+    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual(['/bin/git', 'worktree', 'add', '--', result.path, 'PSOS-5694'])
+    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases[0]).toMatchObject({ branch: 'PSOS-5694', pluginGeneratedBranch: false })
+  })
+
+  it('surfaces the git error when the worktree cannot be created', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { exitCode: 128, stderr: "Preparing worktree\nfatal: a branch named 'PSOS-5694' already exists\n" },
+    ])
+    await expect(new RepositorySetupService(fake, { leasePath, worktreeRoot }).setup(root, 'main', true, 'PSOS-5694'))
+      .rejects.toMatchObject<Partial<RepositorySetupError>>({
+        code: 'worktree-failed',
+        message: "Git could not create the worktree: fatal: a branch named 'PSOS-5694' already exists",
+      })
   })
 
   it('preserves an explicitly named branch after removing its clean Worktree', async () => {

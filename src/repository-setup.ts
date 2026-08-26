@@ -226,6 +226,7 @@ export class RepositorySetupService {
         branch,
         local ? `refs/heads/${branch}` : `refs/remotes/${branch}`,
         requestedBranch,
+        requestedBranch !== undefined && info.branches.includes(requestedBranch),
         progress,
       )
     }
@@ -379,6 +380,7 @@ export class RepositorySetupService {
     baseBranch: string,
     baseRef: string,
     explicitBranchName: string | undefined,
+    reuseExistingBranch: boolean,
     progress: RepositorySetupProgress,
   ): Promise<RepositorySetupResult> {
     const git = await this.#git()
@@ -398,8 +400,18 @@ export class RepositorySetupService {
     const path = join(this.#worktreeRoot, `${slug(basename(root), 'repository')}-${stamp}-${suffix}`)
     progress('creating-worktree')
     await mkdir(this.#worktreeRoot, { recursive: true })
-    const created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
-    if (created.exitCode !== 0) throw new RepositorySetupError('worktree-failed', 'Git could not create the worktree.')
+    // A stale registration from a deleted worktree directory would keep the
+    // existing branch "checked out" and block reusing it.
+    if (reuseExistingBranch) await this.#run(git, ['worktree', 'prune'], root).catch(() => undefined)
+    const created = await this.#run(
+      git,
+      reuseExistingBranch ? ['worktree', 'add', '--', path, branch] : ['worktree', 'add', '-b', branch, path, baseRef],
+      root,
+    )
+    if (created.exitCode !== 0) {
+      const detail = created.stderr.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0).at(-1)
+      throw new RepositorySetupError('worktree-failed', detail === undefined ? 'Git could not create the worktree.' : `Git could not create the worktree: ${detail}`)
+    }
     const item: WorktreeLease = {
       id: randomUUID(),
       root,
@@ -416,6 +428,7 @@ export class RepositorySetupService {
       })
     } catch (error) {
       await this.#run(git, ['worktree', 'remove', '--force', '--', path], root).catch(() => undefined)
+      if (!reuseExistingBranch) await this.#run(git, ['branch', '-D', '--', branch], root).catch(() => undefined)
       throw error
     }
     return { mode: 'worktree', root, path, branch, leaseId: item.id }
