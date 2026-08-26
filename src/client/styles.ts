@@ -1089,6 +1089,105 @@ export const repositoryBar: CSSProperties = {
   textAlign: 'left',
 }
 
+/* Queue strip replacing the Host dock entry; mirrors the repository bar. */
+
+export const queueBar: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  padding: '3px 6px 3px 11px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 11,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+}
+
+export const queueHeader: CSSProperties = {
+  width: '100%',
+  minHeight: 30,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '2px 0',
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 13,
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const queueLead: CSSProperties = {
+  flex: 'none',
+  display: 'grid',
+  placeItems: 'center',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const queueCount: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  fontWeight: 550,
+}
+
+export const queueList: CSSProperties = {
+  maxHeight: 180,
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+  overflowY: 'auto',
+}
+
+export const queueRow: CSSProperties = {
+  minHeight: 30,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+}
+
+export const queueRowDivider: CSSProperties = {
+  borderTop: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
+}
+
+export const queuePreview: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-secondary)',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const queueEditor: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  height: 26,
+  boxSizing: 'border-box',
+  padding: '0 8px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 6,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 13,
+}
+
+export const queueActions: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+}
+
 export const repositoryBarMerged: CSSProperties = {
   borderColor: 'color-mix(in srgb, #a78bfa 30%, var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent)))',
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',

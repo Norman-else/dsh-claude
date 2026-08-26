@@ -16,6 +16,7 @@ import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './C
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
 import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
+import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
@@ -281,6 +282,28 @@ export function apply(ctx: ClientContext): void {
       }
     },
   }, ClaudeRepositoryStatus))
+  if (sessions !== undefined && conversation !== undefined) {
+    // Shadow the Host queue strip: list-slot entries sharing an id form one
+    // cell and the lowest priority renders, so this replaces it app-wide with
+    // a strip that matches the repository status bar.
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+      name: 'conversation.input.dock',
+      id: 'queue',
+      order: 20,
+      priority: -10,
+      locale: namespace,
+      inject: (sessionId: string): ClaudeQueueDockInjected => {
+        const scope = sessions.scope(sessionId as SessionId)
+        const scoped = scope === undefined ? undefined : (scope as unknown as { get(name: string): unknown }).get('conversation') as IConversation | undefined
+        const target = scoped ?? conversation
+        return {
+          t,
+          updateQueue: (itemId, action) => target.updateQueue(itemId as never, action as never),
+          notify: (level, text) => { if (scope !== undefined) conversation.input.for(scope).notify(level, text) },
+        }
+      },
+    }, ClaudeQueueDock))
+  }
   if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined) {
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
       name: 'conversation.input.dock',
