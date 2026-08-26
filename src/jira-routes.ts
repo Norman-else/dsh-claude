@@ -57,6 +57,12 @@ export function registerJiraRoute(ctx: Context, service: JiraService): void {
           await service.disconnect()
           return json(res, 200, { connected: false })
         }
+        if (url.pathname === `${CLAUDE_JIRA_PATH}/assign`) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(req)
+          await service.assignToMe(string(input, 'key'))
+          return json(res, 200, { assigned: true })
+        }
         if (url.pathname === `${CLAUDE_JIRA_PATH}/search`) {
           if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
           return json(res, 200, { tickets: await service.search(url.searchParams.get('query') ?? '') })

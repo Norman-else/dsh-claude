@@ -32,7 +32,7 @@ describe('Jira query helpers', () => {
     expect(() => normalizeSiteUrl('http://team.atlassian.net')).toThrow('https')
     expect(ticketKeyOf(' psos-5683 ')).toBe('PSOS-5683')
     expect(ticketKeyOf('login flow')).toBeUndefined()
-    expect(buildJql('')).toBe('assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC')
+    expect(buildJql('')).toBe('statusCategory != Done ORDER BY updated DESC')
     expect(buildJql('PSOS-12')).toBe('key = "PSOS-12"')
     expect(buildJql('say "hi"')).toBe('text ~ "say \\"hi\\"*" ORDER BY updated DESC')
   })
@@ -56,8 +56,9 @@ describe('Jira service', () => {
     const path = await storePath()
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
-      if (url.endsWith('/rest/api/3/myself')) return jsonResponse(200, { displayName: 'Norman', emailAddress: 'n@example.com' })
+      if (url.endsWith('/rest/api/3/myself')) return jsonResponse(200, { displayName: 'Norman', emailAddress: 'n@example.com', accountId: 'acc-1' })
       if (url.includes('/rest/api/3/search/jql?')) return jsonResponse(200, { issues: [{ key: 'PSOS-7', fields: { summary: 'Ship it' } }] })
+      if (url.endsWith('/rest/api/3/issue/PSOS-7/assignee')) return new Response(null, { status: 204 })
       return jsonResponse(404, {})
     })
     const service = new JiraService({ storePath: path, fetch: fetcher as unknown as typeof fetch })
@@ -74,6 +75,11 @@ describe('Jira service', () => {
     const searchUrl = String(fetcher.mock.calls[1]?.[0])
     expect(searchUrl).toContain('/rest/api/3/search/jql?')
     expect(new URL(searchUrl).searchParams.get('jql')).toBe('text ~ "ship*" ORDER BY updated DESC')
+
+    await service.assignToMe('psos-7')
+    const assign = fetcher.mock.calls.at(-1)
+    expect(String(assign?.[0])).toBe('https://team.atlassian.net/rest/api/3/issue/PSOS-7/assignee')
+    expect(assign?.[1]).toMatchObject({ method: 'PUT', body: JSON.stringify({ accountId: 'acc-1' }) })
 
     await service.disconnect()
     await expect(service.status()).resolves.toEqual({ connected: false })
@@ -144,6 +150,7 @@ describe('Jira route', () => {
       connect: vi.fn(async () => ({ connected: true, siteUrl: 'https://team.atlassian.net', email: 'n@example.com' })),
       disconnect: vi.fn(async () => undefined),
       search: vi.fn(async () => [{ key: 'PSOS-1', summary: 'Fix', url: 'https://team.atlassian.net/browse/PSOS-1' }]),
+      assignToMe: vi.fn(async () => undefined),
     }
     registerJiraRoute(ctx, service as unknown as JiraService)
 
@@ -167,6 +174,11 @@ describe('Jira route', () => {
     expect(search.statusCode).toBe(200)
     expect(service.search).toHaveBeenCalledWith('fix')
     expect(JSON.parse(search.body).tickets).toHaveLength(1)
+
+    const assign = response()
+    await ctx.handler(request('POST', `${CLAUDE_JIRA_PATH}/assign`, { key: 'PSOS-1' }), assign)
+    expect(assign.statusCode).toBe(200)
+    expect(service.assignToMe).toHaveBeenCalledWith('PSOS-1')
 
     const disconnect = response()
     await ctx.handler(request('POST', `${CLAUDE_JIRA_PATH}/disconnect`), disconnect)

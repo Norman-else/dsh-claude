@@ -63,6 +63,14 @@ export async function searchJiraTickets(query: string, signal?: AbortSignal): Pr
   return tickets
 }
 
+export async function assignJiraTicket(key: string): Promise<void> {
+  await call('/assign', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ key }),
+  })
+}
+
 /** Draft seeded into the composer when a session starts from a ticket. */
 export function ticketPrompt(ticket: JiraTicket): string {
   return `Work on Jira ticket ${ticket.key}: ${ticket.summary}\n${ticket.url}\n\nRead the ticket, implement what it asks for, and reference ${ticket.key} in the commit and pull request.`

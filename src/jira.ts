@@ -16,6 +16,7 @@ export interface JiraConnectionInput {
 
 interface JiraStore extends JiraConnectionInput {
   readonly displayName?: string
+  readonly accountId?: string
 }
 
 /** Connection state exposed to the browser; never carries the token. */
@@ -72,7 +73,7 @@ export function ticketKeyOf(query: string): string | undefined {
 
 export function buildJql(query: string): string {
   const trimmed = query.trim().slice(0, MAX_QUERY_CHARS)
-  if (trimmed.length === 0) return 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC'
+  if (trimmed.length === 0) return 'statusCategory != Done ORDER BY updated DESC'
   const key = ticketKeyOf(trimmed)
   if (key !== undefined) return `key = "${key}"`
   const escaped = trimmed.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
@@ -135,9 +136,30 @@ export class JiraService {
     const connection = { siteUrl, email, apiToken }
     const myself = record(await this.#json(connection, '/rest/api/3/myself'))
     const displayName = typeof myself?.displayName === 'string' ? myself.displayName : undefined
-    const store: JiraStore = { ...connection, ...(displayName === undefined ? {} : { displayName }) }
+    const accountId = typeof myself?.accountId === 'string' ? myself.accountId : undefined
+    const store: JiraStore = {
+      ...connection,
+      ...(displayName === undefined ? {} : { displayName }),
+      ...(accountId === undefined ? {} : { accountId }),
+    }
     await this.#write(store)
     return statusOf(store)
+  }
+
+  /** Assign a ticket to the connected account (used once a ticket's worktree exists). */
+  async assignToMe(key: string): Promise<void> {
+    const store = await this.#read()
+    if (store === undefined) throw new JiraError('not-connected', 'Connect Jira in Settings first.')
+    const ticket = ticketKeyOf(key)
+    if (ticket === undefined) throw new JiraError('invalid-request', 'The ticket key is invalid.')
+    let accountId = store.accountId
+    if (accountId === undefined) {
+      const myself = record(await this.#json(store, '/rest/api/3/myself'))
+      if (typeof myself?.accountId !== 'string') throw new JiraError('jira-failed', 'The Jira account id is unavailable.')
+      accountId = myself.accountId
+      await this.#write({ ...store, accountId })
+    }
+    await this.#json(store, `/rest/api/3/issue/${ticket}/assignee`, { method: 'PUT', body: { accountId } })
   }
 
   async disconnect(): Promise<void> {
@@ -159,15 +181,17 @@ export class JiraService {
     return parseTickets(body, store.siteUrl)
   }
 
-  async #json(connection: JiraConnectionInput, path: string): Promise<unknown> {
+  async #json(connection: JiraConnectionInput, path: string, init: { method?: 'GET' | 'PUT'; body?: unknown } = {}): Promise<unknown> {
     let response: Response
     try {
       response = await this.#fetch(`${connection.siteUrl}${path}`, {
-        method: 'GET',
+        method: init.method ?? 'GET',
         headers: {
           accept: 'application/json',
           authorization: `Basic ${Buffer.from(`${connection.email}:${connection.apiToken}`).toString('base64')}`,
+          ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
         },
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch {
@@ -176,6 +200,7 @@ export class JiraService {
     if (response.status === 401 || response.status === 403) throw new JiraError('unauthorized', 'Jira rejected the credentials.')
     if (response.status === 404) throw new JiraError('not-found', 'The Jira endpoint was not found.')
     if (!response.ok) throw new JiraError('jira-failed', `Jira responded with HTTP ${response.status}.`)
+    if (response.status === 204) return undefined
     try {
       return await response.json() as unknown
     } catch {
@@ -199,6 +224,7 @@ export class JiraService {
       email: input.email,
       apiToken: input.apiToken,
       ...(typeof input.displayName === 'string' ? { displayName: input.displayName } : {}),
+      ...(typeof input.accountId === 'string' ? { accountId: input.accountId } : {}),
     }
   }
 
