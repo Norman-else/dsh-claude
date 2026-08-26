@@ -14,6 +14,7 @@ import { AsyncQueue } from '../src/async-queue.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import type { ClaudeActivityInput } from '../src/events.ts'
 import {
+  CLAUDE_INTERRUPT_TIMEOUT_MS,
   ClaudeOutcomeUnknownError,
   ClaudeProcessLimitError,
   ClaudeSupervisor,
@@ -914,18 +915,26 @@ describe('Claude supervisor', () => {
   })
 
   it('tears down a hung interrupt after the bounded wait', async () => {
-    const transport = factory()
-    const owner = fakeAgent()
-    const runtime = supervisor(transport.create, 4, 60_000)
-    const controller = new AbortController()
-    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
-    const query = transport.queries[0]!
-    query.interrupt.mockImplementation(() => new Promise(() => {}))
-    controller.abort()
-    await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
-    await vi.waitFor(() => expect(runtime.snapshots()).toHaveLength(0), { timeout: 8_000, interval: 50 })
-    await runtime.dispose()
-  }, 10_000)
+    // Fake timers: the bounded wait is a real 5s otherwise, which made this
+    // case flaky under full-suite load.
+    vi.useFakeTimers()
+    try {
+      const transport = factory()
+      const owner = fakeAgent()
+      const runtime = supervisor(transport.create, 4, 60_000)
+      const controller = new AbortController()
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
+      const query = transport.queries[0]!
+      query.interrupt.mockImplementation(() => new Promise(() => {}))
+      controller.abort()
+      await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(CLAUDE_INTERRUPT_TIMEOUT_MS)
+      await vi.waitFor(() => expect(runtime.snapshots()).toHaveLength(0))
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('rejects a result with the wrong user-message UUID', async () => {
     const transport = factory()
