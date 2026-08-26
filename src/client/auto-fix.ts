@@ -1,6 +1,6 @@
 import { composeChecksPrompt, composeCommentsPrompt, type FailingCheck, type PullRequestReviewComment } from './pr-feedback-api.ts'
 
-export const AUTO_FIX_INTERVAL_MS = 60_000
+export const AUTO_FIX_INTERVAL_MS = 30_000
 export const AUTO_FIX_FOOTER = 'This request was generated automatically by the pull request watcher. After making the changes, commit and push to the pull request branch so the checks re-run.'
 
 /** What the watcher has already handed to Claude for one session. */
