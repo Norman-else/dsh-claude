@@ -92,6 +92,8 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   repositoryChecksOpen: 'Show failing checks',
   repositoryUpdateBranch: 'Update branch',
   diffUpdateBranchBehind: '{count} behind {base}',
+  autoFixLabel: 'Auto fix',
+  autoFixTitle: 'Watch and fix',
 }
 
 const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string => {
@@ -526,6 +528,19 @@ describe('pull request feedback controls', () => {
     expect(behind).toContain('↓2')
     expect(render({ dirty: true, baseBehind: 2 })).not.toContain('Update branch')
     expect(render({ dirty: false })).not.toContain('Update branch')
+  })
+
+  it('offers the auto-fix watcher only when a prompt can be submitted for an open PR', () => {
+    expect(render({})).toContain('role="checkbox" aria-checked="false" title="Watch and fix"')
+    expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('title="Watch and fix"')
+    const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook(projection)}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(withoutSubmit).not.toContain('title="Watch and fix"')
   })
 
   it('turns failing checks into a details trigger', () => {

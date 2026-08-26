@@ -4,7 +4,8 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
-import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, type FailingCheck } from './pr-feedback-api.ts'
+import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestComments, type FailingCheck, type PullRequestReviewComment } from './pr-feedback-api.ts'
+import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, rememberAutoFix, setAutoFixEnabled } from './auto-fix.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
@@ -13,7 +14,7 @@ export interface ClaudeRepositoryStatusInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   openDiff: () => void
   /** Submit the composer, seeding the given draft text when it is empty. */
-  submitPrompt?: (draft: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }
 
 export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjected {
@@ -167,11 +168,75 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
   )
 }
 
+/** Watches an open pull request and hands new review comments and failing
+ *  CI runs to Claude automatically until the user switches it off. */
+export function AutoFixControl({ sessionId, repository, t, submitPrompt }: {
+  sessionId: string
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+}) {
+  const pullRequest = repository.pullRequest
+  const open = pullRequest?.state === 'open'
+  const number = pullRequest?.number
+  const checks = pullRequest?.checks
+  const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
+  const [hovered, setHovered] = useState(false)
+  useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
+  useEffect(() => {
+    if (!enabled || !open || number === undefined || submitPrompt === undefined) return
+    let cancelled = false
+    const tick = async (): Promise<void> => {
+      const [comments, failing] = await Promise.all([
+        loadPullRequestComments(sessionId, number).catch((): readonly PullRequestReviewComment[] => []),
+        checks === 'failing' ? loadFailingChecks(sessionId, number).catch((): readonly FailingCheck[] => []) : Promise.resolve<readonly FailingCheck[]>([]),
+      ])
+      if (cancelled) return
+      const plan = planAutoFix(autoFixMemory(sessionId), comments, failing)
+      // A non-empty user draft defers this round instead of clobbering it.
+      if (plan.prompt !== undefined && submitPrompt(plan.prompt, 'idle')) rememberAutoFix(sessionId, plan.memory)
+    }
+    void tick()
+    const timer = setInterval(() => { void tick() }, AUTO_FIX_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [checks, enabled, number, open, sessionId, submitPrompt])
+  if (!open || submitPrompt === undefined) return null
+  const toggle = (): void => {
+    const next = !enabled
+    setEnabled(next)
+    setAutoFixEnabled(sessionId, next)
+  }
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={enabled}
+      title={t('autoFixTitle')}
+      style={{ ...styles.heroWorktreeToggle, ...(enabled || hovered ? styles.heroWorktreeToggleActive : {}) }}
+      onMouseEnter={() => { setHovered(true) }}
+      onMouseLeave={() => { setHovered(false) }}
+      onClick={toggle}
+    >
+      <span aria-hidden="true" style={{ ...styles.heroWorktreeCheckbox, ...(enabled ? styles.heroWorktreeCheckboxChecked : {}) }}>
+        {enabled ? (
+          <svg viewBox="0 0 12 12" style={styles.heroWorktreeCheckboxIcon}>
+            <path d="m2.5 6.2 2.1 2.1 4.9-5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+          </svg>
+        ) : null}
+      </span>
+      {t('autoFixLabel')}
+    </button>
+  )
+}
+
 export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }: {
   sessionId: string
   pullNumber: number
   t: ClaudeRepositoryStatusInjected['t']
-  submitPrompt?: (draft: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -247,7 +312,7 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
   sessionId: string
   repository: RepositoryStatus
   t: ClaudeRepositoryStatusInjected['t']
-  submitPrompt?: (draft: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
   const [dialog, setDialog] = useState<UpdateDialogState>()
   const controller = useRef<AbortController>()
@@ -481,6 +546,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
             />
+            <AutoFixControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />
           </>}

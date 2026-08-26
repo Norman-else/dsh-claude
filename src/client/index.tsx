@@ -52,7 +52,7 @@ function MaximizedDiff({
   sessionId: string
   closeDetails: () => void
   restore: () => void
-  submitPrompt?: (draft: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
@@ -80,15 +80,21 @@ export function apply(ctx: ClientContext): void {
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   const conversation = ctx.get('conversation') as IConversation | undefined
   const connection = ctx.get('connection') as ConnectionHandle | undefined
-  /** Composer submit hook shared by the repository feedback affordances. */
-  const submitPromptFor = (sessionId: string): ((draft: string) => void) | undefined => {
+  /** Composer submit hook shared by the repository feedback affordances.
+   *  'append' keeps any user draft and adds the prompt below it; 'idle'
+   *  submits only when the composer is empty and reports false otherwise. */
+  const submitPromptFor = (sessionId: string): ((draft: string, mode?: 'append' | 'idle') => boolean) | undefined => {
     if (sessions === undefined || conversation === undefined) return undefined
-    return draft => {
+    return (draft, mode = 'append') => {
       const scope = sessions.scope(sessionId as SessionId)
-      if (scope === undefined) return
+      if (scope === undefined) return false
       const input = conversation.input.for(scope)
-      if (input.state.getSnapshot().draft.trim() === '') input.setDraft(draft)
+      const current = input.state.getSnapshot().draft
+      if (current.trim() === '') input.setDraft(draft)
+      else if (mode === 'append') input.setDraft(`${current}\n\n${draft}`)
+      else return false
       input.submit()
+      return true
     }
   }
   if (sessions !== undefined) {

@@ -25,7 +25,7 @@ export interface ClaudeDiffPanelInjected {
   closeDetails: () => void
   toggleMaximized: () => void
   /** Submit the composer, seeding the given draft text when it is empty. */
-  submitPrompt?: (draft: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }
 
 export interface ClaudeDiffPanelProps extends ClaudeDiffPanelInjected {
