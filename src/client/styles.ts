@@ -1371,6 +1371,26 @@ export const diffTriggerMuted: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+export const repositoryAutoFix: CSSProperties = {
+  width: 26,
+  height: 26,
+  flex: 'none',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 7,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  cursor: 'pointer',
+}
+
+export const repositoryAutoFixActive: CSSProperties = {
+  borderColor: 'color-mix(in srgb, var(--dsw-static-blue-450) 45%, transparent)',
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
+  color: 'var(--dsw-static-blue-450)',
+}
+
 export const repositoryUpdateTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',

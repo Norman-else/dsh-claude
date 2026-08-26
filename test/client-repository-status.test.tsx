@@ -107,7 +107,7 @@ function hook(value: ClaudeClientProjection) {
 }
 
 function sessionsHook(blank: boolean) {
-  return <T,>(selector: (sessions: { readonly byId: Readonly<Record<string, { readonly blank: boolean } | undefined>> }) => T): T => selector({
+  return <T,>(selector: (sessions: { readonly byId: Readonly<Record<string, { readonly blank: boolean; readonly running?: boolean } | undefined>> }) => T): T => selector({
     byId: { session: { blank } },
   })
 }
@@ -531,8 +531,10 @@ describe('pull request feedback controls', () => {
   })
 
   it('offers the auto-fix watcher only when a prompt can be submitted for an open PR', () => {
-    expect(render({})).toContain('role="checkbox" aria-checked="false" title="Watch and fix"')
-    expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('title="Watch and fix"')
+    const markup = render({})
+    expect(markup).toContain('role="switch" aria-checked="false" aria-label="Auto fix"')
+    expect(markup).toContain('Watch and fix')
+    expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('aria-label="Auto fix"')
     const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"
       useSessions={sessionsHook(false)}
@@ -540,7 +542,7 @@ describe('pull request feedback controls', () => {
       t={t}
       openDiff={vi.fn()}
     />)
-    expect(withoutSubmit).not.toContain('title="Watch and fix"')
+    expect(withoutSubmit).not.toContain('aria-label="Auto fix"')
   })
 
   it('turns failing checks into a details trigger', () => {
