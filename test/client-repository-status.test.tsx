@@ -107,7 +107,7 @@ function hook(value: ClaudeClientProjection) {
 }
 
 function sessionsHook(blank: boolean) {
-  return <T,>(selector: (sessions: { readonly byId: Readonly<Record<string, { readonly blank: boolean } | undefined>> }) => T): T => selector({
+  return <T,>(selector: (sessions: { readonly byId: Readonly<Record<string, { readonly blank: boolean; readonly running?: boolean } | undefined>> }) => T): T => selector({
     byId: { session: { blank } },
   })
 }

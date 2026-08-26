@@ -19,7 +19,7 @@ export interface ClaudeRepositoryStatusInjected {
 
 export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
-  useSessions: SnapshotSelectorHook<{ readonly byId: Readonly<Record<string, { readonly blank: boolean } | undefined>> }>
+  useSessions: SnapshotSelectorHook<{ readonly byId: Readonly<Record<string, { readonly blank: boolean; readonly running?: boolean } | undefined>> }>
   sessionId: string
 }
 
@@ -170,9 +170,11 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
 
 /** Watches an open pull request and hands new review comments and failing
  *  CI runs to Claude automatically until the user switches it off. */
-export function AutoFixControl({ sessionId, repository, t, submitPrompt }: {
+export function AutoFixControl({ sessionId, repository, running, t, submitPrompt }: {
   sessionId: string
   repository: RepositoryStatus
+  /** Whether a turn is in flight; the watcher only submits into an idle session. */
+  running: boolean
   t: ClaudeRepositoryStatusInjected['t']
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
@@ -183,8 +185,11 @@ export function AutoFixControl({ sessionId, repository, t, submitPrompt }: {
   const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
   const [hovered, setHovered] = useState(false)
   useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
+  // Submitting while a turn runs would queue or steer (interrupt) it depending
+  // on the user's Enter-while-busy setting, so wait for idle instead; the
+  // running flip re-arms the effect and polls immediately when the turn ends.
   useEffect(() => {
-    if (!enabled || !open || number === undefined || submitPrompt === undefined) return
+    if (!enabled || !open || running || number === undefined || submitPrompt === undefined) return
     let cancelled = false
     const tick = async (): Promise<void> => {
       const [comments, failing] = await Promise.all([
@@ -202,7 +207,7 @@ export function AutoFixControl({ sessionId, repository, t, submitPrompt }: {
       cancelled = true
       clearInterval(timer)
     }
-  }, [checks, enabled, number, open, sessionId, submitPrompt])
+  }, [checks, enabled, number, open, running, sessionId, submitPrompt])
   if (!open || submitPrompt === undefined) return null
   const toggle = (): void => {
     const next = !enabled
@@ -488,6 +493,7 @@ export function MergePullRequestControl({ sessionId, repository, t }: {
 
 export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
+  const running = useSessions(value => value.byId[sessionId]?.running === true)
   const projection = useClaudeProjection(value => value)
   const repository = projection.repository
   if (blank || !projection.owned || repository === undefined) return null
@@ -546,7 +552,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
             />
-            <AutoFixControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
+            <AutoFixControl sessionId={sessionId} repository={repository} running={running} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />
           </>}
