@@ -176,7 +176,6 @@ export const settingSelectValue: CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  fontWeight: 550,
 }
 
 export const settingSelectChevron: CSSProperties = {
