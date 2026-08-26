@@ -45,13 +45,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 function MaximizedDiff({
-  source, t, sessionId, closeDetails, restore,
+  source, t, sessionId, closeDetails, restore, submitPrompt,
 }: {
   source: ClaudeProjectionSource
   t: ClaudeDiffPanelInjected['t']
   sessionId: string
   closeDetails: () => void
   restore: () => void
+  submitPrompt?: (draft: string) => void
 }) {
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
@@ -62,6 +63,7 @@ function MaximizedDiff({
     maximized
     closeDetails={closeDetails}
     toggleMaximized={restore}
+    {...(submitPrompt === undefined ? {} : { submitPrompt })}
   /></ClaudeDiffOverlay>
 }
 
@@ -78,6 +80,17 @@ export function apply(ctx: ClientContext): void {
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   const conversation = ctx.get('conversation') as IConversation | undefined
   const connection = ctx.get('connection') as ConnectionHandle | undefined
+  /** Composer submit hook shared by the repository feedback affordances. */
+  const submitPromptFor = (sessionId: string): ((draft: string) => void) | undefined => {
+    if (sessions === undefined || conversation === undefined) return undefined
+    return draft => {
+      const scope = sessions.scope(sessionId as SessionId)
+      if (scope === undefined) return
+      const input = conversation.input.for(scope)
+      if (input.state.getSnapshot().draft.trim() === '') input.setDraft(draft)
+      input.submit()
+    }
+  }
   if (sessions !== undefined) {
     ctx.effect(() => sessions.provide({
       hooks: ['claudeProjection'],
@@ -140,6 +153,7 @@ export function apply(ctx: ClientContext): void {
   const openDiffPanel = (sessionId: string): void => {
     closePluginDetails()
     detailsSessionId = sessionId
+    const submitPrompt = submitPromptFor(sessionId)
     const registerDetails = (): boolean => {
       try {
         disposePluginDetails = ctx.slots.register({
@@ -152,6 +166,7 @@ export function apply(ctx: ClientContext): void {
             maximized: false,
             closeDetails: closePluginDetails,
             toggleMaximized: maximizeDiff,
+            ...(submitPrompt === undefined ? {} : { submitPrompt }),
           }),
         }, ClaudeDiffPanel)
       } catch {
@@ -180,6 +195,7 @@ export function apply(ctx: ClientContext): void {
           sessionId={sessionId}
           closeDetails={closePluginDetails}
           restore={restoreDiff}
+          {...(submitPrompt === undefined ? {} : { submitPrompt })}
         />)
       } catch {
         disposeDiffOverlay = undefined
@@ -250,10 +266,14 @@ export function apply(ctx: ClientContext): void {
     // dock stacks comments (18) → queue (20) → repository readout.
     order: 20.5,
     locale: namespace,
-    inject: (sessionId: string): ClaudeRepositoryStatusInjected => ({
-      t,
-      openDiff: () => openDiffPanel(sessionId),
-    }),
+    inject: (sessionId: string): ClaudeRepositoryStatusInjected => {
+      const submitPrompt = submitPromptFor(sessionId)
+      return {
+        t,
+        openDiff: () => openDiffPanel(sessionId),
+        ...(submitPrompt === undefined ? {} : { submitPrompt }),
+      }
+    },
   }, ClaudeRepositoryStatus))
   if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined) {
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({

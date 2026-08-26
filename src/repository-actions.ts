@@ -12,7 +12,7 @@ const REMOTE_TIMEOUT_MS = 60_000
 const GENERATE_TIMEOUT_MS = 60_000
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
-export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr'
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch'
 export type RepositoryMergeMethod = 'merge' | 'squash' | 'rebase'
 
 interface CommandResult {
@@ -66,6 +66,8 @@ export interface RepositoryActionResult {
   readonly commit: string
   readonly pushed: boolean
   readonly pullRequestUrl?: string
+  /** Conflicted paths left in the working tree by an update-branch merge. */
+  readonly conflicts?: readonly string[]
 }
 
 export class RepositoryActionError extends Error {
@@ -230,6 +232,36 @@ export class RepositoryActionService {
       }
       this.#invalidate(before.root)
       return { commit: before.head, pushed: true }
+    }
+    if (request.action === 'update-branch') {
+      const base = safeText(request.baseBranch ?? '', 512, 'Base branch')
+      if (before.files.length > 0) {
+        throw new RepositoryActionError('dirty-workspace', 'Commit or stash workspace changes before updating the branch.')
+      }
+      const git = await this.#git()
+      await this.#mustRun(git, ['fetch', 'origin', '--', base], before.root, REMOTE_TIMEOUT_MS, 'fetch-failed', 'Git could not fetch the base branch.')
+      const merged = await this.#run(git, ['merge', '--no-edit', '--', `origin/${base}`], before.root, REMOTE_TIMEOUT_MS)
+      if (merged.exitCode !== 0 || merged.lossy) {
+        const conflicted = await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], before.root, GIT_TIMEOUT_MS)
+        const conflicts = conflicted.exitCode === 0 && !conflicted.lossy
+          ? conflicted.stdout.split(/\r?\n/u).filter(line => line.length > 0).slice(0, 100)
+          : []
+        if (conflicts.length === 0) {
+          await this.#run(git, ['merge', '--abort'], before.root, GIT_TIMEOUT_MS).catch(() => undefined)
+          throw new RepositoryActionError('merge-failed', 'Git could not merge the base branch.')
+        }
+        // Leave the conflicted tree in place: resolving it is the next step.
+        this.#invalidate(before.root)
+        return { commit: before.head, pushed: false, conflicts }
+      }
+      const mergedHead = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'merge-failed', 'The merge commit could not be verified.')).stdout.trim()
+      try {
+        await this.#push(git, before.root, before.branch)
+      } catch (error) {
+        throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.', mergedHead)
+      }
+      this.#invalidate(before.root)
+      return { commit: mergedHead, pushed: true }
     }
     const message = safeText(request.message, MAX_MESSAGE_CHARS, 'Commit message')
     if (before.files.length === 0 && request.action !== 'create-pr') {

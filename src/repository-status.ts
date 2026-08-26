@@ -48,6 +48,8 @@ export interface RepositoryStatus {
   readonly remote?: string
   readonly pullRequest?: RepositoryPullRequestStatus
   readonly diff?: RepositoryDiffStatus
+  /** Commits on origin/<base> that are not on HEAD, for open pull requests. */
+  readonly baseBehind?: number
 }
 
 type RepositoryRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
@@ -332,6 +334,9 @@ export class RepositoryStatusService {
       const diff = status.dirty || diffBase !== 'HEAD'
         ? await this.#diff(cwd, git, diffBase)
         : { additions: 0, deletions: 0, files: 0, truncated: false }
+      const baseBehind = pullRequest?.state === 'open' && pullRequest.baseBranch !== undefined
+        ? await this.#baseBehind(cwd, git, pullRequest.baseBranch)
+        : undefined
       return {
         status: 'ready',
         cwd: safeCwd,
@@ -341,9 +346,21 @@ export class RepositoryStatusService {
         ...(remote === undefined ? {} : { remote }),
         ...(pullRequest === undefined ? {} : { pullRequest }),
         ...(diff === undefined ? {} : { diff }),
+        ...(baseBehind === undefined ? {} : { baseBehind }),
       }
     } catch {
       return { status: 'unavailable', cwd: safeCwd }
+    }
+  }
+
+  async #baseBehind(cwd: string, git: string, baseBranch: string): Promise<number | undefined> {
+    try {
+      const result = await run(this.#runtime, git, ['rev-list', '--count', `HEAD..refs/remotes/origin/${baseBranch}`, '--'], cwd, GIT_TIMEOUT_MS)
+      if (result.exitCode !== 0 || result.lossy) return undefined
+      const count = Number(bounded(result.stdout))
+      return Number.isSafeInteger(count) && count >= 0 ? count : undefined
+    } catch {
+      return undefined
     }
   }
 

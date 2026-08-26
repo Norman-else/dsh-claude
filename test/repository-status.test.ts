@@ -125,6 +125,7 @@ describe('repository status service', () => {
       { stdout: '2\t1\tsrc/file.ts\n' },
       { stdout: 'diff --git a/src/file.ts b/src/file.ts\n@@ -1 +1 @@\n-old\n+new\n+more\n' },
       { stdout: '' },
+      { stdout: '3\n' },
     ])
     const service = new RepositoryStatusService(fake, 60_000)
     await expect(service.inspect('C:/repo')).resolves.toEqual({
@@ -157,9 +158,10 @@ describe('repository status service', () => {
         patch: 'diff --git a/src/file.ts b/src/file.ts\n@@ -1 +1 @@\n-old\n+new\n+more\n',
         truncated: false,
       },
+      baseBehind: 3,
     })
     await service.inspect('C:/repo')
-    expect(fake.spawn).toHaveBeenCalledTimes(8)
+    expect(fake.spawn).toHaveBeenCalledTimes(9)
     expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({
       argv: ['/bin/git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'],
       cwd: 'C:/repo',

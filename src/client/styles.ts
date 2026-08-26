@@ -1366,6 +1366,170 @@ export const diffTriggerMuted: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+export const repositoryUpdateTrigger: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  minHeight: 26,
+  padding: '3px 8px',
+  border: '1px solid color-mix(in srgb, var(--dsw-static-blue-450) 45%, transparent)',
+  borderRadius: 7,
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
+  color: 'var(--dsw-static-blue-450)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 650,
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+}
+
+export const repositoryChecksFrame: CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+  minWidth: 0,
+}
+
+export const repositoryChecksTrigger: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  minWidth: 0,
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  font: 'inherit',
+  color: 'inherit',
+  cursor: 'pointer',
+}
+
+export const repositoryChecksCard: CSSProperties = {
+  position: 'absolute',
+  zIndex: 1100,
+  bottom: 'calc(100% + 8px)',
+  right: 0,
+  width: 320,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  gap: 8,
+  padding: 12,
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 10,
+  background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1))',
+  boxShadow: 'var(--dsw-shadow-lv3)',
+  textAlign: 'left',
+  cursor: 'default',
+}
+
+export const repositoryChecksTitle: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  fontWeight: 650,
+}
+
+export const repositoryChecksHint: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+}
+
+export const repositoryChecksError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 12,
+}
+
+export const repositoryChecksItem: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  minWidth: 0,
+}
+
+export const repositoryChecksName: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  fontWeight: 600,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryChecksDesc: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const repositoryChecksFix: CSSProperties = {
+  alignSelf: 'flex-end',
+  minHeight: 26,
+  padding: '3px 10px',
+  border: 'none',
+  borderRadius: 7,
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  font: 'inherit',
+  fontSize: 12,
+  fontWeight: 650,
+  cursor: 'pointer',
+}
+
+export const diffPrCommentsButton: CSSProperties = {
+  minHeight: 28,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '4px 8px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  font: 'inherit',
+  fontSize: 12,
+  fontWeight: 650,
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+}
+
+export const diffGhCommentAuthor: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontWeight: 600,
+}
+
+export const diffGhCommentLink: CSSProperties = {
+  color: 'var(--dsw-static-blue-450)',
+  textDecoration: 'none',
+  fontWeight: 650,
+}
+
+export const diffModalConflicts: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  margin: 0,
+  padding: '8px 10px',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  fontSize: 12,
+  listStyle: 'none',
+}
+
+export const diffModalConflictResolve: CSSProperties = {
+  alignSelf: 'flex-start',
+  minHeight: 28,
+  padding: '4px 12px',
+  border: 'none',
+  borderRadius: 7,
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  font: 'inherit',
+  fontSize: 12,
+  fontWeight: 650,
+  cursor: 'pointer',
+}
+
 export const repositoryMergeTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',
@@ -1662,12 +1826,21 @@ export const diffHeaderTitle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
+  overflow: 'hidden',
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 15,
   fontWeight: 650,
+  whiteSpace: 'nowrap',
+}
+
+export const diffHeaderLabel: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 }
 
 export const diffHeaderActions: CSSProperties = {
+  flex: 'none',
   display: 'flex',
   alignItems: 'center',
   gap: 5,

@@ -13,7 +13,7 @@ import {
 
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SESSION_ID_CHARS = 1_024
-const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr'])
+const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch'])
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -63,7 +63,7 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
   return {
     action: action as RepositoryActionKind,
     fingerprint: string(input, 'fingerprint'),
-    message: action === 'push' || action === 'merge-pr' ? optionalString(input, 'message') ?? '' : string(input, 'message'),
+    message: action === 'push' || action === 'merge-pr' || action === 'update-branch' ? optionalString(input, 'message') ?? '' : string(input, 'message'),
     includeUnstaged: input.includeUnstaged,
     ...(optionalString(input, 'prTitle') === undefined ? {} : { prTitle: optionalString(input, 'prTitle')! }),
     ...(optionalString(input, 'prBody') === undefined ? {} : { prBody: optionalString(input, 'prBody')! }),

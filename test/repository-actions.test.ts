@@ -267,3 +267,62 @@ describe('repository pull request merge', () => {
     })
   })
 })
+
+describe('repository branch update', () => {
+  const head = 'a'.repeat(40)
+  const merged = 'c'.repeat(40)
+
+  it('merges the base branch and pushes the merge commit', async () => {
+    const fake = runtime([
+      ...previewResults(''),
+      ...previewResults(''),
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: `${merged}\n` },
+      { stdout: 'origin/feature/actions\n' },
+      { stdout: '' },
+    ])
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'update-branch', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, baseBranch: 'master',
+    })).resolves.toEqual({ commit: merged, pushed: true })
+    const argv = fake.spawn.mock.calls.map(call => call[0].argv)
+    expect(argv).toContainEqual(['C:/bin/git.exe', 'fetch', 'origin', '--', 'master'])
+    expect(argv).toContainEqual(['C:/bin/git.exe', 'merge', '--no-edit', '--', 'origin/master'])
+    expect(argv.at(-1)).toEqual(['C:/bin/git.exe', 'push'])
+  })
+
+  it('reports conflicted files and leaves the merge in place', async () => {
+    const fake = runtime([
+      ...previewResults(''),
+      ...previewResults(''),
+      { stdout: '' },
+      { stdout: '', exitCode: 1 },
+      { stdout: 'src/a.ts\nsrc/b.ts\n' },
+    ])
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'update-branch', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, baseBranch: 'master',
+    })).resolves.toEqual({ commit: head, pushed: false, conflicts: ['src/a.ts', 'src/b.ts'] })
+    expect(fake.spawn.mock.calls.every(call => !call[0].argv.includes('--abort'))).toBe(true)
+  })
+
+  it('rejects dirty trees and missing base branches before merging', async () => {
+    const dirty = runtime([...previewResults(), ...previewResults()])
+    const dirtyService = new RepositoryActionService(dirty, 'claude')
+    const dirtyPreview = await dirtyService.preview('C:/repo')
+    await expect(dirtyService.execute('C:/repo', {
+      action: 'update-branch', fingerprint: dirtyPreview.fingerprint, message: '', includeUnstaged: false, baseBranch: 'master',
+    })).rejects.toMatchObject({ code: 'dirty-workspace' })
+    expect(dirty.spawn.mock.calls.every(call => !call[0].argv.includes('fetch'))).toBe(true)
+
+    const missing = runtime([...previewResults(''), ...previewResults('')])
+    const missingService = new RepositoryActionService(missing, 'claude')
+    const missingPreview = await missingService.preview('C:/repo')
+    await expect(missingService.execute('C:/repo', {
+      action: 'update-branch', fingerprint: missingPreview.fingerprint, message: '', includeUnstaged: false,
+    })).rejects.toMatchObject({ code: 'invalid-request' })
+  })
+})

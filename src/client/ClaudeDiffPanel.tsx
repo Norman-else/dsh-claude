@@ -14,6 +14,7 @@ import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPreview } from './repository-action-api.ts'
+import { composeCommentsPrompt, loadPullRequestComments, type PullRequestReviewComment } from './pr-feedback-api.ts'
 import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
 import * as styles from './styles.ts'
 
@@ -23,6 +24,8 @@ export interface ClaudeDiffPanelInjected {
   maximized: boolean
   closeDetails: () => void
   toggleMaximized: () => void
+  /** Submit the composer, seeding the given draft text when it is empty. */
+  submitPrompt?: (draft: string) => void
 }
 
 export interface ClaudeDiffPanelProps extends ClaudeDiffPanelInjected {
@@ -138,13 +141,14 @@ interface DiffFileSectionProps {
   readonly initiallyOpen: boolean
   readonly t: ClaudeDiffPanelInjected['t']
   readonly comments: readonly ReviewComment[]
+  readonly ghComments: readonly PullRequestReviewComment[]
   readonly editorAnchor: ReviewCommentAnchor | undefined
   readonly editorNode: ReactNode
   readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
   readonly onRemoveComment: (id: string) => void
 }
 
-function DiffFileSection({ file, initiallyOpen, t, comments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
+function DiffFileSection({ file, initiallyOpen, t, comments, ghComments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
   const [open, setOpen] = useState(initiallyOpen)
   return (
     <section style={styles.diffFile}>
@@ -156,6 +160,7 @@ function DiffFileSection({ file, initiallyOpen, t, comments, editorAnchor, edito
       {open ? <div style={styles.diffCode}>{numberDiffLines(file.lines).map((entry, index) => {
         const anchor = commentAnchorForLine(entry)
         const lineComments = anchor === undefined ? [] : comments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
+        const ghLineComments = anchor === undefined ? [] : ghComments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
         const editorOpen = anchor !== undefined && editorAnchor !== undefined && editorAnchor.line === anchor.line && editorAnchor.side === anchor.side
         return (
           <Fragment key={`${index}:${entry.line}`}>
@@ -167,6 +172,15 @@ function DiffFileSection({ file, initiallyOpen, t, comments, editorAnchor, edito
                   <button type="button" style={styles.reviewCommentChipRemove} aria-label={t('reviewCommentRemove')} onClick={() => onRemoveComment(comment.id)}>×</button>
                 </div>
                 <p style={styles.diffCommentCardText}>{comment.text}</p>
+              </div>
+            ))}
+            {ghLineComments.map(comment => (
+              <div key={`gh-${comment.id}`} style={styles.diffCommentBlock}>
+                <div style={styles.diffCommentCardMeta}>
+                  <span style={styles.diffGhCommentAuthor}>GitHub · @{comment.author}</span>
+                  <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
+                </div>
+                <p style={styles.diffCommentCardText}>{comment.body}</p>
               </div>
             ))}
             {editorOpen ? editorNode : null}
@@ -190,14 +204,14 @@ interface ActionDialogState {
 export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInjected['t']): string {
   const label = action === 'commit'
     ? t('diffCommit')
-    : action === 'commit-push' ? t('diffCommitPush') : action === 'push' ? t('diffPush') : action === 'merge-pr' ? t('diffMergePr') : t('diffCreatePr')
+    : action === 'commit-push' ? t('diffCommitPush') : action === 'push' ? t('diffPush') : action === 'merge-pr' ? t('diffMergePr') : action === 'update-branch' ? t('diffUpdateBranch') : t('diffCreatePr')
   return label.replace(/[….]+$/u, '')
 }
 
 export type RepositoryActionAvailability = Readonly<Record<RepositoryActionKind, boolean>>
 
 export function repositoryActionAvailability(
-  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest' | 'upstream' | 'ahead'> | undefined,
+  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest' | 'upstream' | 'ahead' | 'baseBehind'> | undefined,
 ): RepositoryActionAvailability {
   const ready = repository?.status === 'ready' && repository.detached !== true
   const committable = ready && repository.dirty === true
@@ -210,6 +224,7 @@ export function repositoryActionAvailability(
     'push': pushable,
     'create-pr': (committable || pushable) && hasRemote && !hasOpenPullRequest,
     'merge-pr': ready && hasOpenPullRequest && repository?.pullRequest?.draft !== true,
+    'update-branch': ready && hasOpenPullRequest && repository?.dirty !== true && (repository?.baseBehind ?? 0) > 0,
   }
 }
 
@@ -221,7 +236,7 @@ function RestorePanelIcon() {
   )
 }
 
-export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized }: ClaudeDiffPanelProps) {
+export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized, submitPrompt }: ClaudeDiffPanelProps) {
   const projection = useClaudeProjection(value => value)
   const repository = projection.repository
   const diff = repository?.diff
@@ -241,6 +256,15 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const [localComments, setLocalComments] = useState<readonly ReviewComment[]>([])
   const [removedCommentIds, setRemovedCommentIds] = useState<ReadonlySet<string>>(() => new Set())
   const actionController = useRef<AbortController>()
+  const [ghComments, setGhComments] = useState<readonly PullRequestReviewComment[]>([])
+  const pullNumber = repository?.pullRequest?.state === 'open' ? repository.pullRequest.number : undefined
+  useEffect(() => {
+    setGhComments([])
+    if (pullNumber === undefined) return
+    const controller = new AbortController()
+    void loadPullRequestComments(sessionId, pullNumber, controller.signal).then(setGhComments, () => undefined)
+    return () => { controller.abort() }
+  }, [pullNumber, sessionId])
   // The code container is max-content wide for horizontal scrolling; comment
   // editors size against the visible width published through this variable.
   const diffViewportObserver = useRef<ResizeObserver>()
@@ -410,7 +434,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
       <div style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
-          <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span>{t('diffWorkingTree')}</span></div>
+          <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span style={styles.diffHeaderLabel}>{t('diffWorkingTree')}</span></div>
           <div style={styles.diffHeaderActions}>
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
@@ -418,6 +442,14 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
                 <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutline14 /></button>
               } />
             </div>
+            {ghComments.length > 0 && submitPrompt !== undefined ? (
+              <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} aria-label={t('prCommentsButton', { count: ghComments.length })} onClick={() => submitPrompt(composeCommentsPrompt(ghComments))}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2.75 2.75h10.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H8.2l-3.2 2.9v-2.9H2.75a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z" />
+                </svg>
+                {ghComments.length}
+              </button>
+            ) : null}
             <button type="button" className={styles.panelIconButtonClass} aria-label={maximized ? t('diffRestore') : t('diffMaximize')} onClick={toggleMaximized}>{maximized ? <RestorePanelIcon /> : <IconFullscreenOutline16 />}</button>
             <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
           </div>
@@ -436,6 +468,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               initiallyOpen={index === 0}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
+              ghComments={ghComments.filter(comment => comment.path === file.path)}
               editorAnchor={commentEditor !== undefined && commentEditor.path === file.path ? commentEditor : undefined}
               editorNode={commentEditorNode}
               onOpenEditor={anchor => openCommentEditor(file.path, anchor)}
