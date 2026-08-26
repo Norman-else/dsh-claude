@@ -14,11 +14,36 @@ export interface OverviewSessionRow {
   readonly agentPreset?: string
   readonly running?: boolean
   readonly blank?: boolean
+  readonly origin?: string
+}
+
+export interface OverviewSessionListState {
+  /** Host-list order; deleted sessions leave ids but can linger in byId. */
+  readonly ids?: readonly string[]
+  readonly byId: Readonly<Record<string, OverviewSessionRow | undefined>>
 }
 
 export interface OverviewSessionsStore {
   subscribe(listener: () => void): () => void
-  getSnapshot(): { readonly byId: Readonly<Record<string, OverviewSessionRow | undefined>> }
+  getSnapshot(): OverviewSessionListState
+}
+
+export interface OverviewWorkspaceListState {
+  /** Registry-global archive set: "deleting" a session archives it here while
+   *  it stays in the host session list. */
+  readonly archivedSessionIds?: readonly string[]
+}
+
+export interface OverviewWorkspacesStore {
+  subscribe(listener: () => void): () => void
+  getSnapshot(): OverviewWorkspaceListState
+}
+
+const NO_WORKSPACE_STATE: OverviewWorkspaceListState = {}
+
+const NO_WORKSPACES: OverviewWorkspacesStore = {
+  subscribe: () => () => {},
+  getSnapshot: () => NO_WORKSPACE_STATE,
 }
 
 export interface OverviewProjectionSource {
@@ -32,6 +57,8 @@ export interface ClaudePullRequestsPanelInjected {
   openSession: (sessionId: string) => void
   loadStatus: (cwd: string, signal?: AbortSignal) => Promise<RepositoryStatus>
   sessions: OverviewSessionsStore
+  /** Workspace registry feed used to hide archived ("deleted") sessions. */
+  workspaces?: OverviewWorkspacesStore
   /** Live sidecar projection per session, for attention badges and context usage. */
   projectionFor?: (sessionId: string) => OverviewProjectionSource
 }
@@ -49,10 +76,19 @@ export function overviewAttention(activities: readonly ClaudeActivityEvent[]): '
   return undefined
 }
 
-/** Claude sessions worth listing: non-blank, with a checkout; running first. */
-export function claudeSessionRows(byId: Readonly<Record<string, OverviewSessionRow | undefined>>): readonly OverviewSessionRow[] {
-  return Object.values(byId)
-    .filter((row): row is OverviewSessionRow => row !== undefined && row.agentPreset === 'claude' && row.blank !== true && typeof row.cwd === 'string')
+/** Claude sessions worth listing: rows still in the host list (byId keeps
+ *  deleted and breadcrumb rows), non-blank, non-subagent, with a checkout;
+ *  running first. */
+export function claudeSessionRows(state: OverviewSessionListState, archivedSessionIds: readonly string[] = []): readonly OverviewSessionRow[] {
+  const rows = state.ids === undefined ? Object.values(state.byId) : state.ids.map(id => state.byId[id])
+  const archived = new Set(archivedSessionIds)
+  return rows
+    .filter((row): row is OverviewSessionRow => row !== undefined
+      && row.agentPreset === 'claude'
+      && row.blank !== true
+      && row.origin !== 'subagent'
+      && !archived.has(row.id)
+      && typeof row.cwd === 'string')
     .sort((left, right) => Number(right.running === true) - Number(left.running === true) || (left.displayTitle ?? left.id).localeCompare(right.displayTitle ?? right.id))
 }
 
@@ -84,9 +120,11 @@ function OverviewAttention({ source, running, t }: {
   </>
 }
 
-export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStatus, sessions, projectionFor }: ClaudePullRequestsPanelInjected) {
+export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStatus, sessions, workspaces, projectionFor }: ClaudePullRequestsPanelInjected) {
   const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot)
-  const rows = useMemo(() => claudeSessionRows(snapshot.byId), [snapshot.byId])
+  const workspaceStore = workspaces ?? NO_WORKSPACES
+  const workspaceState = useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getSnapshot, workspaceStore.getSnapshot)
+  const rows = useMemo(() => claudeSessionRows(snapshot, workspaceState.archivedSessionIds ?? []), [snapshot, workspaceState])
   const cwdKey = useMemo(() => [...new Set(rows.map(row => row.cwd ?? ''))].sort().join('\0'), [rows])
   const [statuses, setStatuses] = useState<Readonly<Record<string, RepositoryStatus>>>({})
   useEffect(() => {

@@ -20,12 +20,27 @@ const byId: Record<string, OverviewSessionRow> = {
 const t = ((key: string) => key) as never
 
 function store(rows: Record<string, OverviewSessionRow>) {
-  return { subscribe: () => () => {}, getSnapshot: () => ({ byId: rows }) }
+  return { subscribe: () => () => {}, getSnapshot: () => ({ ids: Object.keys(rows), byId: rows }) }
 }
 
 describe('Claude pull requests overview', () => {
   it('lists only non-blank Claude sessions with running ones first', () => {
-    expect(claudeSessionRows(byId).map(row => row.id)).toEqual(['b', 'a'])
+    expect(claudeSessionRows({ ids: Object.keys(byId), byId }).map(row => row.id)).toEqual(['b', 'a'])
+  })
+
+  it('drops sessions that left the host list even when byId still carries them', () => {
+    // Deleting a session removes it from ids; its byId row can linger.
+    expect(claudeSessionRows({ ids: ['a'], byId }).map(row => row.id)).toEqual(['a'])
+    expect(claudeSessionRows({
+      ids: ['a', 'e'],
+      byId: { ...byId, e: { id: 'e', displayTitle: 'Sub', cwd: '/repo-e', agentPreset: 'claude', origin: 'subagent' } },
+    }).map(row => row.id)).toEqual(['a'])
+    // No ids feed (test fixtures): fall back to every row.
+    expect(claudeSessionRows({ byId }).map(row => row.id)).toEqual(['b', 'a'])
+  })
+
+  it('hides archived sessions: DSH "delete" archives while the host list keeps the row', () => {
+    expect(claudeSessionRows({ ids: Object.keys(byId), byId }, ['b']).map(row => row.id)).toEqual(['a'])
   })
 
   it('renders session rows and an empty state', () => {

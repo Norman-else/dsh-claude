@@ -173,6 +173,7 @@ export function apply(ctx: ClientContext): void {
           openSession: id => { sessions.open(id as SessionId) },
           loadStatus: loadRepositoryStatusFor,
           sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
+          ...(workspaces === undefined ? {} : { workspaces: workspaces.list as unknown as NonNullable<ClaudePullRequestsPanelInjected['workspaces']> }),
           projectionFor: id => projections.source(id),
         }),
       }, ClaudePullRequestsPanel)
