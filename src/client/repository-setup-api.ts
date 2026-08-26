@@ -1,5 +1,7 @@
-import { CLAUDE_REPOSITORY_SETUP_PATH } from '../constants.ts'
-import type { RepositoryBranchList, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
+import { CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
+import type { RepositoryBranchList, RepositoryCleanupResult, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
+import type { RepositoryStatus } from '../repository-status.ts'
+
 
 interface ErrorBody {
   readonly message?: string
@@ -113,4 +115,28 @@ export async function bindRepositoryLease(leaseId: string, sessionId: string): P
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ leaseId, sessionId }),
   }))
+}
+
+export async function cleanupMergedRepository(path: string, baseBranch: string): Promise<RepositoryCleanupResult> {
+  const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ path, baseBranch }),
+  }))
+  if ((body.mode !== 'worktree' && body.mode !== 'checkout') || typeof body.root !== 'string' || typeof body.branch !== 'string') {
+    throw new Error('Invalid repository cleanup response.')
+  }
+  return body as unknown as RepositoryCleanupResult
+}
+
+export async function loadRepositoryStatusFor(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
+  const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_STATUS_PATH}?cwd=${encodeURIComponent(cwd)}`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+    ...(signal === undefined ? {} : { signal }),
+  }))
+  if (typeof body.status !== 'string' || typeof body.cwd !== 'string') throw new Error('Invalid repository status response.')
+  return body as unknown as RepositoryStatus
 }

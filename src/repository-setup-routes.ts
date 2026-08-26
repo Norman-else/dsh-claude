@@ -109,6 +109,11 @@ export function registerRepositorySetupRoute(ctx: Context, service: RepositorySe
           await streamSetup(res, service, input)
           return
         }
+        if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(req)
+          return json(res, 200, await service.cleanupMerged(string(input, 'path'), string(input, 'baseBranch')))
+        }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/bind`) {
           if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
           const input = await readJson(req)

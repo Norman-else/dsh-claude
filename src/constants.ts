@@ -18,3 +18,5 @@ export const CLAUDE_REPOSITORY_SETUP_PATH = '/plugins/dsh-claude/repository/setu
 export const CLAUDE_REPOSITORY_ACTION_PATH = '/plugins/dsh-claude/repository/action'
 export const CLAUDE_REVIEW_COMMENT_PATH = '/plugins/dsh-claude/review-comments'
 export const CLAUDE_REPOSITORY_FEEDBACK_PATH = '/plugins/dsh-claude/repository/feedback'
+export const CLAUDE_REPOSITORY_STATUS_PATH = '/plugins/dsh-claude/repository/status'
+export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'

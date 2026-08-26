@@ -125,3 +125,18 @@ describe('repository setup route', () => {
     expect(malformed.statusCode).toBe(409)
   })
 })
+
+describe('repository setup cleanup route', () => {
+  it('cleans up merged checkouts through the service', async () => {
+    const ctx = context()
+    const service = {
+      cleanupMerged: vi.fn(async () => ({ mode: 'worktree', root: '/repo', branch: 'PSOS-1' })),
+    }
+    registerRepositorySetupRoute(ctx, service as unknown as RepositorySetupService)
+    const cleanup = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/wt', baseBranch: 'main' }), cleanup)
+    expect(cleanup.statusCode).toBe(200)
+    expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main')
+    expect(JSON.parse(cleanup.body)).toMatchObject({ mode: 'worktree', branch: 'PSOS-1' })
+  })
+})

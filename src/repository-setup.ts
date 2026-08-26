@@ -42,6 +42,12 @@ export interface RepositorySetupResult {
   readonly leaseId?: string
 }
 
+export interface RepositoryCleanupResult {
+  readonly mode: 'checkout' | 'worktree'
+  readonly root: string
+  readonly branch: string
+}
+
 interface WorktreeLease {
   readonly id: string
   readonly root: string
@@ -227,6 +233,38 @@ export class RepositorySetupService {
     return !local && remote ? this.#checkoutRemote(info, branch) : this.#checkout(info, branch)
   }
 
+  /** Tear down a merged branch: remove a plugin worktree (and its lease and
+   *  branch), or switch a plain checkout back to the base branch and delete
+   *  the merged branch. Refuses dirty trees. */
+  async cleanupMerged(pathValue: string, baseBranch: string): Promise<RepositoryCleanupResult> {
+    const path = safePath(pathValue)
+    const base = safeBranch(baseBranch)
+    const git = await this.#git()
+    const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], path)
+    if (status.exitCode !== 0 || status.lossy) throw new RepositorySetupError('repository-unavailable', 'The repository state is unavailable.')
+    if (status.stdout.trim().length > 0) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before cleaning up.')
+    const lease = (await this.#readLeases()).find(item => comparablePath(item.path) === comparablePath(path))
+    if (lease !== undefined) {
+      return this.#serialize(async () => {
+        const removed = await this.#run(git, ['worktree', 'remove', '--', lease.path], lease.root)
+        if (removed.exitCode !== 0) throw new RepositorySetupError('worktree-remove-failed', 'Git could not remove the worktree.')
+        await this.#run(git, ['branch', '-D', '--', lease.branch], lease.root).catch(() => undefined)
+        const current = await this.#readLeases()
+        await this.#writeLeases(current.filter(item => item.id !== lease.id))
+        return { mode: 'worktree' as const, root: lease.root, branch: lease.branch }
+      })
+    }
+    const root = await this.#repositoryRoot(git, path)
+    const head = await this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root)
+    const branch = head.exitCode === 0 ? head.stdout.trim() : ''
+    if (branch.length === 0 || branch === base) throw new RepositorySetupError('nothing-to-clean', 'The checkout is already on the base branch.')
+    const switched = await this.#run(git, ['switch', '--', base], root)
+    if (switched.exitCode !== 0) throw new RepositorySetupError('checkout-failed', 'Git could not switch to the base branch.')
+    await this.#run(git, ['branch', '-D', '--', branch], root).catch(() => undefined)
+    await this.#run(git, ['pull', '--ff-only'], root, GIT_FETCH_TIMEOUT_MS).catch(() => undefined)
+    return { mode: 'checkout', root, branch }
+  }
+
   bindLease(leaseId: string, sessionId: string): Promise<void> {
     if (leaseId.length === 0 || leaseId.length > 128 || sessionId.length === 0 || sessionId.length > 1_024) {
       return Promise.reject(new RepositorySetupError('invalid-lease', 'The worktree lease is invalid.'))
@@ -396,6 +434,7 @@ export class RepositorySetupService {
     this.#gitPath ??= this.#runtime.resolveExecutable('git')
     return this.#gitPath
   }
+
 
   async #run(executable: string, args: readonly string[], cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<CommandResult> {
     return collect(this.#runtime.spawn({

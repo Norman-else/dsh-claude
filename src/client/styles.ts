@@ -1658,6 +1658,116 @@ export const diffModalConflictResolve: CSSProperties = {
   cursor: 'pointer',
 }
 
+export const heroTicketKey: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  fontWeight: 650,
+  letterSpacing: 0.2,
+}
+
+export const heroTicketStatus: CSSProperties = {
+  flex: 'none',
+  maxWidth: 90,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const settingsLink: CSSProperties = {
+  color: 'var(--dsw-static-blue-450)',
+  fontSize: 12,
+  textDecoration: 'none',
+}
+
+export const repositoryPrIconButton: CSSProperties = {
+  padding: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  font: 'inherit',
+  cursor: 'pointer',
+}
+
+export const overviewBody: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  padding: 10,
+  overflowY: 'auto',
+}
+
+export const overviewRow: CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  padding: '8px 10px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 10,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const overviewRowTop: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  minWidth: 0,
+}
+
+export const overviewTitle: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  fontSize: 13,
+  fontWeight: 600,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const overviewMeta: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  minWidth: 0,
+  overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  whiteSpace: 'nowrap',
+}
+
+export const overviewBranch: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+
+export const overviewRunningDot: CSSProperties = {
+  width: 7,
+  height: 7,
+  flex: 'none',
+  borderRadius: 999,
+  background: 'var(--dsw-static-blue-450)',
+}
+
+export const overviewEmpty: CSSProperties = {
+  padding: 16,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 13,
+  textAlign: 'center',
+}
+
 export const repositoryMergeTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from '../constants.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
+import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
 
 interface DoctorReport {
   executable: { status: 'found' | 'missing'; path?: string; searched: readonly string[] }
@@ -240,6 +241,43 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   const [globalSettings, setGlobalSettings] = useState<GlobalSettingsView>()
   const [globalSettingsError, setGlobalSettingsError] = useState<string>()
   const [globalSettingsBusy, setGlobalSettingsBusy] = useState(false)
+  const [jiraStatus, setJiraStatus] = useState<JiraStatus>()
+  const [jiraError, setJiraError] = useState<string>()
+  const [jiraBusy, setJiraBusy] = useState(false)
+  const [jiraSite, setJiraSite] = useState('')
+  const [jiraEmail, setJiraEmail] = useState('')
+  const [jiraToken, setJiraToken] = useState('')
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadJiraStatus(controller.signal).then(setJiraStatus, (reason: unknown) => {
+      if (!controller.signal.aborted) setJiraError(reason instanceof Error ? reason.message : String(reason))
+    })
+    return () => { controller.abort() }
+  }, [])
+  const connectJiraNow = async (): Promise<void> => {
+    setJiraBusy(true)
+    setJiraError(undefined)
+    try {
+      setJiraStatus(await connectJira({ siteUrl: jiraSite, email: jiraEmail, apiToken: jiraToken }))
+      setJiraToken('')
+    } catch (cause) {
+      setJiraError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setJiraBusy(false)
+    }
+  }
+  const disconnectJiraNow = async (): Promise<void> => {
+    setJiraBusy(true)
+    setJiraError(undefined)
+    try {
+      await disconnectJira()
+      setJiraStatus({ connected: false })
+    } catch (cause) {
+      setJiraError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setJiraBusy(false)
+    }
+  }
 
   const refresh = useCallback(async () => {
     setBusy(true)
@@ -391,6 +429,48 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           ? <p style={styles.notice}>{t('limitsSettingEffect')}</p>
           : null}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
+      </section>
+
+      <section style={styles.settingsCard}>
+        <div style={styles.settingsCardHeader}>
+          <div>
+            <h3 style={styles.settingsSectionHeading}>{t('jiraTitle')}</h3>
+            <p style={styles.settingsBody}>{t('jiraBody')}</p>
+          </div>
+          {jiraStatus?.connected === true
+            ? <button type="button" style={styles.button} disabled={jiraBusy} onClick={() => { void disconnectJiraNow() }}>{t('jiraDisconnect')}</button>
+            : null}
+        </div>
+        {jiraStatus === undefined && jiraError === undefined ? <p style={styles.notice}>{t('jiraLoading')}</p> : null}
+        {jiraStatus?.connected === true ? (
+          <div style={styles.diagnosticGrid}>
+            <span style={styles.diagnosticLabel}>{t('jiraConnected')}</span>
+            <span>{jiraStatus.siteUrl} · {jiraStatus.displayName ?? jiraStatus.email}</span>
+          </div>
+        ) : jiraStatus === undefined ? null : <>
+          <div style={styles.diagnosticGrid}>
+            <span style={styles.diagnosticLabel}>{t('jiraSite')}</span>
+            <input type="url" value={jiraSite} placeholder={t('jiraSitePlaceholder')} disabled={jiraBusy} style={styles.settingTextInput} onChange={event => { setJiraSite(event.currentTarget.value) }} />
+          </div>
+          <div style={styles.diagnosticGrid}>
+            <span style={styles.diagnosticLabel}>{t('jiraEmail')}</span>
+            <input type="email" value={jiraEmail} disabled={jiraBusy} style={styles.settingTextInput} onChange={event => { setJiraEmail(event.currentTarget.value) }} />
+          </div>
+          <div style={styles.diagnosticGrid}>
+            <span style={styles.diagnosticLabel}>{t('jiraToken')}</span>
+            <input type="password" value={jiraToken} disabled={jiraBusy} autoComplete="off" style={styles.settingTextInput} onChange={event => { setJiraToken(event.currentTarget.value) }} />
+          </div>
+          <div style={styles.settingsActions}>
+            <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer" style={styles.settingsLink}>{t('jiraTokenHelp')}</a>
+            <button
+              type="button"
+              style={styles.primaryButton}
+              disabled={jiraBusy || jiraSite.trim() === '' || jiraEmail.trim() === '' || jiraToken.trim() === ''}
+              onClick={() => { void connectJiraNow() }}
+            >{jiraBusy ? t('jiraConnecting') : t('jiraConnect')}</button>
+          </div>
+        </>}
+        {jiraError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('jiraError')}: {jiraError}</p>}
       </section>
 
       <section style={styles.settingsCard}>

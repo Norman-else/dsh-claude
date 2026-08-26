@@ -327,3 +327,48 @@ describe('repository setup service', () => {
     expect(fake.spawn.mock.calls.at(-1)?.[0].argv).toEqual(['/bin/git', 'worktree', 'prune'])
   })
 })
+
+describe('merged cleanup', () => {
+  it('removes a merged plugin worktree, its branch, and its lease', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await service.setup(root, 'main', true)
+    await expect(service.cleanupMerged(result.path, 'main')).resolves.toEqual({ mode: 'worktree', root, branch: result.branch })
+    const argv = fake.spawn.mock.calls.map(call => call[0].argv)
+    expect(argv).toContainEqual(['/bin/git', 'worktree', 'remove', '--', result.path])
+    expect(argv).toContainEqual(['/bin/git', 'branch', '-D', '--', result.branch])
+    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
+  })
+
+  it('switches a plain checkout back to base and refuses dirty trees', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const clean = runtime([
+      { stdout: '' },
+      { stdout: `${root}\n` },
+      { stdout: 'feature/done\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    await expect(new RepositorySetupService(clean, { leasePath, worktreeRoot }).cleanupMerged(root, 'main'))
+      .resolves.toEqual({ mode: 'checkout', root, branch: 'feature/done' })
+    const argv = clean.spawn.mock.calls.map(call => call[0].argv)
+    expect(argv).toContainEqual(['/bin/git', 'switch', '--', 'main'])
+    expect(argv).toContainEqual(['/bin/git', 'branch', '-D', '--', 'feature/done'])
+
+    const dirty = runtime([{ stdout: ' M src/a.ts\n' }])
+    await expect(new RepositorySetupService(dirty, { leasePath, worktreeRoot }).cleanupMerged(root, 'main'))
+      .rejects.toMatchObject<Partial<RepositorySetupError>>({ code: 'dirty-workspace' })
+  })
+})
