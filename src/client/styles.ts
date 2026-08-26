@@ -1482,7 +1482,7 @@ export const diffPrCommentsButton: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 4,
-  padding: '4px 10px',
+  padding: '4px 8px',
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 7,
   background: 'var(--dsw-alias-bg-layer-2)',
@@ -1826,12 +1826,21 @@ export const diffHeaderTitle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
+  overflow: 'hidden',
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 15,
   fontWeight: 650,
+  whiteSpace: 'nowrap',
+}
+
+export const diffHeaderLabel: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 }
 
 export const diffHeaderActions: CSSProperties = {
+  flex: 'none',
   display: 'flex',
   alignItems: 'center',
   gap: 5,

@@ -434,7 +434,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
       <div style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
-          <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span>{t('diffWorkingTree')}</span></div>
+          <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span style={styles.diffHeaderLabel}>{t('diffWorkingTree')}</span></div>
           <div style={styles.diffHeaderActions}>
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
@@ -443,7 +443,12 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               } />
             </div>
             {ghComments.length > 0 && submitPrompt !== undefined ? (
-              <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} onClick={() => submitPrompt(composeCommentsPrompt(ghComments))}>{t('prCommentsButton', { count: ghComments.length })}</button>
+              <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} aria-label={t('prCommentsButton', { count: ghComments.length })} onClick={() => submitPrompt(composeCommentsPrompt(ghComments))}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M2.75 2.75h10.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H8.2l-3.2 2.9v-2.9H2.75a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z" />
+                </svg>
+                {ghComments.length}
+              </button>
             ) : null}
             <button type="button" className={styles.panelIconButtonClass} aria-label={maximized ? t('diffRestore') : t('diffMaximize')} onClick={toggleMaximized}>{maximized ? <RestorePanelIcon /> : <IconFullscreenOutline16 />}</button>
             <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
