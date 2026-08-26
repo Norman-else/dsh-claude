@@ -17,6 +17,9 @@ const BUILTIN_OUTPUT_STYLES = ['Default', 'Proactive', 'Concise', 'Explanatory',
 const STYLE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()\[\]-]{0,127}$/u
 const DEFAULT_WORKTREE_BRANCH_PREFIX = 'claude'
 const MAX_BRANCH_PREFIX_CHARS = 128
+const MAX_PROCESSES_LIMIT = 16
+const MAX_IDLE_TIMEOUT_MINUTES = 24 * 60
+const DEFAULT_LIMITS: SupervisorLimits = { maxProcesses: 4, idleTimeoutMs: 30 * 60_000 }
 
 type JsonObject = Record<string, unknown>
 export type GlobalSettingEffect = 'new-session' | 'next-worktree' | 'restart'
@@ -51,8 +54,18 @@ interface GlobalSettingsPaths {
   pluginSettingsFile: string
 }
 
+/** Effective supervisor limits: the plugin config values unless overridden in Settings. */
+export interface SupervisorLimits {
+  maxProcesses: number
+  idleTimeoutMs: number
+}
+
 export interface GlobalSettingsDependencies {
   paths?: Partial<GlobalSettingsPaths>
+  /** Limits from the plugin config, shown when Settings holds no override. */
+  defaultLimits?: SupervisorLimits
+  /** Invoked after a successful update so live runtime state can follow. */
+  onUpdated?: () => void | Promise<void>
 }
 
 interface SelectSettingDescriptor {
@@ -71,7 +84,7 @@ interface TextSettingDescriptor {
   document: 'claude' | 'plugin'
   effect: GlobalSettingEffect
   maxLength: number
-  read(document: JsonObject): string
+  read(document: JsonObject, defaults?: SupervisorLimits): string
   apply(document: JsonObject, value: unknown): void
 }
 
@@ -202,7 +215,38 @@ const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
   },
 }
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, WORKTREE_BRANCH_PREFIX]
+function isBoundedInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
+}
+
+function integerSetting(
+  key: 'maxProcesses' | 'idleTimeoutMinutes',
+  min: number,
+  max: number,
+  defaultFor: (limits: SupervisorLimits) => number,
+): TextSettingDescriptor {
+  return {
+    key,
+    kind: 'text',
+    document: 'plugin',
+    effect: 'new-session',
+    maxLength: String(max).length,
+    read(document, defaults = DEFAULT_LIMITS) {
+      const value = document[key]
+      return String(isBoundedInteger(value, min, max) ? value : defaultFor(defaults))
+    },
+    apply(document, value) {
+      const parsed = typeof value === 'string' && /^\d{1,6}$/u.test(value.trim()) ? Number(value.trim()) : value
+      if (!isBoundedInteger(parsed, min, max)) throw new Error(`Invalid value for global setting ${key}`)
+      document[key] = parsed
+    },
+  }
+}
+
+const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses)
+const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
+
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
@@ -210,7 +254,7 @@ function documentFor(descriptor: SettingDescriptor, documents: { claude: JsonObj
   return documents[descriptor.document]
 }
 
-async function views(documents: { claude: JsonObject; plugin: JsonObject }, paths: GlobalSettingsPaths): Promise<GlobalSettingsView> {
+async function views(documents: { claude: JsonObject; plugin: JsonObject }, paths: GlobalSettingsPaths, defaults: SupervisorLimits): Promise<GlobalSettingsView> {
   return {
     settings: await Promise.all(DESCRIPTORS.map(async descriptor => {
       const document = documentFor(descriptor, documents)
@@ -218,7 +262,7 @@ async function views(documents: { claude: JsonObject; plugin: JsonObject }, path
         return {
           key: descriptor.key,
           kind: descriptor.kind,
-          value: descriptor.read(document),
+          value: descriptor.read(document, defaults),
           maxLength: descriptor.maxLength,
           effect: descriptor.effect,
         }
@@ -246,7 +290,23 @@ async function readDocuments(paths: GlobalSettingsPaths): Promise<{ claude: Json
 
 export async function readGlobalSettings(deps: GlobalSettingsDependencies = {}): Promise<GlobalSettingsView> {
   const paths = pathsFor(deps)
-  return views(await readDocuments(paths), paths)
+  return views(await readDocuments(paths), paths, deps.defaultLimits ?? DEFAULT_LIMITS)
+}
+
+/** Supervisor limits the user overrode in Settings; absent keys fall back to the plugin config. */
+export async function readSupervisorLimitOverrides(deps: GlobalSettingsDependencies = {}): Promise<Partial<SupervisorLimits>> {
+  let document: JsonObject
+  try {
+    document = await readDocument(pathsFor(deps).pluginSettingsFile)
+  } catch {
+    return {}
+  }
+  const maxProcesses = document.maxProcesses
+  const idleTimeoutMinutes = document.idleTimeoutMinutes
+  return {
+    ...(isBoundedInteger(maxProcesses, 1, MAX_PROCESSES_LIMIT) ? { maxProcesses } : {}),
+    ...(isBoundedInteger(idleTimeoutMinutes, 1, MAX_IDLE_TIMEOUT_MINUTES) ? { idleTimeoutMs: idleTimeoutMinutes * 60_000 } : {}),
+  }
 }
 
 export async function readWorktreeBranchPrefix(deps: GlobalSettingsDependencies = {}): Promise<string> {
@@ -288,7 +348,7 @@ export function updateGlobalSettings(changes: unknown, deps: GlobalSettingsDepen
     }
     if (changedDocuments.has('claude')) await atomicWrite(paths.settingsFile, documents.claude)
     if (changedDocuments.has('plugin')) await atomicWrite(paths.pluginSettingsFile, documents.plugin)
-    return views(documents, paths)
+    return views(documents, paths, deps.defaultLimits ?? DEFAULT_LIMITS)
   })
   pendingWrite = operation
   return operation
@@ -322,6 +382,7 @@ export function registerClaudeGlobalSettingsRoute(ctx: Context, deps: GlobalSett
         const result = req.method === 'GET'
           ? await readGlobalSettings(deps)
           : await updateGlobalSettings(await requestJson(req), deps)
+        if (req.method === 'PATCH') await deps.onUpdated?.()
         json(res, 200, result)
       } catch (error) {
         json(res, 400, { error: error instanceof Error ? error.message : 'Invalid global settings request' })

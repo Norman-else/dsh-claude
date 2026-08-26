@@ -361,7 +361,11 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           <div key={setting.key} style={styles.diagnosticGrid}>
             <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle'
               ? t('outputStyle')
-              : setting.key === 'worktreeBranchPrefix' ? t('worktreeBranchPrefix') : setting.key}</span>
+              : setting.key === 'worktreeBranchPrefix'
+                ? t('worktreeBranchPrefix')
+                : setting.key === 'maxProcesses'
+                  ? t('maxProcessesSetting')
+                  : setting.key === 'idleTimeoutMinutes' ? t('idleTimeoutSetting') : setting.key}</span>
             {setting.kind === 'select' ? (
               <GlobalSettingSelect
                 setting={setting}
@@ -382,6 +386,9 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           : null}
         {globalSettings?.settings.some(setting => setting.effect === 'next-worktree') === true
           ? <p style={styles.notice}>{t('worktreeBranchPrefixEffect')}</p>
+          : null}
+        {globalSettings?.settings.some(setting => setting.key === 'maxProcesses') === true
+          ? <p style={styles.notice}>{t('limitsSettingEffect')}</p>
           : null}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>

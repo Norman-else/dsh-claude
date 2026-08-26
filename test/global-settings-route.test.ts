@@ -101,3 +101,34 @@ describe('Claude Code global settings route', () => {
     expect(oversized.statusCode).toBe(400)
   })
 })
+
+describe('Claude Code global settings route side effects', () => {
+  it('notifies onUpdated only after a successful PATCH', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-claude-global-route-'))
+    roots.push(root)
+    const paths = {
+      settingsFile: join(root, 'settings.json'),
+      outputStylesDir: join(root, 'output-styles'),
+      pluginSettingsFile: join(root, 'plugin-settings.json'),
+    }
+    let notified = 0
+    const ctx = context()
+    registerClaudeGlobalSettingsRoute(ctx, { paths, onUpdated: () => { notified += 1 } })
+
+    const get = response()
+    await ctx.handler(request('GET'), get)
+    expect(get.statusCode).toBe(200)
+    expect(notified).toBe(0)
+
+    const patch = response()
+    await ctx.handler(request('PATCH', { changes: { maxProcesses: '6' } }), patch)
+    expect(patch.statusCode).toBe(200)
+    expect(JSON.parse(patch.body).settings.find((setting: { key: string }) => setting.key === 'maxProcesses')).toMatchObject({ value: '6' })
+    expect(notified).toBe(1)
+
+    const invalid = response()
+    await ctx.handler(request('PATCH', { changes: { maxProcesses: '99' } }), invalid)
+    expect(invalid.statusCode).toBe(400)
+    expect(notified).toBe(1)
+  })
+})

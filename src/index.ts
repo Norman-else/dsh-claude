@@ -27,7 +27,7 @@ import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
-import { readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -197,12 +197,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // the package-contained preset for compatible Hosts, and install this guarded
   // copy into DSH's always-loaded user preset root for affected Hosts.
   await installManagedPresetCompatibility(ctx.logger)
-  const supervisorConfig = {
-    executablePath: '',
-    defaultModel: config.model ?? 'default',
+  const defaultLimits = {
     idleTimeoutMs: config.idleTimeoutMs ?? 30 * 60 * 1_000,
     maxProcesses: config.maxProcesses ?? 4,
   }
+  const supervisorConfig = {
+    executablePath: '',
+    defaultModel: config.model ?? 'default',
+    ...defaultLimits,
+  }
+  // Settings overrides win over the plugin config; the supervisor reads the
+  // shared config object on every admission and idle schedule, so updates
+  // take effect without a restart.
+  const applyLimitOverrides = async (): Promise<void> => {
+    const overrides = await readSupervisorLimitOverrides()
+    supervisorConfig.idleTimeoutMs = overrides.idleTimeoutMs ?? defaultLimits.idleTimeoutMs
+    supervisorConfig.maxProcesses = overrides.maxProcesses ?? defaultLimits.maxProcesses
+  }
+  await applyLimitOverrides()
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
   const repositorySetup = new RepositorySetupService(ctx.subprocess, { branchPrefix: () => readWorktreeBranchPrefix() })
@@ -343,7 +355,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ? { requestRestart: desktopActions.requestRestart.bind(desktopActions) }
         : {}),
     })
-    registerClaudeGlobalSettingsRoute(webCtx)
+    registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applyLimitOverrides })
     registerRepositorySetupRoute(webCtx, repositorySetup)
     const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
     const cwdForClaudeSession = (sessionId: string): string | undefined => {

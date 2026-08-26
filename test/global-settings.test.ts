@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readGlobalSettings, updateGlobalSettings } from '../src/global-settings.ts'
+import { readGlobalSettings, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
 import { isGlobalSettingsView } from '../src/client/ClaudeCodeSettings.tsx'
 
 const roots: string[] = []
@@ -57,6 +57,30 @@ describe('Claude Code global settings registry', () => {
     expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ worktreeBranchPrefix: 'team/claude' })
     await expect(readFile(paths.settingsFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(updateGlobalSettings({ worktreeBranchPrefix: '../invalid' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
+  it('exposes supervisor limits as bounded integers seeded from the plugin config', async () => {
+    const paths = await fixture()
+    const deps = { paths, defaultLimits: { maxProcesses: 6, idleTimeoutMs: 45 * 60_000 } }
+    const initial = await readGlobalSettings(deps)
+    expect(initial.settings.find(setting => setting.key === 'maxProcesses')).toMatchObject({
+      kind: 'text', value: '6', effect: 'new-session', maxLength: 2,
+    })
+    expect(initial.settings.find(setting => setting.key === 'idleTimeoutMinutes')).toMatchObject({
+      kind: 'text', value: '45', effect: 'new-session', maxLength: 4,
+    })
+    await expect(readSupervisorLimitOverrides(deps)).resolves.toEqual({})
+
+    const updated = await updateGlobalSettings({ maxProcesses: '8', idleTimeoutMinutes: '10' }, deps)
+    expect(updated.settings.find(setting => setting.key === 'maxProcesses')).toMatchObject({ value: '8' })
+    expect(updated.settings.find(setting => setting.key === 'idleTimeoutMinutes')).toMatchObject({ value: '10' })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ maxProcesses: 8, idleTimeoutMinutes: 10 })
+    await expect(readSupervisorLimitOverrides(deps)).resolves.toEqual({ maxProcesses: 8, idleTimeoutMs: 600_000 })
+
+    await expect(updateGlobalSettings({ maxProcesses: '0' }, deps)).rejects.toThrow('Invalid value')
+    await expect(updateGlobalSettings({ maxProcesses: '17' }, deps)).rejects.toThrow('Invalid value')
+    await expect(updateGlobalSettings({ idleTimeoutMinutes: '2.5' }, deps)).rejects.toThrow('Invalid value')
+    await expect(updateGlobalSettings({ idleTimeoutMinutes: '' }, deps)).rejects.toThrow('Invalid value')
   })
 
   it('updates only outputStyle, preserves unknown settings, and writes user-only permissions', async () => {
