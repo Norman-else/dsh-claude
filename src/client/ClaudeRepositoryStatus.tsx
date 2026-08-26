@@ -47,7 +47,7 @@ export function repositorySummary(repository: RepositoryStatus, t: ClaudeReposit
       : pullRequest.state === 'merged'
         ? [
             t('repositoryPr', { number: pullRequest.number }),
-            t('repositoryMergedInto', { branch: pullRequest.baseBranch ?? t('repositoryUnknownBranch') }),
+            t('repositoryState_merged'),
           ]
         : [
             pullRequest.draft ? t('repositoryPrDraft', { number: pullRequest.number }) : t('repositoryPr', { number: pullRequest.number }),
@@ -467,7 +467,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           {pullRequest === undefined ? null : merged ? (
             <span style={styles.repositoryMergedStatus}>
               <span style={styles.repositoryMergedDot} aria-hidden="true" />
-              {t('repositoryMergedInto', { branch: pullRequest.baseBranch ?? t('repositoryUnknownBranch') })}
+              {t('repositoryState_merged')}
               {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
             </span>
           ) : <>

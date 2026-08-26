@@ -71,7 +71,6 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   repositoryPrState: 'PR state',
   repositoryState_open: 'Open',
   repositoryState_merged: 'Merged',
-  repositoryMergedInto: 'Merged into {branch}',
   repositoryMergedAgo: '{age} ago',
   repositoryChecks: 'Checks',
   repositoryChecks_passing: 'Checks passing',
@@ -236,7 +235,7 @@ describe('Claude repository status UI', () => {
       },
     }
     expect(repositorySummary(mergedRepository, t)).toEqual([
-      'feature/status', 'Worktree', 'Modified', 'PR #12', 'Merged into master',
+      'feature/status', 'Worktree', 'Modified', 'PR #12', 'Merged',
     ])
     const statusMarkup = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"
@@ -245,7 +244,8 @@ describe('Claude repository status UI', () => {
       t={t}
       openDiff={vi.fn()}
     />)
-    expect(statusMarkup).toContain('Merged into master')
+    expect(statusMarkup).toContain('Merged')
+    expect(statusMarkup).not.toContain('Merged into')
     expect(statusMarkup).toContain('2h ago')
     expect(statusMarkup).toContain('#a78bfa')
     expect(statusMarkup).toContain('color-mix(in srgb, #a78bfa 30%')
