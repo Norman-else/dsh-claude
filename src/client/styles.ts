@@ -1373,15 +1373,19 @@ export const diffTriggerMuted: CSSProperties = {
 
 export const repositoryAutoFix: CSSProperties = {
   width: 26,
-  height: 26,
+  minHeight: 26,
   flex: 'none',
-  display: 'grid',
-  placeItems: 'center',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   padding: 0,
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 7,
-  background: 'transparent',
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  lineHeight: '18px',
   cursor: 'pointer',
 }
 

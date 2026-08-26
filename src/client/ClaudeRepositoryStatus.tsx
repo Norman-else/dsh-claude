@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { IconChevronDownOutline14, Menu, Modal, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
@@ -183,6 +183,7 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
   const number = pullRequest?.number
   const checks = pullRequest?.checks
   const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
+  const [focused, setFocused] = useState(false)
   useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
   // Submitting while a turn runs would queue or steer (interrupt) it depending
   // on the user's Enter-while-busy setting, so wait for idle instead; the
@@ -214,20 +215,31 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
     setAutoFixEnabled(sessionId, next)
   }
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label={t('autoFixLabel')}
-      title={`${t('autoFixLabel')} · ${t('autoFixTitle')}`}
-      style={{ ...styles.repositoryAutoFix, ...(enabled ? styles.repositoryAutoFixActive : {}) }}
-      onClick={toggle}
-    >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M13.3 6.5A5.5 5.5 0 0 0 3.6 4.6M2.7 9.5a5.5 5.5 0 0 0 9.7 1.9" />
-        <path d="M13.5 2.8v3.7H9.8M2.5 13.2V9.5h3.7" />
-      </svg>
-    </button>
+    <Tooltip label={`${t('autoFixLabel')} · ${t('autoFixTitle')}`} side="top" delayMs={250} maxWidth={320}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={t('autoFixLabel')}
+        style={{
+          ...styles.repositoryAutoFix,
+          ...(enabled ? styles.repositoryAutoFixActive : {}),
+          ...(focused ? styles.heroWorktreeToggleFocused : {}),
+        }}
+        onFocus={() => { setFocused(true) }}
+        onBlur={() => { setFocused(false) }}
+        onClick={event => {
+          toggle()
+          // Mouse toggles should not leave a focus ring behind.
+          event.currentTarget.blur()
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13.3 6.5A5.5 5.5 0 0 0 3.6 4.6M2.7 9.5a5.5 5.5 0 0 0 9.7 1.9" />
+          <path d="M13.5 2.8v3.7H9.8M2.5 13.2V9.5h3.7" />
+        </svg>
+      </button>
+    </Tooltip>
   )
 }
 

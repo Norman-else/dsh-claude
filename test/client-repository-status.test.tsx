@@ -533,7 +533,7 @@ describe('pull request feedback controls', () => {
   it('offers the auto-fix watcher only when a prompt can be submitted for an open PR', () => {
     const markup = render({})
     expect(markup).toContain('role="switch" aria-checked="false" aria-label="Auto fix"')
-    expect(markup).toContain('Watch and fix')
+    expect(markup).toContain('outline:none')
     expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('aria-label="Auto fix"')
     const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"
