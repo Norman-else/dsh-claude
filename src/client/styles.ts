@@ -92,7 +92,7 @@ export const settingsCard: CSSProperties = {
   flexDirection: 'column',
   gap: 14,
   padding: 18,
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 14,
   background: 'var(--dsw-alias-bg-layer-1)',
 }
@@ -109,8 +109,8 @@ export const diagnosticGrid: CSSProperties = {
   gridTemplateColumns: 'minmax(130px, 0.36fr) minmax(0, 1fr)',
   gap: '10px 18px',
   padding: '14px 0',
-  borderTop: '1px solid var(--dsw-alias-border-l2)',
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderTop: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   fontSize: 13,
 }
 
@@ -135,7 +135,7 @@ export const settingTextInput: CSSProperties = {
   boxSizing: 'border-box',
   minHeight: 38,
   padding: '7px 13px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 10,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-primary)',
@@ -152,7 +152,7 @@ export const settingSelectTrigger: CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   padding: '7px 11px 7px 13px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 10,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-primary)',
@@ -201,7 +201,7 @@ export const settingSelectMenu: CSSProperties = {
   maxHeight: 240,
   overflowY: 'auto',
   padding: 5,
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 11,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent), 0 2px 8px color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)',
@@ -259,7 +259,7 @@ export const button: CSSProperties = {
   flex: 'none',
   minHeight: 34,
   padding: '6px 14px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 9,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-primary)',
@@ -287,7 +287,7 @@ export const tasksPanel: CSSProperties = {
   minWidth: 0,
   margin: 8,
   overflow: 'hidden',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
@@ -302,7 +302,7 @@ export const tasksHeader: CSSProperties = {
   justifyContent: 'space-between',
   gap: 10,
   padding: '9px 12px',
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
 }
 
 export const tasksHeading: CSSProperties = {
@@ -415,7 +415,7 @@ export const tasksGroupEmpty: CSSProperties = {
 export const tasksFinishedSection: CSSProperties = {
   marginTop: 12,
   paddingTop: 8,
-  borderTop: '1px solid var(--dsw-alias-border-l2)',
+  borderTop: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
 }
 
 export const taskCardList: CSSProperties = {
@@ -427,14 +427,14 @@ export const taskCardList: CSSProperties = {
 
 export const taskCard: CSSProperties = {
   padding: '11px 12px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 10,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 1px 3px color-mix(in srgb, #000 7%, transparent)',
 }
 
 export const taskCardRunning: CSSProperties = {
-  borderColor: 'var(--dsw-alias-border-l3)',
+  borderColor: 'var(--dsw-alias-border-l3, color-mix(in srgb, currentColor 24%, transparent))',
 }
 
 export const taskCardTop: CSSProperties = {
@@ -654,7 +654,7 @@ export const tasksHoverCard: CSSProperties = {
   flexDirection: 'column',
   gap: 6,
   padding: '10px 12px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-2)',
   boxShadow: '0 8px 24px color-mix(in srgb, #000 24%, transparent)',
@@ -718,7 +718,7 @@ export const tasksHoverMore: CSSProperties = {
 export const tasksHoverHint: CSSProperties = {
   marginTop: 2,
   paddingTop: 6,
-  borderTop: '1px solid var(--dsw-alias-border-l1)',
+  borderTop: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
   color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 11,
 }
@@ -739,7 +739,7 @@ export const heroRepositoryCapsule: CSSProperties = {
   alignItems: 'center',
   minWidth: 0,
   padding: 2,
-  border: '1px solid var(--dsw-alias-border-l1)',
+  border: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
   borderRadius: 10,
   background: 'var(--dsw-alias-interactive-bg-base, var(--dsw-alias-bg-layer-1))',
   color: 'var(--dsw-alias-label-secondary)',
@@ -788,7 +788,7 @@ export const heroBranchMenu: CSSProperties = {
   flexDirection: 'column',
   gap: 4,
   padding: 4,
-  border: '1px solid var(--dsw-alias-border-inverted)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 10,
   background: 'var(--dsw-specific-menu)',
   boxShadow: 'var(--dsw-shadow-lv3)',
@@ -801,7 +801,7 @@ export const heroBranchSearch: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '0 8px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 7,
   background: 'var(--dsw-alias-bg-layer-1)',
   color: 'var(--dsw-alias-label-tertiary)',
@@ -870,7 +870,7 @@ export const heroRepositoryDivider: CSSProperties = {
   width: 1,
   height: 16,
   flex: 'none',
-  background: 'var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
 }
 
 export const heroWorktreeToggle: CSSProperties = {
@@ -908,7 +908,7 @@ export const heroWorktreeCheckbox: CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   flex: 'none',
-  border: '1px solid var(--dsw-alias-border-inverted)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 4,
   background: 'var(--dsw-alias-bg-layer-2)',
   boxShadow: 'inset 0 1px 1px rgba(0, 0, 0, 0.08)',
@@ -939,7 +939,7 @@ export const heroWorktreeProgressCard: CSSProperties = {
   flexDirection: 'column',
   gap: 12,
   padding: 14,
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: 'var(--dsw-shadow-lv3)',
@@ -1079,7 +1079,7 @@ export const repositoryBar: CSSProperties = {
   alignItems: 'center',
   gap: 9,
   padding: '7px 11px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 11,
   background: 'var(--dsw-alias-bg-layer-1)',
   color: 'var(--dsw-alias-label-primary)',
@@ -1091,7 +1091,7 @@ export const repositoryBar: CSSProperties = {
 }
 
 export const repositoryBarMerged: CSSProperties = {
-  borderColor: 'color-mix(in srgb, #a78bfa 30%, var(--dsw-alias-border-l2))',
+  borderColor: 'color-mix(in srgb, #a78bfa 30%, var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent)))',
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
@@ -1147,7 +1147,7 @@ export const repositoryPrHoverCard: CSSProperties = {
   flexDirection: 'column',
   gap: 10,
   padding: '13px 14px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 14px 38px color-mix(in srgb, #000 34%, transparent)',
@@ -1351,7 +1351,7 @@ export const diffTrigger: CSSProperties = {
   gap: 4,
   minHeight: 26,
   padding: '3px 8px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 7,
   background: 'var(--dsw-alias-bg-layer-2)',
   font: 'inherit',
@@ -1437,7 +1437,7 @@ export const diffCommentBlock: CSSProperties = {
   left: 62,
   margin: '4px 8px 8px 62px',
   padding: '8px 10px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 8,
   background: 'var(--dsw-alias-bg-layer-1)',
   fontFamily: 'var(--dsw-font-family, system-ui)',
@@ -1467,7 +1467,7 @@ export const diffCommentTextarea: CSSProperties = {
   minHeight: 56,
   boxSizing: 'border-box',
   padding: '6px 8px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 6,
   background: 'var(--dsw-alias-bg-base)',
   color: 'var(--dsw-alias-label-primary)',
@@ -1485,7 +1485,7 @@ export const diffCommentActions: CSSProperties = {
 export const diffCommentActionButton: CSSProperties = {
   minHeight: 24,
   padding: '2px 10px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 6,
   background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)',
@@ -1524,7 +1524,7 @@ export const reviewCommentBar: CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '7px 11px',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 11,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
@@ -1633,7 +1633,7 @@ export const diffPanel: CSSProperties = {
   minWidth: 0,
   margin: 8,
   overflow: 'hidden',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
@@ -1654,7 +1654,7 @@ export const diffHeader: CSSProperties = {
   justifyContent: 'space-between',
   gap: 10,
   padding: '9px 12px',
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
 }
 
 export const diffHeaderTitle: CSSProperties = {
@@ -1726,7 +1726,7 @@ export const diffSummary: CSSProperties = {
   alignItems: 'center',
   gap: 7,
   padding: '6px 12px',
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 12,
 }
@@ -1739,7 +1739,7 @@ export const diffBody: CSSProperties = {
 }
 
 export const diffFile: CSSProperties = {
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
 }
 
 export const diffFileHeader: CSSProperties = {
@@ -1910,7 +1910,7 @@ export const diffModalFiles: CSSProperties = {
   maxHeight: 300,
   overflowX: 'hidden',
   overflowY: 'auto',
-  border: '1px solid var(--dsw-alias-border-l2)',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 8,
 }
 
@@ -1920,7 +1920,7 @@ export const diffModalFile: CSSProperties = {
   gap: 12,
   minWidth: 0,
   padding: '10px 14px',
-  borderBottom: '1px solid var(--dsw-alias-border-l2)',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   color: 'var(--dsw-alias-label-secondary)',
   fontSize: 15,
   lineHeight: '22px',
