@@ -75,3 +75,8 @@ export async function assignJiraTicket(key: string): Promise<void> {
 export function ticketPrompt(ticket: JiraTicket): string {
   return `Work on Jira ticket ${ticket.key}: ${ticket.summary}\n${ticket.url}\n\nRead the ticket, implement what it asks for, and reference ${ticket.key} in the commit and pull request.`
 }
+
+/** Appended to a user-written draft so the session still knows its ticket. */
+export function ticketContext(ticket: JiraTicket): string {
+  return `This task is for Jira ticket ${ticket.key}: ${ticket.summary}\n${ticket.url}\n\nRead the ticket for full context and reference ${ticket.key} in the commit and pull request.`
+}

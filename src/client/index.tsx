@@ -23,7 +23,7 @@ import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository } from './repository-setup-api.ts'
-import { assignJiraTicket, ticketPrompt } from './jira-api.ts'
+import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
 /** The right-side details column slot declared by dsh-client-ui-layout
@@ -349,9 +349,12 @@ export function apply(ctx: ClientContext): void {
           if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
           const sourceInput = conversation.input.for(sourceScope)
           const rawDraft = sourceInput.state.getSnapshot().draft
-          // Starting from a ticket seeds an empty composer with the ticket brief
-          // and names the branch exactly after the ticket key.
-          const draft = rawDraft.trim() === '' && ticket !== undefined ? ticketPrompt(ticket) : rawDraft
+          // Starting from a ticket seeds an empty composer with the ticket
+          // brief; a written draft keeps the user's words and gets the ticket
+          // appended as context so the session always knows its ticket.
+          const draft = ticket === undefined
+            ? rawDraft
+            : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
           const imageIds = sourceInput.state.getSnapshot().imageIds
           const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress)
           // The workspace is ready: take the ticket. Best-effort so a Jira
