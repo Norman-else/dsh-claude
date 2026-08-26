@@ -83,8 +83,8 @@ export const settingsSectionHeading: CSSProperties = {
 export const settingsBody: CSSProperties = {
   margin: 0,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
 }
 
 export const settingsCard: CSSProperties = {
@@ -140,8 +140,8 @@ export const settingTextInput: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
 }
 
 export const settingSelectTrigger: CSSProperties = {
@@ -158,8 +158,8 @@ export const settingSelectTrigger: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
   boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
   textAlign: 'left',
   cursor: 'pointer',
   transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
@@ -219,8 +219,8 @@ export const settingSelectOption: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
   textAlign: 'left',
   cursor: 'pointer',
 }
@@ -373,8 +373,8 @@ export const tasksGroupTitle: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
   fontWeight: 600,
 }
 
@@ -387,8 +387,8 @@ export const tasksGroupToggle: CSSProperties = {
   background: 'transparent',
   color: 'var(--dsw-alias-label-secondary)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
   fontWeight: 600,
   cursor: 'pointer',
 }
@@ -583,12 +583,12 @@ export const tasksBadge: CSSProperties = {
   fontWeight: 600,
 }
 
-/* Claude task badge attached to the owning conversation turn (minimal entry:
- * a status-ringed count pill at the turn tail, hover reveals the task list). */
+/* Claude task launcher attached to the owning conversation turn (minimal
+ * entry: a link-style label at the turn tail, hover reveals the task list). */
 
 export const tasksBadgeWrap: CSSProperties = {
   display: 'flex',
-  justifyContent: 'flex-end',
+  justifyContent: 'flex-start',
   margin: '8px 0 4px',
 }
 
@@ -605,17 +605,17 @@ export const tasksTurnBadge: CSSProperties = {
   border: 'none',
   borderRadius: 6,
   background: 'transparent',
-  color: 'var(--dsw-alias-label-tertiary)',
+  color: 'var(--dsw-static-blue-450)',
   font: 'inherit',
-  fontSize: 11,
-  lineHeight: '16px',
+  fontSize: 14,
+  lineHeight: '22px',
   fontVariantNumeric: 'tabular-nums',
   cursor: 'pointer',
   transition: 'color 120ms ease, opacity 120ms ease',
 }
 
 export const tasksBadgeHovered: CSSProperties = {
-  color: 'var(--dsw-alias-label-secondary)',
+  textDecoration: 'underline',
 }
 
 export const tasksBadgeDone: CSSProperties = {
@@ -638,13 +638,13 @@ export const tasksBadgeDotDone: CSSProperties = {
   background: 'var(--dsw-alias-state-success-primary, var(--dsw-static-green-500))',
 }
 
-export const tasksBadgeCount: CSSProperties = {
-  fontWeight: 600,
+export const tasksBadgeLabel: CSSProperties = {
+  fontWeight: 500,
 }
 
 export const tasksHoverCard: CSSProperties = {
   position: 'absolute',
-  right: 0,
+  left: 0,
   bottom: 'calc(100% + 8px)',
   zIndex: 40,
   minWidth: 240,
@@ -1085,8 +1085,8 @@ export const repositoryBar: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
   boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
   font: 'inherit',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
   textAlign: 'left',
 }
 
@@ -1761,8 +1761,8 @@ export const diffCode: CSSProperties = {
   padding: '4px 0 8px',
   background: 'var(--dsw-alias-bg-base)',
   fontFamily: 'var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace)',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 14,
+  lineHeight: '22px',
 }
 
 export const diffLine: CSSProperties = {

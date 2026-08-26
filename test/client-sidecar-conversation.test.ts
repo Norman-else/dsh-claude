@@ -570,16 +570,15 @@ describe('Claude sidecar conversation projection', () => {
     expect(running).toContain('tasksTurnRunning')
     expect(running).toContain('tasksOpen')
     expect(running).toContain('border-radius:999px')
-    expect(running).toContain('justify-content:flex-end')
-    expect(running).toContain('>1</span>')
+    expect(running).toContain('justify-content:flex-start')
+    expect(running).toContain('tasksTurnRunning:{&quot;count&quot;:1}</span>')
     expect(running).toContain('dsh-claude-act-running')
     const mixed = render([
       { taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true },
       { taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' },
       { taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' },
     ])
-    expect(mixed).toContain('tasksTurnRunning')
-    expect(mixed).toContain('>3</span>')
+    expect(mixed).toContain('tasksTurnRunning:{&quot;count&quot;:1}</span>')
     const done = render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' }])
     expect(done).toContain('tasksTurnCompleted')
     expect(done).not.toContain('dsh-claude-act-running')

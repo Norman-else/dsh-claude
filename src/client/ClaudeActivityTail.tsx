@@ -100,7 +100,7 @@ export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLaun
             style={{ ...styles.tasksBadgeDot, ...dotStyle }}
             aria-hidden="true"
           />
-          <span style={styles.tasksBadgeCount}>{turnTasks.length}</span>
+          <span style={styles.tasksBadgeLabel}>{label}</span>
         </button>
       </span>
     </div>
