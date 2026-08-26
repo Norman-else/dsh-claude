@@ -443,7 +443,8 @@ export function ClaudeHeroRepositoryControls({
           <button
             type="button"
             style={{ ...styles.heroIssueTrigger, ...(issue === undefined ? {} : styles.heroIssueTriggerActive) }}
-            aria-haspopup="menu"
+            // No aria-haspopup: the hero seat locator counts labelled menu
+            // buttons in this row to find the Host workspace picker.
             aria-expanded={issueMenuOpen}
             aria-label={t('heroIssueMenu')}
             title={t('heroIssueMenu')}
