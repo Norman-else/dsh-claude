@@ -22,7 +22,8 @@ import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
-import { bindRepositoryLease, issuePrompt, loadRepositoryStatusFor, prepareRepository } from './repository-setup-api.ts'
+import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository } from './repository-setup-api.ts'
+import { ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
 /** The right-side details column slot declared by dsh-client-ui-layout
@@ -343,15 +344,16 @@ export function apply(ctx: ClientContext): void {
       locale: namespace,
       inject: (sourceSessionId: SessionId): ClaudeHeroRepositoryControlsInjected => ({
         t,
-        prepare: async (cwd, branch, useWorktree, onProgress, issue) => {
+        prepare: async (cwd, branch, useWorktree, onProgress, ticket) => {
           const sourceScope = sessions.scope(sourceSessionId)
           if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
           const sourceInput = conversation.input.for(sourceScope)
           const rawDraft = sourceInput.state.getSnapshot().draft
-          // Starting from an issue seeds an empty composer with the issue brief.
-          const draft = rawDraft.trim() === '' && issue !== undefined ? issuePrompt(issue) : rawDraft
+          // Starting from a ticket seeds an empty composer with the ticket brief
+          // and names the branch exactly after the ticket key.
+          const draft = rawDraft.trim() === '' && ticket !== undefined ? ticketPrompt(ticket) : rawDraft
           const imageIds = sourceInput.state.getSnapshot().imageIds
-          const prepared = await prepareRepository(cwd, branch, useWorktree, undefined, onProgress, issue)
+          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress)
           if (prepared.mode === 'checkout') {
             if (draft !== rawDraft) sourceInput.setDraft(draft)
             sourceInput.submit()

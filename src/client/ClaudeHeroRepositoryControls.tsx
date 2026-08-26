@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconSearchOutline16, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconSearchOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals } from './hero-dom-bridge.ts'
-import { loadRepositoryBranches, loadRepositoryIssues, type RepositoryIssueView, type RepositoryPreparationStage } from './repository-setup-api.ts'
+import { loadRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
+import { JiraClientError, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
 
 export interface ClaudeHeroRepositoryControlsInjected {
@@ -15,7 +16,7 @@ export interface ClaudeHeroRepositoryControlsInjected {
     branch: string,
     worktree: boolean,
     onProgress: (stage: RepositoryPreparationStage) => void,
-    issue?: RepositoryIssueView,
+    ticket?: JiraTicket,
   ) => Promise<void>
 }
 
@@ -130,6 +131,15 @@ export function WorktreeProgressCard({
         ))}
       </div>
     </div>
+  )
+}
+
+function TicketIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 5.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v1.2a1.3 1.3 0 0 0 0 2.6v1.2a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V9.3a1.3 1.3 0 0 0 0-2.6V5.5Z" />
+      <path d="M6.5 4.5v7" strokeDasharray="1.5 1.5" />
+    </svg>
   )
 }
 
@@ -298,10 +308,13 @@ export function ClaudeHeroRepositoryControls({
   const [progressStage, setProgressStage] = useState<RepositoryPreparationStage>()
   const [progressError, setProgressError] = useState<string>()
   const [error, setError] = useState<string>()
-  const [issues, setIssues] = useState<readonly RepositoryIssueView[]>()
-  const [issuesError, setIssuesError] = useState<string>()
-  const [issue, setIssue] = useState<RepositoryIssueView>()
-  const [issueMenuOpen, setIssueMenuOpen] = useState(false)
+  const [ticket, setTicket] = useState<JiraTicket>()
+  const [ticketMenuOpen, setTicketMenuOpen] = useState(false)
+  const [ticketQuery, setTicketQuery] = useState('')
+  const [ticketResults, setTicketResults] = useState<readonly JiraTicket[]>()
+  const [ticketError, setTicketError] = useState<string>()
+  const ticketPickerRef = useRef<HTMLSpanElement>(null)
+  const ticketSearchRef = useRef<HTMLInputElement>(null)
   const pendingRef = useRef(false)
   const path = workspacePath ?? cwd
 
@@ -340,10 +353,11 @@ export function ClaudeHeroRepositoryControls({
     setProgressStage(undefined)
     setProgressError(undefined)
     setError(undefined)
-    setIssues(undefined)
-    setIssuesError(undefined)
-    setIssue(undefined)
-    setIssueMenuOpen(false)
+    setTicket(undefined)
+    setTicketMenuOpen(false)
+    setTicketQuery('')
+    setTicketResults(undefined)
+    setTicketError(undefined)
     if (portal === undefined || path === undefined) return
     const controller = new AbortController()
     void loadRepositoryBranches(path, controller.signal).then((value) => {
@@ -360,8 +374,8 @@ export function ClaudeHeroRepositoryControls({
   useEffect(() => {
     if (!changed || portal === undefined || busy) return
     const submit = (event: KeyboardEvent | MouseEvent): void => {
-      // An issue seeds the draft itself, so an empty composer may still submit.
-      if (pendingRef.current || (input.draft.trim().length === 0 && issue === undefined)) return
+      // A ticket seeds the draft itself, so an empty composer may still submit.
+      if (pendingRef.current || (input.draft.trim().length === 0 && ticket === undefined)) return
       const intercept = event instanceof KeyboardEvent ? shouldInterceptKey(event) : shouldInterceptClick(event)
       if (!intercept) return
       event.preventDefault()
@@ -371,7 +385,7 @@ export function ClaudeHeroRepositoryControls({
       setProgressError(undefined)
       setProgressStage(worktree ? 'inspecting' : undefined)
       setError(undefined)
-      void prepare(branches.root, selected, worktree, stage => { if (worktree) setProgressStage(stage) }, issue).catch((reason: unknown) => {
+      void prepare(branches.root, selected, worktree, stage => { if (worktree) setProgressStage(stage) }, ticket).catch((reason: unknown) => {
         const message = reason instanceof Error ? reason.message : String(reason)
         if (worktree) setProgressError(message)
         else setError(message)
@@ -386,25 +400,47 @@ export function ClaudeHeroRepositoryControls({
       document.removeEventListener('keydown', submit, true)
       document.removeEventListener('click', submit, true)
     }
-  }, [branches, busy, changed, input.draft, issue, portal, prepare, selected, worktree])
+  }, [branches, busy, changed, input.draft, portal, prepare, selected, ticket, worktree])
 
-  const loadIssues = (): void => {
-    if (path === undefined) return
-    setIssuesError(undefined)
-    void loadRepositoryIssues(path).then(setIssues, (reason: unknown) => {
-      setIssuesError(reason instanceof Error ? reason.message : t('heroIssueFailed'))
-    })
+  // Ticket search: debounced against the Jira route while the menu is open.
+  useEffect(() => {
+    if (!ticketMenuOpen) return
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      setTicketError(undefined)
+      void searchJiraTickets(ticketQuery, controller.signal).then(setTicketResults, (reason: unknown) => {
+        if (controller.signal.aborted) return
+        setTicketResults([])
+        setTicketError(reason instanceof JiraClientError && reason.code === 'not-connected'
+          ? t('heroTicketNotConnected')
+          : reason instanceof Error ? reason.message : t('heroTicketFailed'))
+      })
+    }, ticketQuery.length === 0 ? 0 : 300)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [t, ticketMenuOpen, ticketQuery])
+  useEffect(() => {
+    if (!ticketMenuOpen) {
+      setTicketQuery('')
+      setTicketResults(undefined)
+      return
+    }
+    ticketSearchRef.current?.focus()
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (event.target instanceof Node && ticketPickerRef.current?.contains(event.target) !== true) setTicketMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => { document.removeEventListener('pointerdown', closeOnOutsidePointer) }
+  }, [ticketMenuOpen])
+  const chooseTicket = (next: JiraTicket | undefined): void => {
+    setTicket(next)
+    // Ticket work always gets its own worktree, on a branch named after the key.
+    if (next !== undefined) setWorktree(true)
+    setError(undefined)
+    setTicketMenuOpen(false)
   }
-  const issueMenuItems: readonly MenuEntry[] = issuesError !== undefined
-    ? [{ id: 'error', label: issuesError, disabled: true }]
-    : issues === undefined
-      ? [{ id: 'loading', label: t('heroIssueLoading'), disabled: true }]
-      : issues.length === 0
-        ? [{ id: 'empty', label: t('heroIssueEmpty'), disabled: true }]
-        : [
-            { id: 'none', label: t('heroIssueNone') },
-            ...issues.map(item => ({ id: String(item.number), label: `#${item.number} ${item.title}` })),
-          ]
   if (portal === undefined || path === undefined) return null
   return createPortal((
     <span style={styles.heroRepositoryControls}>
@@ -428,37 +464,59 @@ export function ClaudeHeroRepositoryControls({
           }}
           onWorktreeChange={(checked) => { setWorktree(checked); setError(undefined) }}
         />
-        <Menu open={issueMenuOpen} items={issueMenuItems} onSelect={(id: string) => {
-          if (id === 'none') setIssue(undefined)
-          else {
-            const chosen = issues?.find(item => String(item.number) === id)
-            if (chosen === undefined) return
-            setIssue(chosen)
-            // Issue work always gets its own worktree and branch.
-            setWorktree(true)
-          }
-          setError(undefined)
-          setIssueMenuOpen(false)
-        }} onClose={() => setIssueMenuOpen(false)} align="end" portal anchor={
-          <button
-            type="button"
-            style={{ ...styles.heroIssueTrigger, ...(issue === undefined ? {} : styles.heroIssueTriggerActive) }}
-            // No aria-haspopup: the hero seat locator counts labelled menu
-            // buttons in this row to find the Host workspace picker.
-            aria-expanded={issueMenuOpen}
-            aria-label={t('heroIssueMenu')}
-            title={t('heroIssueMenu')}
-            disabled={busy}
-            onClick={() => {
-              const next = !issueMenuOpen
-              setIssueMenuOpen(next)
-              if (next && issues === undefined) loadIssues()
-            }}
-          >
-            <span style={styles.heroIssueLabel}>{issue === undefined ? t('heroIssue') : `#${issue.number} ${issue.title}`}</span>
-            <IconChevronDownOutline14 />
-          </button>
-        } />
+        <span style={styles.heroRepositoryCapsule}>
+          <span ref={ticketPickerRef} style={styles.heroBranchPicker}>
+            <button
+              type="button"
+              style={styles.heroBranchTrigger}
+              aria-expanded={ticketMenuOpen}
+              aria-label={t('heroTicketMenu')}
+              title={t('heroTicketMenu')}
+              disabled={busy}
+              onClick={() => { setTicketMenuOpen(!ticketMenuOpen) }}
+            >
+              <TicketIcon />
+              <span style={styles.heroBranchName}>{ticket === undefined ? t('heroTicket') : ticket.key}</span>
+              <IconChevronDownOutline14 />
+            </button>
+            {ticketMenuOpen ? (
+              <span role="menu" style={styles.heroBranchMenu} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTicketMenuOpen(false) } }}>
+                <label style={styles.heroBranchSearch}>
+                  <IconSearchOutline16 />
+                  <input
+                    ref={ticketSearchRef}
+                    type="search"
+                    value={ticketQuery}
+                    placeholder={t('heroTicketSearch')}
+                    aria-label={t('heroTicketSearch')}
+                    style={styles.heroBranchSearchInput}
+                    onChange={event => { setTicketQuery(event.currentTarget.value) }}
+                  />
+                </label>
+                <span style={styles.heroBranchList}>
+                  {ticketError !== undefined
+                    ? <span style={styles.heroBranchEmpty}>{ticketError}</span>
+                    : ticketResults === undefined
+                      ? <span style={styles.heroBranchEmpty}>{t('heroTicketLoading')}</span>
+                      : <>
+                        {ticket === undefined ? null : (
+                          <button type="button" role="menuitem" style={styles.heroBranchItem} onClick={() => { chooseTicket(undefined) }}>
+                            <span style={styles.heroBranchItemName}>{t('heroTicketNone')}</span>
+                          </button>
+                        )}
+                        {ticketResults.length === 0 ? <span style={styles.heroBranchEmpty}>{t('heroTicketEmpty')}</span> : ticketResults.map(item => (
+                          <button key={item.key} type="button" role="menuitem" aria-current={item.key === ticket?.key ? 'true' : undefined} style={styles.heroBranchItem} onClick={() => { chooseTicket(item) }}>
+                            <span style={styles.heroTicketKey}>{item.key}</span>
+                            <span style={styles.heroBranchItemName}>{item.summary}</span>
+                            {item.status === undefined ? null : <span style={styles.heroTicketStatus}>{item.status}</span>}
+                          </button>
+                        ))}
+                      </>}
+                </span>
+              </span>
+            ) : null}
+          </span>
+        </span>
         {error === undefined ? null : <span role="alert" style={styles.heroRepositoryError}>{error}</span>}
       </>}
       {progressStage === undefined || (!busy && progressError === undefined) ? null : (

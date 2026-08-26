@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import { RepositorySetupError, RepositorySetupService, issueBranchName, parseIssues, parseWorktreeBranches } from '../src/repository-setup.ts'
+import { RepositorySetupError, RepositorySetupService, parseWorktreeBranches } from '../src/repository-setup.ts'
 
 const temporary: string[] = []
 
@@ -328,42 +328,7 @@ describe('repository setup service', () => {
   })
 })
 
-describe('issue kickoff and merged cleanup', () => {
-  it('derives readable issue branches and parses gh issue output', () => {
-    expect(issueBranchName('claude', { number: 12, title: 'Fix the Login  Flow!' })).toBe('claude/issue-12-fix-the-login-flow')
-    expect(parseIssues([
-      { number: 12, title: '  Fix login ', url: 'https://github.com/o/r/issues/12', updatedAt: '2026-08-26T00:00:00Z' },
-      { number: 0, title: 'bad', url: 'x' },
-      { title: 'no number', url: 'x' },
-    ])).toEqual([{ number: 12, title: 'Fix login', url: 'https://github.com/o/r/issues/12', updatedAt: '2026-08-26T00:00:00Z' }])
-  })
-
-  it('names an issue worktree branch after the issue and retries with a suffix on collision', async () => {
-    const { root, leasePath, worktreeRoot } = await roots()
-    const fake = runtime([
-      { stdout: `${root}\n` },
-      { stdout: '# branch.head main\n' },
-      { stdout: 'main\n' },
-      { stdout: '' },
-      { stdout: '' },
-      { stdout: '', exitCode: 128 },
-      { stdout: '' },
-    ])
-    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
-    const result = await service.setup(root, 'main', true, undefined, () => {}, { number: 7, title: 'Add dark mode' })
-    expect(result.branch).toMatch(/^claude\/issue-7-add-dark-mode-[0-9a-f]{8}$/)
-    expect(fake.spawn.mock.calls[5]?.[0].argv.slice(0, 5)).toEqual(['/bin/git', 'worktree', 'add', '-b', 'claude/issue-7-add-dark-mode'])
-    expect(JSON.parse(await readFile(leasePath, 'utf8')).leases[0]).toMatchObject({ pluginGeneratedBranch: true })
-  })
-
-  it('lists open issues through gh', async () => {
-    const fake = runtime([{ stdout: '[{"number":3,"title":"Bug","url":"https://github.com/o/r/issues/3"}]' }])
-    fake.resolveExecutable.mockImplementation(async (name: string) => `/bin/${name}`)
-    const service = new RepositorySetupService(fake, {})
-    await expect(service.listIssues('/repo')).resolves.toEqual([{ number: 3, title: 'Bug', url: 'https://github.com/o/r/issues/3' }])
-    expect(fake.spawn.mock.calls[0]?.[0].argv).toEqual(['/bin/gh', 'issue', 'list', '--state', 'open', '--limit', '30', '--json', 'number,title,url,updatedAt'])
-  })
-
+describe('merged cleanup', () => {
   it('removes a merged plugin worktree, its branch, and its lease', async () => {
     const { root, leasePath, worktreeRoot } = await roots()
     const fake = runtime([

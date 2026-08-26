@@ -1658,36 +1658,28 @@ export const diffModalConflictResolve: CSSProperties = {
   cursor: 'pointer',
 }
 
-export const heroIssueTrigger: CSSProperties = {
-  height: 30,
-  maxWidth: 260,
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  minWidth: 0,
-  padding: '0 9px',
-  border: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
-  borderRadius: 10,
-  outline: 'none',
-  background: 'var(--dsw-alias-interactive-bg-base, var(--dsw-alias-bg-layer-1))',
-  color: 'var(--dsw-alias-label-secondary)',
-  font: 'inherit',
-  fontSize: 12,
-  lineHeight: '18px',
-  whiteSpace: 'nowrap',
-  cursor: 'pointer',
+export const heroTicketKey: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  fontWeight: 650,
+  letterSpacing: 0.2,
 }
 
-export const heroIssueTriggerActive: CSSProperties = {
-  borderColor: 'color-mix(in srgb, var(--dsw-static-blue-450) 45%, transparent)',
-  color: 'var(--dsw-alias-label-primary)',
-}
-
-export const heroIssueLabel: CSSProperties = {
-  minWidth: 0,
+export const heroTicketStatus: CSSProperties = {
+  flex: 'none',
+  maxWidth: 90,
   overflow: 'hidden',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+}
+
+export const settingsLink: CSSProperties = {
+  color: 'var(--dsw-static-blue-450)',
+  fontSize: 12,
+  textDecoration: 'none',
 }
 
 export const repositoryPrIconButton: CSSProperties = {

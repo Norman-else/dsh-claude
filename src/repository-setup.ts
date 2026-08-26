@@ -42,16 +42,6 @@ export interface RepositorySetupResult {
   readonly leaseId?: string
 }
 
-export interface RepositoryIssueSeed {
-  readonly number: number
-  readonly title: string
-}
-
-export interface RepositoryIssue extends RepositoryIssueSeed {
-  readonly url: string
-  readonly updatedAt?: string
-}
-
 export interface RepositoryCleanupResult {
   readonly mode: 'checkout' | 'worktree'
   readonly root: string
@@ -148,28 +138,6 @@ function pathExists(value: string): Promise<boolean> {
   return stat(value).then(() => true, () => false)
 }
 
-export function parseIssues(value: unknown): readonly RepositoryIssue[] {
-  if (!Array.isArray(value)) return []
-  const issues: RepositoryIssue[] = []
-  for (const item of value) {
-    if (item === null || typeof item !== 'object') continue
-    const input = item as Record<string, unknown>
-    if (!Number.isSafeInteger(input.number) || Number(input.number) <= 0 || typeof input.title !== 'string' || typeof input.url !== 'string') continue
-    issues.push({
-      number: Number(input.number),
-      title: input.title.trim().slice(0, 256),
-      url: input.url,
-      ...(typeof input.updatedAt === 'string' ? { updatedAt: input.updatedAt } : {}),
-    })
-  }
-  return issues
-}
-
-/** Deterministic branch name for an issue; the caller adds a suffix on collision. */
-export function issueBranchName(prefix: string, issue: RepositoryIssueSeed): string {
-  return `${prefix}/issue-${issue.number}-${slug(issue.title, 'issue')}`
-}
-
 function lease(value: unknown): WorktreeLease | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const input = value as Record<string, unknown>
@@ -195,7 +163,6 @@ export class RepositorySetupService {
   readonly #branchPrefix: () => Promise<string>
   readonly #cleanupGraceMs: number
   #gitPath: Promise<string> | undefined
-  #ghPath: Promise<string> | undefined
   #pending: Promise<unknown> = Promise.resolve()
 
   constructor(runtime: RepositorySetupRuntime, options: RepositorySetupServiceOptions = {}) {
@@ -243,7 +210,6 @@ export class RepositorySetupService {
     useWorktree: boolean,
     explicitBranchName?: string,
     progress: RepositorySetupProgress = () => {},
-    issue?: RepositoryIssueSeed,
   ): Promise<RepositorySetupResult> {
     progress('inspecting')
     const branch = safeBranch(branchValue)
@@ -261,22 +227,10 @@ export class RepositorySetupService {
         local ? `refs/heads/${branch}` : `refs/remotes/${branch}`,
         requestedBranch,
         progress,
-        issue,
       )
     }
     progress('switching-branch')
     return !local && remote ? this.#checkoutRemote(info, branch) : this.#checkout(info, branch)
-  }
-
-  async listIssues(cwd: string): Promise<readonly RepositoryIssue[]> {
-    const gh = await this.#gh()
-    const result = await this.#run(gh, ['issue', 'list', '--state', 'open', '--limit', '30', '--json', 'number,title,url,updatedAt'], safePath(cwd), GIT_FETCH_TIMEOUT_MS)
-    if (result.exitCode !== 0 || result.lossy) throw new RepositorySetupError('issues-unavailable', 'GitHub issues could not be loaded.')
-    try {
-      return parseIssues(JSON.parse(result.stdout))
-    } catch {
-      throw new RepositorySetupError('issues-unavailable', 'GitHub issues could not be parsed.')
-    }
   }
 
   /** Tear down a merged branch: remove a plugin worktree (and its lease and
@@ -426,7 +380,6 @@ export class RepositorySetupService {
     baseRef: string,
     explicitBranchName: string | undefined,
     progress: RepositorySetupProgress,
-    issue?: RepositoryIssueSeed,
   ): Promise<RepositorySetupResult> {
     const git = await this.#git()
     progress('fetching')
@@ -441,19 +394,11 @@ export class RepositorySetupService {
     }
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
-    const prefix = safeBranch(await this.#branchPrefix())
-    let branch = explicitBranchName ?? (issue === undefined
-      ? `${prefix}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
-      : issueBranchName(prefix, issue))
+    const branch = explicitBranchName ?? `${safeBranch(await this.#branchPrefix())}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
     const path = join(this.#worktreeRoot, `${slug(basename(root), 'repository')}-${stamp}-${suffix}`)
     progress('creating-worktree')
     await mkdir(this.#worktreeRoot, { recursive: true })
-    let created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
-    if (created.exitCode !== 0 && issue !== undefined && explicitBranchName === undefined) {
-      // A second attempt at the same issue: keep the readable name, add a suffix.
-      branch = `${branch}-${suffix}`
-      created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
-    }
+    const created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
     if (created.exitCode !== 0) throw new RepositorySetupError('worktree-failed', 'Git could not create the worktree.')
     const item: WorktreeLease = {
       id: randomUUID(),
@@ -490,12 +435,6 @@ export class RepositorySetupService {
     return this.#gitPath
   }
 
-  #gh(): Promise<string> {
-    this.#ghPath ??= this.#runtime.resolveExecutable('gh').catch(() => {
-      throw new RepositorySetupError('gh-unavailable', 'GitHub CLI is unavailable.')
-    })
-    return this.#ghPath
-  }
 
   async #run(executable: string, args: readonly string[], cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<CommandResult> {
     return collect(this.#runtime.spawn({
