@@ -240,6 +240,8 @@ export const settingSelectCheck: CSSProperties = {
 export const settingsActions: CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
   gap: 8,
 }
 
@@ -1682,6 +1684,7 @@ export const settingsLink: CSSProperties = {
   color: 'var(--dsw-static-blue-450)',
   fontSize: 12,
   textDecoration: 'none',
+  marginRight: 'auto',
 }
 
 export const repositoryPrIconButton: CSSProperties = {

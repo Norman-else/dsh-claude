@@ -6,7 +6,7 @@ import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals } from './hero-dom-bridge.ts'
 import { loadRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
-import { JiraClientError, searchJiraTickets, type JiraTicket } from './jira-api.ts'
+import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
 
 export interface ClaudeHeroRepositoryControlsInjected {
@@ -308,6 +308,7 @@ export function ClaudeHeroRepositoryControls({
   const [progressStage, setProgressStage] = useState<RepositoryPreparationStage>()
   const [progressError, setProgressError] = useState<string>()
   const [error, setError] = useState<string>()
+  const [jiraConnected, setJiraConnected] = useState(false)
   const [ticket, setTicket] = useState<JiraTicket>()
   const [ticketMenuOpen, setTicketMenuOpen] = useState(false)
   const [ticketQuery, setTicketQuery] = useState('')
@@ -370,7 +371,9 @@ export function ClaudeHeroRepositoryControls({
   }, [portal, path, sessionId])
 
   const availableBranches = branches === undefined ? [] : repositoryBranchOptions(branches)
-  const changed = branches !== undefined && selected.length > 0 && (worktree || selected !== branches.current)
+  // A ticket alone routes the submission through prepare: without a worktree it
+  // stays on the selected branch, with one it opens a worktree named after the key.
+  const changed = branches !== undefined && selected.length > 0 && (worktree || ticket !== undefined || selected !== branches.current)
   useEffect(() => {
     if (!changed || portal === undefined || busy) return
     const submit = (event: KeyboardEvent | MouseEvent): void => {
@@ -401,6 +404,15 @@ export function ClaudeHeroRepositoryControls({
       document.removeEventListener('click', submit, true)
     }
   }, [branches, busy, changed, input.draft, portal, prepare, selected, ticket, worktree])
+
+  // The ticket menu only exists once a Jira connection is configured.
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadJiraStatus(controller.signal).then(status => { setJiraConnected(status.connected) }, () => {
+      if (!controller.signal.aborted) setJiraConnected(false)
+    })
+    return () => { controller.abort() }
+  }, [sessionId])
 
   // Ticket search: debounced against the Jira route while the menu is open.
   useEffect(() => {
@@ -436,8 +448,6 @@ export function ClaudeHeroRepositoryControls({
   }, [ticketMenuOpen])
   const chooseTicket = (next: JiraTicket | undefined): void => {
     setTicket(next)
-    // Ticket work always gets its own worktree, on a branch named after the key.
-    if (next !== undefined) setWorktree(true)
     setError(undefined)
     setTicketMenuOpen(false)
   }
@@ -464,7 +474,7 @@ export function ClaudeHeroRepositoryControls({
           }}
           onWorktreeChange={(checked) => { setWorktree(checked); setError(undefined) }}
         />
-        <span style={styles.heroRepositoryCapsule}>
+        {!jiraConnected ? null : <span style={styles.heroRepositoryCapsule}>
           <span ref={ticketPickerRef} style={styles.heroBranchPicker}>
             <button
               type="button"
@@ -516,7 +526,7 @@ export function ClaudeHeroRepositoryControls({
               </span>
             ) : null}
           </span>
-        </span>
+        </span>}
         {error === undefined ? null : <span role="alert" style={styles.heroRepositoryError}>{error}</span>}
       </>}
       {progressStage === undefined || (!busy && progressError === undefined) ? null : (

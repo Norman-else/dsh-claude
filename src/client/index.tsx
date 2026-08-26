@@ -354,9 +354,9 @@ export function apply(ctx: ClientContext): void {
           const draft = rawDraft.trim() === '' && ticket !== undefined ? ticketPrompt(ticket) : rawDraft
           const imageIds = sourceInput.state.getSnapshot().imageIds
           const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress)
-          // The worktree exists: take the ticket. Best-effort so a Jira hiccup
-          // never strands a freshly created worktree without a session.
-          if (ticket !== undefined && prepared.mode === 'worktree') {
+          // The workspace is ready: take the ticket. Best-effort so a Jira
+          // hiccup never blocks the session from starting.
+          if (ticket !== undefined) {
             void assignJiraTicket(ticket.key).catch((reason: unknown) => {
               console.warn(`dsh-claude: could not assign ${ticket.key}: ${reason instanceof Error ? reason.message : String(reason)}`)
             })

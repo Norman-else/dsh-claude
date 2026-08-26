@@ -359,8 +359,8 @@ export class RepositorySetupService {
   }
 
   async #checkout(info: RepositoryBranchList, branch: string): Promise<RepositorySetupResult> {
-    if (info.dirty) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before switching branches.')
     if (info.current !== branch) {
+      if (info.dirty) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before switching branches.')
       const git = await this.#git()
       const worktrees = await this.#run(git, ['worktree', 'list', '--porcelain'], info.root)
       if (worktrees.exitCode !== 0 || worktrees.lossy) throw new RepositorySetupError('repository-unavailable', 'Worktree state is unavailable.')
