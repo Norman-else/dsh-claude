@@ -75,7 +75,7 @@ describe('repository setup route', () => {
     }), setup)
     expect(setup.statusCode).toBe(200)
     expect(setup.flushed).toBe(true)
-    expect(service.setup).toHaveBeenCalledWith('/repo', 'main', true, 'feature/exact-name', expect.any(Function))
+    expect(service.setup).toHaveBeenCalledWith('/repo', 'main', true, 'feature/exact-name', expect.any(Function), undefined)
     expect(events(setup)).toEqual([
       { type: 'progress', stage: 'inspecting' },
       { type: 'progress', stage: 'fetching' },
@@ -123,5 +123,40 @@ describe('repository setup route', () => {
     const malformed = response()
     await ctx.handler(request('POST', CLAUDE_REPOSITORY_SETUP_PATH, { cwd: '/repo', branch: 'main' }), malformed)
     expect(malformed.statusCode).toBe(409)
+  })
+})
+
+describe('repository setup issue and cleanup routes', () => {
+  it('lists issues, forwards issue seeds into setup, and cleans up merged checkouts', async () => {
+    const ctx = context()
+    const service = {
+      listIssues: vi.fn(async () => [{ number: 3, title: 'Bug', url: 'https://github.com/o/r/issues/3' }]),
+      cleanupMerged: vi.fn(async () => ({ mode: 'worktree', root: '/repo', branch: 'claude/issue-3-bug' })),
+      setup: vi.fn(async (_cwd: string, _branch: string, _worktree: boolean, _name: string | undefined, _progress: unknown, issue: unknown) => ({
+        mode: 'worktree', root: '/repo', path: '/wt', branch: `claude/issue-${String((issue as { number: number }).number)}-bug`, leaseId: 'lease',
+      })),
+    }
+    registerRepositorySetupRoute(ctx, service as unknown as RepositorySetupService)
+
+    const issues = response()
+    await ctx.handler(request('GET', `${CLAUDE_REPOSITORY_SETUP_PATH}/issues?cwd=${encodeURIComponent('/repo')}`), issues)
+    expect(issues.statusCode).toBe(200)
+    expect(JSON.parse(issues.body)).toEqual({ issues: [{ number: 3, title: 'Bug', url: 'https://github.com/o/r/issues/3' }] })
+    expect(service.listIssues).toHaveBeenCalledWith('/repo')
+
+    const setup = response()
+    await ctx.handler(request('POST', CLAUDE_REPOSITORY_SETUP_PATH, { cwd: '/repo', branch: 'main', worktree: true, issue: { number: 3, title: 'Bug' } }), setup)
+    expect(service.setup.mock.calls[0]?.[5]).toEqual({ number: 3, title: 'Bug' })
+    expect(setup.body).toContain('claude/issue-3-bug')
+
+    const badIssue = response()
+    await ctx.handler(request('POST', CLAUDE_REPOSITORY_SETUP_PATH, { cwd: '/repo', branch: 'main', worktree: true, issue: { number: 'x' } }), badIssue)
+    expect(badIssue.body).toContain('invalid-request')
+
+    const cleanup = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/wt', baseBranch: 'main' }), cleanup)
+    expect(cleanup.statusCode).toBe(200)
+    expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main')
+    expect(JSON.parse(cleanup.body)).toMatchObject({ mode: 'worktree', branch: 'claude/issue-3-bug' })
   })
 })

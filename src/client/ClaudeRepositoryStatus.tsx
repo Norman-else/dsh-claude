@@ -4,6 +4,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
+import { cleanupMergedRepository } from './repository-setup-api.ts'
 import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestComments, type FailingCheck, type PullRequestReviewComment } from './pr-feedback-api.ts'
 import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, rememberAutoFix, setAutoFixEnabled } from './auto-fix.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -15,6 +16,10 @@ export interface ClaudeRepositoryStatusInjected {
   openDiff: () => void
   /** Submit the composer, seeding the given draft text when it is empty. */
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+  /** Open the cross-session pull request overview panel. */
+  openOverview?: () => void
+  /** Delete the DSH workspace owning this session (after its worktree is gone). */
+  deleteWorkspace?: () => Promise<void>
 }
 
 export interface ClaudeRepositoryStatusProps extends ClaudeRepositoryStatusInjected {
@@ -406,6 +411,62 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
   )
 }
 
+interface CleanupDialogState {
+  readonly submitting: boolean
+  readonly done?: string
+  readonly error?: string
+}
+
+/** After a merge: remove the worktree (or switch a plain checkout back to
+ *  base), delete the merged branch, and drop the DSH workspace. */
+export function CleanupControl({ repository, t, deleteWorkspace }: {
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+  deleteWorkspace?: () => Promise<void>
+}) {
+  const [dialog, setDialog] = useState<CleanupDialogState>()
+  const pullRequest = repository.pullRequest
+  const base = pullRequest?.baseBranch
+  useEffect(() => {
+    if (dialog?.done === undefined) return
+    const timer = setTimeout(() => setDialog(undefined), 1_500)
+    return () => clearTimeout(timer)
+  }, [dialog?.done])
+  if (pullRequest?.state !== 'merged' || base === undefined || repository.root === undefined || repository.detached === true) return null
+  const root = repository.root
+  const closeDialog = (): void => { if (dialog?.submitting !== true) setDialog(undefined) }
+  const confirm = (): void => {
+    setDialog({ submitting: true })
+    void cleanupMergedRepository(root, base).then(async result => {
+      if (result.mode === 'worktree' && deleteWorkspace !== undefined) await deleteWorkspace()
+      setDialog({ submitting: false, done: result.branch })
+    }, (reason: unknown) => {
+      setDialog({ submitting: false, error: reason instanceof Error ? reason.message : t('diffActionFailed') })
+    })
+  }
+  return (
+    <>
+      <button type="button" style={styles.repositoryUpdateTrigger} title={t('cleanupTitle')} onClick={() => { setDialog({ submitting: false }) }}>{t('cleanupButton')}</button>
+      {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('cleanupTitle')} closeLabel={t('diffCancel')} description={t('cleanupDescription')} footer={
+        <div style={styles.diffModalFooter}>
+          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{dialog?.done === undefined ? t('diffCancel') : t('diffDone')}</button>
+          {dialog?.done === undefined ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={confirm}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+        </div>
+      }>
+        {dialog === undefined ? null : <div style={styles.diffModalBody}>
+          <div style={styles.diffModalMeta}>
+            <strong style={styles.diffModalMetaText}>{repository.branch ?? t('repositoryUnknownBranch')} → {base}</strong>
+            <span style={styles.diffModalFileState}>{repository.worktree === true ? t('repositoryWorktree') : t('repositoryLocal')}</span>
+          </div>
+          {dialog.done === undefined ? null : <p style={styles.diffModalSuccess}>{t('cleanupCompleted', { branch: dialog.done })}</p>}
+          {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
+        </div>}
+      </Modal>
+    </>
+  )
+}
+
 export const MERGE_METHODS: readonly RepositoryMergeMethod[] = ['merge', 'squash', 'rebase']
 
 interface MergeDialogState {
@@ -497,7 +558,7 @@ export function MergePullRequestControl({ sessionId, repository, t }: {
   )
 }
 
-export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt }: ClaudeRepositoryStatusProps) {
+export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt, openOverview, deleteWorkspace }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const running = useSessions(value => value.byId[sessionId]?.running === true)
   const projection = useClaudeProjection(value => value)
@@ -525,7 +586,9 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   return (
     <div style={styles.repositoryBarFrame}>
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
-        <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
+        {openOverview === undefined
+          ? <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
+          : <button type="button" style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}), ...styles.repositoryPrIconButton }} aria-label={t('overviewOpen')} title={t('overviewOpen')} onClick={openOverview}><PullRequestIcon merged={merged} /></button>}
         <PullRequestLink repository={repository} t={t} />
         {repository.remote === undefined ? null : <span style={styles.repositoryRemote}>{repositoryName(repository.remote)}</span>}
         <span style={styles.repositoryBranch}>{branch}</span>
@@ -541,13 +604,14 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
               {pushable ? <span style={merged ? styles.diffAheadMuted : styles.diffAhead}>↑{aheadCount > 0 ? aheadCount : ''}</span> : null}
             </button>
           ) : null}
-          {pullRequest === undefined ? null : merged ? (
+          {pullRequest === undefined ? null : merged ? (<>
             <span style={styles.repositoryMergedStatus}>
               <span style={styles.repositoryMergedDot} aria-hidden="true" />
               {t('repositoryState_merged')}
               {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
             </span>
-          ) : <>
+            <CleanupControl repository={repository} t={t} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />
+          </>) : <>
             {pullRequest.checks === 'failing'
               ? <FailingChecksControl sessionId={sessionId} pullNumber={pullRequest.number} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
               : pullRequest.checks === 'none' ? null : <StatusItem

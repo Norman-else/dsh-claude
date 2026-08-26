@@ -1,5 +1,17 @@
-import { CLAUDE_REPOSITORY_SETUP_PATH } from '../constants.ts'
-import type { RepositoryBranchList, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
+import { CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
+import type { RepositoryBranchList, RepositoryCleanupResult, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
+import type { RepositoryStatus } from '../repository-status.ts'
+
+export interface RepositoryIssueView {
+  readonly number: number
+  readonly title: string
+  readonly url: string
+}
+
+/** Draft seeded into the composer when a session starts from an issue. */
+export function issuePrompt(issue: RepositoryIssueView): string {
+  return `Work on GitHub issue #${issue.number}: ${issue.title}\n${issue.url}\n\nRead the issue, implement what it asks for, and keep the pull request description closing the issue.`
+}
 
 interface ErrorBody {
   readonly message?: string
@@ -70,12 +82,17 @@ export async function prepareRepository(
   worktree: boolean,
   branchName?: string,
   onProgress: (stage: RepositoryPreparationStage) => void = () => {},
+  issue?: Pick<RepositoryIssueView, 'number' | 'title'>,
 ): Promise<RepositorySetupResult> {
   const result = await fetch(CLAUDE_REPOSITORY_SETUP_PATH, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { accept: 'application/x-ndjson', 'content-type': 'application/json' },
-    body: JSON.stringify({ cwd, branch, worktree, ...(branchName === undefined ? {} : { branchName }) }),
+    body: JSON.stringify({
+      cwd, branch, worktree,
+      ...(branchName === undefined ? {} : { branchName }),
+      ...(issue === undefined ? {} : { issue: { number: issue.number, title: issue.title } }),
+    }),
   })
   if (!result.ok) {
     const body = await result.json() as ErrorBody
@@ -113,4 +130,45 @@ export async function bindRepositoryLease(leaseId: string, sessionId: string): P
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ leaseId, sessionId }),
   }))
+}
+
+export async function loadRepositoryIssues(cwd: string, signal?: AbortSignal): Promise<readonly RepositoryIssueView[]> {
+  const body = await response<{ issues?: unknown }>(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/issues?cwd=${encodeURIComponent(cwd)}`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+    ...(signal === undefined ? {} : { signal }),
+  }))
+  if (!Array.isArray(body.issues)) throw new Error('Invalid repository issues response.')
+  const issues: RepositoryIssueView[] = []
+  for (const item of body.issues) {
+    const issue = record(item)
+    if (issue === undefined || typeof issue.number !== 'number' || typeof issue.title !== 'string' || typeof issue.url !== 'string') continue
+    issues.push({ number: issue.number, title: issue.title, url: issue.url })
+  }
+  return issues
+}
+
+export async function cleanupMergedRepository(path: string, baseBranch: string): Promise<RepositoryCleanupResult> {
+  const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ path, baseBranch }),
+  }))
+  if ((body.mode !== 'worktree' && body.mode !== 'checkout') || typeof body.root !== 'string' || typeof body.branch !== 'string') {
+    throw new Error('Invalid repository cleanup response.')
+  }
+  return body as unknown as RepositoryCleanupResult
+}
+
+export async function loadRepositoryStatusFor(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
+  const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_STATUS_PATH}?cwd=${encodeURIComponent(cwd)}`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+    ...(signal === undefined ? {} : { signal }),
+  }))
+  if (typeof body.status !== 'string' || typeof body.cwd !== 'string') throw new Error('Invalid repository status response.')
+  return body as unknown as RepositoryStatus
 }

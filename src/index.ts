@@ -24,6 +24,7 @@ import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
 import { PullRequestFeedbackService } from './pr-feedback.ts'
 import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
+import { registerRepositoryStatusRoute } from './repository-status-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
@@ -357,6 +358,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     })
     registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applyLimitOverrides })
     registerRepositorySetupRoute(webCtx, repositorySetup)
+    registerRepositoryStatusRoute(webCtx, repositoryStatus)
     const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
     const cwdForClaudeSession = (sessionId: string): string | undefined => {
       const agent = webCtx.agents.get(sessionId as never)

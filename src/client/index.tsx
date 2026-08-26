@@ -17,11 +17,12 @@ import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './Claud
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
 import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
+import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
-import { bindRepositoryLease, prepareRepository } from './repository-setup-api.ts'
+import { bindRepositoryLease, issuePrompt, loadRepositoryStatusFor, prepareRepository } from './repository-setup-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
 /** The right-side details column slot declared by dsh-client-ui-layout
@@ -157,6 +158,29 @@ export function apply(ctx: ClientContext): void {
     layout?.openDetails()
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
+  const openOverviewPanel = (sessionId: string): void => {
+    if (sessions === undefined) return
+    closePluginDetails()
+    try {
+      disposePluginDetails = ctx.slots.register({
+        name: 'details',
+        priority: -10,
+        locale: namespace,
+        inject: (): ClaudePullRequestsPanelInjected => ({
+          t,
+          closeDetails: closePluginDetails,
+          openSession: id => { sessions.open(id as SessionId) },
+          loadStatus: loadRepositoryStatusFor,
+          sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
+        }),
+      }, ClaudePullRequestsPanel)
+    } catch {
+      return
+    }
+    detailsSessionId = sessionId
+    layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  }
   const openDiffPanel = (sessionId: string): void => {
     closePluginDetails()
     detailsSessionId = sessionId
@@ -279,6 +303,13 @@ export function apply(ctx: ClientContext): void {
         t,
         openDiff: () => openDiffPanel(sessionId),
         ...(submitPrompt === undefined ? {} : { submitPrompt }),
+        ...(sessions === undefined ? {} : { openOverview: () => openOverviewPanel(sessionId) }),
+        ...(workspaces === undefined ? {} : {
+          deleteWorkspace: async () => {
+            const workspace = workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sessionId as SessionId))
+            if (workspace !== undefined) await workspaces.delete(workspace.workspaceId)
+          },
+        }),
       }
     },
   }, ClaudeRepositoryStatus))
@@ -312,14 +343,17 @@ export function apply(ctx: ClientContext): void {
       locale: namespace,
       inject: (sourceSessionId: SessionId): ClaudeHeroRepositoryControlsInjected => ({
         t,
-        prepare: async (cwd, branch, useWorktree, onProgress) => {
+        prepare: async (cwd, branch, useWorktree, onProgress, issue) => {
           const sourceScope = sessions.scope(sourceSessionId)
           if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
           const sourceInput = conversation.input.for(sourceScope)
-          const draft = sourceInput.state.getSnapshot().draft
+          const rawDraft = sourceInput.state.getSnapshot().draft
+          // Starting from an issue seeds an empty composer with the issue brief.
+          const draft = rawDraft.trim() === '' && issue !== undefined ? issuePrompt(issue) : rawDraft
           const imageIds = sourceInput.state.getSnapshot().imageIds
-          const prepared = await prepareRepository(cwd, branch, useWorktree, undefined, onProgress)
+          const prepared = await prepareRepository(cwd, branch, useWorktree, undefined, onProgress, issue)
           if (prepared.mode === 'checkout') {
+            if (draft !== rawDraft) sourceInput.setDraft(draft)
             sourceInput.submit()
             return
           }

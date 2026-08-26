@@ -5,6 +5,7 @@ import { CLAUDE_REPOSITORY_SETUP_PATH } from './constants.ts'
 import { json, trustedRequest } from './http.ts'
 import {
   RepositorySetupError,
+  type RepositoryIssueSeed,
   type RepositorySetupResult,
   type RepositorySetupService,
   type RepositorySetupStage,
@@ -45,6 +46,16 @@ function optionalString(input: Record<string, unknown>, key: string): string | u
   return value
 }
 
+function optionalIssue(input: Record<string, unknown>): RepositoryIssueSeed | undefined {
+  const value = input.issue
+  if (value === undefined) return undefined
+  const issue = record(value)
+  if (issue === undefined || !Number.isSafeInteger(issue.number) || Number(issue.number) <= 0 || typeof issue.title !== 'string') {
+    throw new RepositorySetupError('invalid-request', 'The issue field is invalid.')
+  }
+  return { number: Number(issue.number), title: issue.title.slice(0, 256) }
+}
+
 function ndjsonHeaders(res: import('node:http').ServerResponse): void {
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
@@ -72,6 +83,7 @@ async function streamSetup(
       input.worktree as boolean,
       optionalString(input, 'branchName'),
       (stage: RepositorySetupStage) => { if (!ended) ndjson(res, { type: 'progress', stage }) },
+      optionalIssue(input),
     )
     ndjson(res, { type: 'complete', result })
   } catch (error) {
@@ -108,6 +120,17 @@ export function registerRepositorySetupRoute(ctx: Context, service: RepositorySe
           if (typeof input.worktree !== 'boolean') throw new RepositorySetupError('invalid-request', 'The worktree field is required.')
           await streamSetup(res, service, input)
           return
+        }
+        if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/issues`) {
+          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          const cwd = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cwd')
+          if (cwd === null) throw new RepositorySetupError('invalid-request', 'The cwd query parameter is required.')
+          return json(res, 200, { issues: await service.listIssues(cwd) })
+        }
+        if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(req)
+          return json(res, 200, await service.cleanupMerged(string(input, 'path'), string(input, 'baseBranch')))
         }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/bind`) {
           if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

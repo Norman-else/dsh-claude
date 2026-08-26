@@ -42,6 +42,22 @@ export interface RepositorySetupResult {
   readonly leaseId?: string
 }
 
+export interface RepositoryIssueSeed {
+  readonly number: number
+  readonly title: string
+}
+
+export interface RepositoryIssue extends RepositoryIssueSeed {
+  readonly url: string
+  readonly updatedAt?: string
+}
+
+export interface RepositoryCleanupResult {
+  readonly mode: 'checkout' | 'worktree'
+  readonly root: string
+  readonly branch: string
+}
+
 interface WorktreeLease {
   readonly id: string
   readonly root: string
@@ -132,6 +148,28 @@ function pathExists(value: string): Promise<boolean> {
   return stat(value).then(() => true, () => false)
 }
 
+export function parseIssues(value: unknown): readonly RepositoryIssue[] {
+  if (!Array.isArray(value)) return []
+  const issues: RepositoryIssue[] = []
+  for (const item of value) {
+    if (item === null || typeof item !== 'object') continue
+    const input = item as Record<string, unknown>
+    if (!Number.isSafeInteger(input.number) || Number(input.number) <= 0 || typeof input.title !== 'string' || typeof input.url !== 'string') continue
+    issues.push({
+      number: Number(input.number),
+      title: input.title.trim().slice(0, 256),
+      url: input.url,
+      ...(typeof input.updatedAt === 'string' ? { updatedAt: input.updatedAt } : {}),
+    })
+  }
+  return issues
+}
+
+/** Deterministic branch name for an issue; the caller adds a suffix on collision. */
+export function issueBranchName(prefix: string, issue: RepositoryIssueSeed): string {
+  return `${prefix}/issue-${issue.number}-${slug(issue.title, 'issue')}`
+}
+
 function lease(value: unknown): WorktreeLease | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const input = value as Record<string, unknown>
@@ -157,6 +195,7 @@ export class RepositorySetupService {
   readonly #branchPrefix: () => Promise<string>
   readonly #cleanupGraceMs: number
   #gitPath: Promise<string> | undefined
+  #ghPath: Promise<string> | undefined
   #pending: Promise<unknown> = Promise.resolve()
 
   constructor(runtime: RepositorySetupRuntime, options: RepositorySetupServiceOptions = {}) {
@@ -204,6 +243,7 @@ export class RepositorySetupService {
     useWorktree: boolean,
     explicitBranchName?: string,
     progress: RepositorySetupProgress = () => {},
+    issue?: RepositoryIssueSeed,
   ): Promise<RepositorySetupResult> {
     progress('inspecting')
     const branch = safeBranch(branchValue)
@@ -221,10 +261,54 @@ export class RepositorySetupService {
         local ? `refs/heads/${branch}` : `refs/remotes/${branch}`,
         requestedBranch,
         progress,
+        issue,
       )
     }
     progress('switching-branch')
     return !local && remote ? this.#checkoutRemote(info, branch) : this.#checkout(info, branch)
+  }
+
+  async listIssues(cwd: string): Promise<readonly RepositoryIssue[]> {
+    const gh = await this.#gh()
+    const result = await this.#run(gh, ['issue', 'list', '--state', 'open', '--limit', '30', '--json', 'number,title,url,updatedAt'], safePath(cwd), GIT_FETCH_TIMEOUT_MS)
+    if (result.exitCode !== 0 || result.lossy) throw new RepositorySetupError('issues-unavailable', 'GitHub issues could not be loaded.')
+    try {
+      return parseIssues(JSON.parse(result.stdout))
+    } catch {
+      throw new RepositorySetupError('issues-unavailable', 'GitHub issues could not be parsed.')
+    }
+  }
+
+  /** Tear down a merged branch: remove a plugin worktree (and its lease and
+   *  branch), or switch a plain checkout back to the base branch and delete
+   *  the merged branch. Refuses dirty trees. */
+  async cleanupMerged(pathValue: string, baseBranch: string): Promise<RepositoryCleanupResult> {
+    const path = safePath(pathValue)
+    const base = safeBranch(baseBranch)
+    const git = await this.#git()
+    const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], path)
+    if (status.exitCode !== 0 || status.lossy) throw new RepositorySetupError('repository-unavailable', 'The repository state is unavailable.')
+    if (status.stdout.trim().length > 0) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before cleaning up.')
+    const lease = (await this.#readLeases()).find(item => comparablePath(item.path) === comparablePath(path))
+    if (lease !== undefined) {
+      return this.#serialize(async () => {
+        const removed = await this.#run(git, ['worktree', 'remove', '--', lease.path], lease.root)
+        if (removed.exitCode !== 0) throw new RepositorySetupError('worktree-remove-failed', 'Git could not remove the worktree.')
+        await this.#run(git, ['branch', '-D', '--', lease.branch], lease.root).catch(() => undefined)
+        const current = await this.#readLeases()
+        await this.#writeLeases(current.filter(item => item.id !== lease.id))
+        return { mode: 'worktree' as const, root: lease.root, branch: lease.branch }
+      })
+    }
+    const root = await this.#repositoryRoot(git, path)
+    const head = await this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root)
+    const branch = head.exitCode === 0 ? head.stdout.trim() : ''
+    if (branch.length === 0 || branch === base) throw new RepositorySetupError('nothing-to-clean', 'The checkout is already on the base branch.')
+    const switched = await this.#run(git, ['switch', '--', base], root)
+    if (switched.exitCode !== 0) throw new RepositorySetupError('checkout-failed', 'Git could not switch to the base branch.')
+    await this.#run(git, ['branch', '-D', '--', branch], root).catch(() => undefined)
+    await this.#run(git, ['pull', '--ff-only'], root, GIT_FETCH_TIMEOUT_MS).catch(() => undefined)
+    return { mode: 'checkout', root, branch }
   }
 
   bindLease(leaseId: string, sessionId: string): Promise<void> {
@@ -342,6 +426,7 @@ export class RepositorySetupService {
     baseRef: string,
     explicitBranchName: string | undefined,
     progress: RepositorySetupProgress,
+    issue?: RepositoryIssueSeed,
   ): Promise<RepositorySetupResult> {
     const git = await this.#git()
     progress('fetching')
@@ -356,11 +441,19 @@ export class RepositorySetupService {
     }
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
-    const branch = explicitBranchName ?? `${safeBranch(await this.#branchPrefix())}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
+    const prefix = safeBranch(await this.#branchPrefix())
+    let branch = explicitBranchName ?? (issue === undefined
+      ? `${prefix}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
+      : issueBranchName(prefix, issue))
     const path = join(this.#worktreeRoot, `${slug(basename(root), 'repository')}-${stamp}-${suffix}`)
     progress('creating-worktree')
     await mkdir(this.#worktreeRoot, { recursive: true })
-    const created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
+    let created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
+    if (created.exitCode !== 0 && issue !== undefined && explicitBranchName === undefined) {
+      // A second attempt at the same issue: keep the readable name, add a suffix.
+      branch = `${branch}-${suffix}`
+      created = await this.#run(git, ['worktree', 'add', '-b', branch, path, baseRef], root)
+    }
     if (created.exitCode !== 0) throw new RepositorySetupError('worktree-failed', 'Git could not create the worktree.')
     const item: WorktreeLease = {
       id: randomUUID(),
@@ -395,6 +488,13 @@ export class RepositorySetupService {
   #git(): Promise<string> {
     this.#gitPath ??= this.#runtime.resolveExecutable('git')
     return this.#gitPath
+  }
+
+  #gh(): Promise<string> {
+    this.#ghPath ??= this.#runtime.resolveExecutable('gh').catch(() => {
+      throw new RepositorySetupError('gh-unavailable', 'GitHub CLI is unavailable.')
+    })
+    return this.#ghPath
   }
 
   async #run(executable: string, args: readonly string[], cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<CommandResult> {
