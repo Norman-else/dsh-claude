@@ -68,7 +68,8 @@ describe('Jira service', () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe('https://team.atlassian.net/rest/api/3/myself')
     expect((fetcher.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({ authorization: `Basic ${Buffer.from('n@example.com:secret-token').toString('base64')}` })
     expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ apiToken: 'secret-token' })
-    expect((await stat(path)).mode & 0o777).toBe(0o600)
+    // POSIX file modes are not enforceable on Windows; chmod is a no-op there.
+    if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600)
     await expect(service.status()).resolves.not.toHaveProperty('apiToken')
 
     await expect(service.search('ship')).resolves.toEqual([{ key: 'PSOS-7', summary: 'Ship it', url: 'https://team.atlassian.net/browse/PSOS-7' }])
