@@ -1366,6 +1366,24 @@ export const diffTriggerMuted: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+export const repositoryMergeTrigger: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  minHeight: 26,
+  padding: '3px 8px',
+  border: '1px solid color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, transparent)',
+  borderRadius: 7,
+  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent)',
+  color: 'var(--dsw-alias-state-success-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 650,
+  cursor: 'pointer',
+}
+
 export const diffAdd: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary)',
 }

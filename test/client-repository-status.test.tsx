@@ -88,6 +88,8 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   diffTruncated: 'Diff truncated',
   diffEmpty: 'No tracked changes',
   diffFilesShort: '{count} files',
+  repositoryMergeMenu: 'Open merge options',
+  diffMergePr: 'Merge',
 }
 
 const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string => {
@@ -167,8 +169,10 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).not.toContain('Mercaso/premier-store-os</span>')
     expect(statusMarkup).toContain('margin:0 auto')
     expect(statusMarkup).not.toContain('max-width:524px')
-    expect(statusMarkup.match(/<button/g)).toHaveLength(1)
+    expect(statusMarkup.match(/<button/g)).toHaveLength(2)
     expect(statusMarkup).toContain('aria-label="View working tree diff"')
+    expect(statusMarkup).toContain('aria-label="Open merge options"')
+    expect(statusMarkup).toContain('>Merge<')
     expect(statusMarkup).toContain('href="https://github.com/Mercaso/premier-store-os/pull/12"')
     expect(statusMarkup).toContain('target="_blank"')
     expect(statusMarkup).toContain('rel="noopener noreferrer"')
@@ -324,20 +328,22 @@ describe('Claude repository status UI', () => {
       'commit-push': true,
       'push': false,
       'create-pr': false,
+      'merge-pr': true,
     })
     expect(repositoryActionAvailability({
       ...repository,
       pullRequest: { ...repository.pullRequest, state: 'merged' as const },
-    })).toEqual({ 'commit': true, 'commit-push': true, 'push': false, 'create-pr': true })
+    })).toEqual({ 'commit': true, 'commit-push': true, 'push': false, 'create-pr': true, 'merge-pr': false })
     const { pullRequest: _pullRequest, remote: _remote, ...localOnly } = repository
     expect(repositoryActionAvailability(localOnly)).toEqual({
       'commit': true,
       'commit-push': false,
       'push': false,
       'create-pr': false,
+      'merge-pr': false,
     })
-    const none = { 'commit': false, 'commit-push': false, 'push': false, 'create-pr': false }
-    expect(repositoryActionAvailability({ ...repository, dirty: false })).toEqual(none)
+    const none = { 'commit': false, 'commit-push': false, 'push': false, 'create-pr': false, 'merge-pr': false }
+    expect(repositoryActionAvailability({ ...repository, dirty: false })).toEqual({ ...none, 'merge-pr': true })
     expect(repositoryActionAvailability({ ...repository, detached: true })).toEqual(none)
     expect(repositoryActionAvailability(undefined)).toEqual(none)
   })
@@ -349,6 +355,7 @@ describe('Claude repository status UI', () => {
       'commit-push': false,
       'push': true,
       'create-pr': true,
+      'merge-pr': false,
     })
     const { ahead: _ahead, ...neverPushed } = { ...committed, upstream: false }
     expect(repositoryActionAvailability(neverPushed)).toMatchObject({
@@ -475,5 +482,21 @@ describe('Claude repository status UI', () => {
     expect(styles.diffModalTextarea).toMatchObject({ minHeight: 140, fontSize: 16, lineHeight: '24px' })
     expect(styles.diffModalStatus).toMatchObject({ fontSize: 16, lineHeight: '24px' })
     expect(modalButton).toMatchObject({ minHeight: 42, fontSize: 16, lineHeight: '24px' })
+  })
+})
+
+describe('pull request merge control', () => {
+  it('offers merge only for open non-draft pull requests', () => {
+    const render = (pullRequest: (typeof repository.pullRequest) | undefined): string => renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook({ ...projection, repository: { ...repository, pullRequest } as never })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(render(repository.pullRequest)).toContain('aria-label="Open merge options"')
+    expect(render({ ...repository.pullRequest, draft: true })).not.toContain('aria-label="Open merge options"')
+    expect(render({ ...repository.pullRequest, state: 'merged' as never })).not.toContain('aria-label="Open merge options"')
+    expect(render(undefined)).not.toContain('aria-label="Open merge options"')
   })
 })

@@ -12,7 +12,8 @@ const REMOTE_TIMEOUT_MS = 60_000
 const GENERATE_TIMEOUT_MS = 60_000
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
-export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr'
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr'
+export type RepositoryMergeMethod = 'merge' | 'squash' | 'rebase'
 
 interface CommandResult {
   readonly exitCode: number | null
@@ -58,6 +59,7 @@ export interface RepositoryActionRequest {
   readonly prBody?: string
   readonly baseBranch?: string
   readonly draft?: boolean
+  readonly mergeMethod?: RepositoryMergeMethod
 }
 
 export interface RepositoryActionResult {
@@ -206,6 +208,25 @@ export class RepositoryActionService {
         await this.#push(git, before.root, before.branch)
       } catch (error) {
         throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.')
+      }
+      this.#invalidate(before.root)
+      return { commit: before.head, pushed: true }
+    }
+    if (request.action === 'merge-pr') {
+      const method = request.mergeMethod
+      if (method !== 'merge' && method !== 'squash' && method !== 'rebase') {
+        throw new RepositoryActionError('invalid-request', 'The merge method is invalid.')
+      }
+      let gh: string
+      try {
+        gh = await this.#gh()
+      } catch (error) {
+        throw new RepositoryActionError('gh-unavailable', error instanceof Error ? error.message : 'GitHub CLI is unavailable.')
+      }
+      const merged = await this.#run(gh, ['pr', 'merge', `--${method}`], before.root, REMOTE_TIMEOUT_MS)
+      if (merged.exitCode !== 0 || merged.lossy) {
+        const reason = merged.stderr.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0).at(-1)
+        throw new RepositoryActionError('merge-failed', reason === undefined || reason.length === 0 ? 'The pull request could not be merged.' : reason)
       }
       this.#invalidate(before.root)
       return { commit: before.head, pushed: true }

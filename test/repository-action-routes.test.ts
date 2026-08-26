@@ -122,3 +122,28 @@ describe('repository action route', () => {
     expect(res.body).not.toContain('stderr')
   })
 })
+
+describe('repository merge route validation', () => {
+  it('accepts merge-pr with a known method and rejects unknown ones', async () => {
+    const ctx = context()
+    const actions = service()
+    registerRepositoryActionRoute(ctx, actions as unknown as RepositoryActionService, () => '/repo')
+
+    const ok = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash',
+    }), ok)
+    expect(ok.statusCode).toBe(200)
+    expect(actions.execute).toHaveBeenCalledWith('/repo', expect.objectContaining({
+      action: 'merge-pr', message: '', mergeMethod: 'squash',
+    }))
+
+    const bad = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'fast-forward',
+    }), bad)
+    expect(bad.statusCode).toBe(409)
+    expect(JSON.parse(bad.body)).toMatchObject({ error: 'invalid-request' })
+    expect(actions.execute).toHaveBeenCalledTimes(1)
+  })
+})
