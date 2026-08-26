@@ -176,7 +176,6 @@ export const settingSelectValue: CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  fontWeight: 550,
 }
 
 export const settingSelectChevron: CSSProperties = {
@@ -1296,6 +1295,12 @@ export const repositoryItem: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
+export const repositoryItemLabel: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+
 export const repositoryItemDot: CSSProperties = {
   width: 6,
   height: 6,
@@ -1367,30 +1372,27 @@ export const diffTriggerMuted: CSSProperties = {
 }
 
 export const repositoryAutoFix: CSSProperties = {
+  width: 26,
+  minHeight: 26,
   flex: 'none',
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  minHeight: 26,
-  padding: '0 4px',
+  justifyContent: 'center',
+  padding: 0,
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 7,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 12,
-  fontWeight: 550,
-  whiteSpace: 'nowrap',
-  userSelect: 'none',
+  font: 'inherit',
+  lineHeight: '18px',
   cursor: 'pointer',
 }
 
 export const repositoryAutoFixActive: CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-}
-
-export const repositoryAutoFixInput: CSSProperties = {
-  width: 14,
-  height: 14,
-  margin: 0,
-  accentColor: 'var(--dsw-static-blue-450)',
-  cursor: 'pointer',
+  borderColor: 'color-mix(in srgb, var(--dsw-static-blue-450) 45%, transparent)',
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
+  color: 'var(--dsw-static-blue-450)',
 }
 
 export const repositoryUpdateTrigger: CSSProperties = {

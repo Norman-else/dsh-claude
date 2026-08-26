@@ -532,10 +532,9 @@ describe('pull request feedback controls', () => {
 
   it('offers the auto-fix watcher only when a prompt can be submitted for an open PR', () => {
     const markup = render({})
-    expect(markup).toContain('title="Watch and fix"')
-    expect(markup).toContain('type="checkbox"')
-    expect(markup).not.toContain('checked=""')
-    expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('title="Watch and fix"')
+    expect(markup).toContain('role="switch" aria-checked="false" aria-label="Auto fix"')
+    expect(markup).toContain('outline:none')
+    expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('aria-label="Auto fix"')
     const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"
       useSessions={sessionsHook(false)}
@@ -543,7 +542,7 @@ describe('pull request feedback controls', () => {
       t={t}
       openDiff={vi.fn()}
     />)
-    expect(withoutSubmit).not.toContain('title="Watch and fix"')
+    expect(withoutSubmit).not.toContain('aria-label="Auto fix"')
   })
 
   it('turns failing checks into a details trigger', () => {

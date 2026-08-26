@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { IconChevronDownOutline14, Menu, Modal, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
@@ -62,7 +62,7 @@ function StatusItem({ label, tone = 'neutral' }: { label: string; tone?: 'neutra
   const toneStyle = tone === 'success'
     ? styles.repositoryItemSuccess
     : tone === 'warning' ? styles.repositoryItemWarning : tone === 'error' ? styles.repositoryItemError : {}
-  return <span style={{ ...styles.repositoryItem, ...toneStyle }}><span style={styles.repositoryItemDot} aria-hidden="true" />{label}</span>
+  return <span style={{ ...styles.repositoryItem, ...toneStyle }}><span style={styles.repositoryItemDot} aria-hidden="true" /><span style={styles.repositoryItemLabel}>{label}</span></span>
 }
 
 function PullRequestIcon({ size = 16, merged = false }: { size?: number; merged?: boolean }) {
@@ -183,6 +183,7 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
   const number = pullRequest?.number
   const checks = pullRequest?.checks
   const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
+  const [focused, setFocused] = useState(false)
   useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
   // Submitting while a turn runs would queue or steer (interrupt) it depending
   // on the user's Enter-while-busy setting, so wait for idle instead; the
@@ -214,10 +215,31 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
     setAutoFixEnabled(sessionId, next)
   }
   return (
-    <label title={t('autoFixTitle')} style={{ ...styles.repositoryAutoFix, ...(enabled ? styles.repositoryAutoFixActive : {}) }}>
-      <input type="checkbox" checked={enabled} aria-label={t('autoFixLabel')} style={styles.repositoryAutoFixInput} onChange={toggle} />
-      {t('autoFixLabel')}
-    </label>
+    <Tooltip label={`${t('autoFixLabel')} · ${t('autoFixTitle')}`} side="top" delayMs={250} maxWidth={320}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label={t('autoFixLabel')}
+        style={{
+          ...styles.repositoryAutoFix,
+          ...(enabled ? styles.repositoryAutoFixActive : {}),
+          ...(focused ? styles.heroWorktreeToggleFocused : {}),
+        }}
+        onFocus={() => { setFocused(true) }}
+        onBlur={() => { setFocused(false) }}
+        onClick={event => {
+          toggle()
+          // Mouse toggles should not leave a focus ring behind.
+          event.currentTarget.blur()
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M13.3 6.5A5.5 5.5 0 0 0 3.6 4.6M2.7 9.5a5.5 5.5 0 0 0 9.7 1.9" />
+          <path d="M13.5 2.8v3.7H9.8M2.5 13.2V9.5h3.7" />
+        </svg>
+      </button>
+    </Tooltip>
   )
 }
 
@@ -356,7 +378,7 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
   const settled = dialog?.pushed !== undefined || dialog?.conflicts !== undefined
   return (
     <>
-      <button type="button" style={styles.repositoryUpdateTrigger} title={t('diffUpdateBranchBehind', { base, count: behind })} onClick={openDialog}>↓{behind} {t('repositoryUpdateBranch')}</button>
+      <button type="button" style={styles.repositoryUpdateTrigger} aria-label={t('repositoryUpdateBranch')} title={`${t('diffUpdateBranchBehind', { base, count: behind })} · ${t('repositoryUpdateBranch')}`} onClick={openDialog}>↓{behind}</button>
       {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
       <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('repositoryUpdateBranch')} closeLabel={t('diffCancel')} description={t('diffUpdateBranchDescription', { base })} footer={
         <div style={styles.diffModalFooter}>
@@ -528,14 +550,14 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           ) : <>
             {pullRequest.checks === 'failing'
               ? <FailingChecksControl sessionId={sessionId} pullNumber={pullRequest.number} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-              : <StatusItem
+              : pullRequest.checks === 'none' ? null : <StatusItem
                   label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
-                  tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'pending' ? 'warning' : 'neutral'}
+                  tone={pullRequest.checks === 'passing' ? 'success' : 'warning'}
                 />}
-            <StatusItem
+            {pullRequest.review === 'none' ? null : <StatusItem
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
-            />
+            />}
             <AutoFixControl sessionId={sessionId} repository={repository} running={running} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />
