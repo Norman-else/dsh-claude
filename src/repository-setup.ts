@@ -10,7 +10,9 @@ const GIT_FETCH_TIMEOUT_MS = 60_000
 const MAX_PATH_CHARS = 4_096
 const MAX_BRANCH_CHARS = 512
 const LEASE_SCHEMA_VERSION = 1
-const CLEANUP_GRACE_MS = 10 * 60_000
+// ponytail: grace only needs to outlive the worktree-create -> workspace-register
+// hop (seconds); two minutes keeps deletion feeling prompt while staying safe.
+const CLEANUP_GRACE_MS = 2 * 60_000
 
 type RepositorySetupRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
 
