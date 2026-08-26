@@ -190,7 +190,7 @@ interface ActionDialogState {
 export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInjected['t']): string {
   const label = action === 'commit'
     ? t('diffCommit')
-    : action === 'commit-push' ? t('diffCommitPush') : action === 'push' ? t('diffPush') : t('diffCreatePr')
+    : action === 'commit-push' ? t('diffCommitPush') : action === 'push' ? t('diffPush') : action === 'merge-pr' ? t('diffMergePr') : t('diffCreatePr')
   return label.replace(/[….]+$/u, '')
 }
 
@@ -209,6 +209,7 @@ export function repositoryActionAvailability(
     'commit-push': committable && hasRemote,
     'push': pushable,
     'create-pr': (committable || pushable) && hasRemote && !hasOpenPullRequest,
+    'merge-pr': ready && hasOpenPullRequest && repository?.pullRequest?.draft !== true,
   }
 }
 

@@ -225,3 +225,45 @@ describe('repository action service', () => {
     expect(fake.resolveExecutable).not.toHaveBeenCalledWith('gh')
   })
 })
+
+describe('repository pull request merge', () => {
+  const head = 'a'.repeat(40)
+
+  it('merges the branch PR through gh with the selected method', async () => {
+    const fake = runtime([...previewResults(), ...previewResults(), { stdout: '' }])
+    const invalidated = vi.fn()
+    const service = new RepositoryActionService(fake, 'claude', invalidated)
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'merge-pr', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, mergeMethod: 'squash',
+    })).resolves.toEqual({ commit: head, pushed: true })
+    const command = fake.spawn.mock.calls.at(-1)?.[0]
+    expect(command).toMatchObject({ cwd: 'C:/repo', argv: ['C:/bin/gh.exe', 'pr', 'merge', '--squash'] })
+    expect(invalidated).toHaveBeenCalledWith('C:/repo')
+  })
+
+  it('rejects unknown merge methods before touching gh', async () => {
+    const fake = runtime([...previewResults(), ...previewResults()])
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'merge-pr', fingerprint: preview.fingerprint, message: '', includeUnstaged: false,
+    })).rejects.toMatchObject({ code: 'invalid-request' })
+    expect(fake.spawn.mock.calls.every(call => !call[0].argv.includes('merge'))).toBe(true)
+  })
+
+  it('surfaces the gh failure reason when the merge is blocked', async () => {
+    const fake = runtime([...previewResults(), ...previewResults(), {
+      stderr: 'X Pull request #12 is not mergeable: the base branch policy prohibits the merge.\n',
+      exitCode: 1,
+    }])
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'merge-pr', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, mergeMethod: 'merge',
+    })).rejects.toMatchObject({
+      code: 'merge-failed',
+      message: 'X Pull request #12 is not mergeable: the base branch policy prohibits the merge.',
+    })
+  })
+})

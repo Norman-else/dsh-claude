@@ -7,12 +7,13 @@ import {
   RepositoryActionError,
   type RepositoryActionKind,
   type RepositoryActionRequest,
+  type RepositoryMergeMethod,
   type RepositoryActionService,
 } from './repository-actions.ts'
 
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SESSION_ID_CHARS = 1_024
-const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr'])
+const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr'])
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -62,12 +63,17 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
   return {
     action: action as RepositoryActionKind,
     fingerprint: string(input, 'fingerprint'),
-    message: action === 'push' ? optionalString(input, 'message') ?? '' : string(input, 'message'),
+    message: action === 'push' || action === 'merge-pr' ? optionalString(input, 'message') ?? '' : string(input, 'message'),
     includeUnstaged: input.includeUnstaged,
     ...(optionalString(input, 'prTitle') === undefined ? {} : { prTitle: optionalString(input, 'prTitle')! }),
     ...(optionalString(input, 'prBody') === undefined ? {} : { prBody: optionalString(input, 'prBody')! }),
     ...(optionalString(input, 'baseBranch') === undefined ? {} : { baseBranch: optionalString(input, 'baseBranch')! }),
     ...(input.draft === undefined ? {} : typeof input.draft === 'boolean' ? { draft: input.draft } : (() => { throw new RepositoryActionError('invalid-request', 'The draft field must be a boolean.') })()),
+    ...(input.mergeMethod === undefined
+      ? {}
+      : input.mergeMethod === 'merge' || input.mergeMethod === 'squash' || input.mergeMethod === 'rebase'
+        ? { mergeMethod: input.mergeMethod as RepositoryMergeMethod }
+        : (() => { throw new RepositoryActionError('invalid-request', 'The mergeMethod field is invalid.') })()),
   }
 }
 

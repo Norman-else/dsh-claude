@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { IconChevronDownOutline14, Menu, Modal, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
+import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
@@ -161,6 +164,97 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
   )
 }
 
+export const MERGE_METHODS: readonly RepositoryMergeMethod[] = ['merge', 'squash', 'rebase']
+
+interface MergeDialogState {
+  readonly method: RepositoryMergeMethod
+  readonly loading: boolean
+  readonly submitting: boolean
+  readonly fingerprint?: string
+  readonly error?: string
+  readonly merged?: boolean
+}
+
+export function MergePullRequestControl({ sessionId, repository, t }: {
+  sessionId: string
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [dialog, setDialog] = useState<MergeDialogState>()
+  const controller = useRef<AbortController>()
+  const pullRequest = repository.pullRequest
+  useEffect(() => () => controller.current?.abort(), [])
+  // Successful merges dismiss themselves once the confirmation has been seen;
+  // the status bar flips to its merged state on the next projection refresh.
+  useEffect(() => {
+    if (dialog?.merged !== true || dialog.error !== undefined) return
+    const timer = setTimeout(() => setDialog(undefined), 1_200)
+    return () => clearTimeout(timer)
+  }, [dialog?.error, dialog?.merged])
+  if (pullRequest === undefined || pullRequest.state !== 'open' || pullRequest.draft || repository.detached === true) return null
+  const openMerge = (method: RepositoryMergeMethod): void => {
+    controller.current?.abort()
+    setMenuOpen(false)
+    setDialog({ method, loading: true, submitting: false })
+    const aborter = new AbortController()
+    controller.current = aborter
+    void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
+      setDialog({ method, loading: false, submitting: false, fingerprint: preview.fingerprint })
+    }, (error: unknown) => {
+      if (!aborter.signal.aborted) setDialog({ method, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
+    })
+  }
+  const closeDialog = (): void => {
+    if (dialog?.submitting === true) return
+    controller.current?.abort()
+    controller.current = undefined
+    setDialog(undefined)
+  }
+  const confirmMerge = (): void => {
+    if (dialog?.fingerprint === undefined || dialog.submitting) return
+    const { error: _error, ...pending } = dialog
+    setDialog({ ...pending, submitting: true })
+    void executeRepositoryAction(sessionId, {
+      action: 'merge-pr',
+      fingerprint: dialog.fingerprint,
+      message: '',
+      includeUnstaged: false,
+      mergeMethod: dialog.method,
+    }).then(() => {
+      setDialog({ ...pending, submitting: false, merged: true })
+    }, (error: unknown) => {
+      setDialog({ ...pending, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
+    })
+  }
+  const items: readonly MenuEntry[] = MERGE_METHODS.map(method => ({ id: method, label: t(`diffMerge_${method}` as ClaudeCodeSettingsKey) }))
+  const merged = dialog?.merged === true
+  return (
+    <>
+      <Menu open={menuOpen} items={items} onSelect={(id: string) => openMerge(id as RepositoryMergeMethod)} onClose={() => setMenuOpen(false)} align="end" portal anchor={
+        <button type="button" style={styles.repositoryMergeTrigger} aria-label={t('repositoryMergeMenu')} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}>{t('diffMergePr')}<IconChevronDownOutline14 /></button>
+      } />
+      {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('diffMergePr')} closeLabel={t('diffCancel')} description={t('diffMergeDescription')} footer={
+        <div style={styles.diffModalFooter}>
+          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{merged ? t('diffDone') : t('diffCancel')}</button>
+          {!merged ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.loading === true || dialog?.submitting === true || dialog?.fingerprint === undefined} onClick={confirmMerge}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+        </div>
+      }>
+        {dialog === undefined ? null : <div style={styles.diffModalBody}>
+          <div style={styles.diffModalMeta}>
+            <strong style={styles.diffModalMetaText} title={pullRequest.title}>{t('repositoryPr', { number: pullRequest.number })} → {pullRequest.baseBranch ?? t('diffPrBaseDefault')}</strong>
+            <span style={styles.diffModalFileState}>{t(`diffMerge_${dialog.method}` as ClaudeCodeSettingsKey)}</span>
+          </div>
+          <p style={styles.diffModalStatus}>{pullRequest.title}</p>
+          {merged ? <p style={styles.diffModalSuccess}>{t('diffMergeCompleted', { number: pullRequest.number })}</p> : null}
+          {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
+        </div>}
+      </Modal>
+    </>
+  )
+}
+
 export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const projection = useClaudeProjection(value => value)
@@ -219,6 +313,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
             />
+            <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />
           </>}
         </span>
       </div>
