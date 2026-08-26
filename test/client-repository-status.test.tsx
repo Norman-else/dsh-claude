@@ -255,13 +255,14 @@ describe('Claude repository status UI', () => {
 
     const hoverMarkup = renderToStaticMarkup(<PullRequestHoverCard repository={mergedRepository} t={t} />)
     expect(hoverMarkup).toContain('Merged')
+    expect(hoverMarkup).toContain('#12 → master')
     expect(hoverMarkup).toContain('color-mix(in srgb, #a78bfa 18%')
   })
 
   it('renders the Claude-style PR hover content', () => {
     const hoverMarkup = renderToStaticMarkup(<PullRequestHoverCard repository={repository} t={t} />)
     expect(hoverMarkup).toContain('role="tooltip"')
-    expect(hoverMarkup).toContain('premier-store-os #12')
+    expect(hoverMarkup).toContain('premier-store-os #12 → master')
     expect(hoverMarkup).not.toContain('Mercaso/premier-store-os #12')
     expect(hoverMarkup).toContain('Repository status')
     expect(hoverMarkup).toContain('href="https://github.com/Mercaso/premier-store-os/pull/12"')

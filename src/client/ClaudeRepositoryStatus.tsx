@@ -110,7 +110,7 @@ export function PullRequestHoverCard({ repository, t }: { repository: Repository
     <span role="tooltip" style={styles.repositoryPrHoverCard}>
       <span style={styles.repositoryPrHoverTop}>
         <span style={{ ...styles.repositoryPrStateBadge, ...(merged ? styles.repositoryPrStateBadgeMerged : {}) }}><PullRequestIcon size={13} merged={merged} />{t(`repositoryState_${pullRequest.state}` as ClaudeCodeSettingsKey)}</span>
-        <span style={styles.repositoryPrHoverRepo}>{repositoryName(repository.remote)} #{pullRequest.number}</span>
+        <span style={styles.repositoryPrHoverRepo}>{repositoryName(repository.remote)} #{pullRequest.number}{pullRequest.baseBranch === undefined ? '' : ` → ${pullRequest.baseBranch}`}</span>
         {age === undefined ? null : <span style={styles.repositoryPrHoverAge}>{age}</span>}
       </span>
       <a href={pullRequest.url} target="_blank" rel="noopener noreferrer" style={styles.repositoryPrHoverTitle}>{pullRequest.title}</a>
