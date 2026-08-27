@@ -288,6 +288,12 @@ export const zh = {
   reviewCommentsSendDraft: '请处理以上代码评论。',
   reviewCommentOldSide: '旧代码第 {line} 行',
   reviewCommentNewSide: '第 {line} 行',
+  reviewCommentOldRange: '旧代码第 {start}–{end} 行',
+  reviewCommentNewRange: '第 {start}–{end} 行',
+  diffUnmodifiedLines: '{count} 行未修改',
+  diffUnmodifiedTail: '文件末尾之前还有未修改的行',
+  diffExpandUp: '向上展开',
+  diffExpandDown: '向下展开',
 } as const
 
 export const en = {
@@ -580,6 +586,12 @@ export const en = {
   reviewCommentsSendDraft: 'Please address the attached review comments.',
   reviewCommentOldSide: 'Old line {line}',
   reviewCommentNewSide: 'Line {line}',
+  reviewCommentOldRange: 'Old lines {start}–{end}',
+  reviewCommentNewRange: 'Lines {start}–{end}',
+  diffUnmodifiedLines: '{count} unmodified lines',
+  diffUnmodifiedTail: 'More unmodified lines below',
+  diffExpandUp: 'Expand up',
+  diffExpandDown: 'Expand down',
 } as const
 
 export type ClaudeCodeSettingsKey = keyof typeof en

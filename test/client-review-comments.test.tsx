@@ -49,6 +49,7 @@ describe('Claude review comments', () => {
   it('labels chips with the file name and line', () => {
     expect(reviewCommentChipLabel({ path: 'src/client/styles.ts', line: 23 })).toBe('styles.ts:23')
     expect(reviewCommentChipLabel({ path: 'README.md', line: 1 })).toBe('README.md:1')
+    expect(reviewCommentChipLabel({ path: 'src/a.ts', line: 44, startLine: 42 })).toBe('a.ts:42-44')
   })
 
   it('renders one removable chip per pending comment with hover details', () => {

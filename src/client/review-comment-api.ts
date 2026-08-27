@@ -22,7 +22,7 @@ async function post(path: string, sessionId: string, body: Record<string, unknow
 
 export async function addReviewComment(
   sessionId: string,
-  comment: { path: string; line: number; side: ReviewCommentSide; text: string },
+  comment: { path: string; line: number; startLine?: number; side: ReviewCommentSide; text: string },
 ): Promise<ReviewComment> {
   const value = record(await post('', sessionId, comment))
   const created = record(value?.comment)

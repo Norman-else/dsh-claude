@@ -18,9 +18,20 @@ export interface ClaudeReviewCommentsProps extends ClaudeReviewCommentsInjected 
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
 }
 
-export function reviewCommentChipLabel(comment: Pick<ReviewComment, 'path' | 'line'>): string {
+export function reviewCommentChipLabel(comment: Pick<ReviewComment, 'path' | 'line' | 'startLine'>): string {
   const name = comment.path.split('/').at(-1) ?? comment.path
-  return `${name}:${comment.line}`
+  return `${name}:${comment.startLine === undefined ? comment.line : `${comment.startLine}-${comment.line}`}`
+}
+
+/** "Line 12" / "Lines 10–12", with the old-side variant when the comment sits on removed code. */
+export function commentLineLabel(
+  comment: Pick<ReviewComment, 'line' | 'side' | 'startLine'>,
+  t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string,
+): string {
+  if (comment.startLine !== undefined) {
+    return t(comment.side === 'old' ? 'reviewCommentOldRange' : 'reviewCommentNewRange', { start: comment.startLine, end: comment.line })
+  }
+  return t(comment.side === 'old' ? 'reviewCommentOldSide' : 'reviewCommentNewSide', { line: comment.line })
 }
 
 function CommentIcon() {
@@ -62,7 +73,7 @@ function CommentChip({ comment, t, onRemove }: {
       }
       content={
         <span style={styles.reviewCommentHoverCard}>
-          <span style={styles.reviewCommentHoverPath}>{comment.path} · {comment.side === 'old' ? t('reviewCommentOldSide', { line: comment.line }) : t('reviewCommentNewSide', { line: comment.line })}</span>
+          <span style={styles.reviewCommentHoverPath}>{comment.path} · {commentLineLabel(comment, t)}</span>
           <p style={styles.reviewCommentHoverText}>{comment.text}</p>
         </span>
       }

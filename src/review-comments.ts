@@ -10,7 +10,10 @@ export type ReviewCommentSide = 'old' | 'new'
 export interface ReviewComment {
   readonly id: string
   readonly path: string
+  /** Last (anchor) line of the comment. */
   readonly line: number
+  /** First line when the comment spans a range; absent for single-line comments. */
+  readonly startLine?: number
   readonly side: ReviewCommentSide
   readonly text: string
 }
@@ -33,7 +36,7 @@ function validSide(value: unknown): value is ReviewCommentSide {
 export class ReviewCommentStore {
   readonly #comments = new Map<string, ReviewComment[]>()
 
-  add(sessionId: string, input: { path: unknown; line: unknown; side: unknown; text: unknown }): ReviewComment {
+  add(sessionId: string, input: { path: unknown; line: unknown; startLine?: unknown; side: unknown; text: unknown }): ReviewComment {
     const path = typeof input.path === 'string' ? input.path.trim() : ''
     const text = typeof input.text === 'string' ? input.text.trim() : ''
     if (path.length === 0 || path.length > MAX_PATH_CHARS || /[\0\r\n]/u.test(path)) {
@@ -46,11 +49,15 @@ export class ReviewCommentStore {
       throw new ReviewCommentError('invalid-request', 'The comment line is invalid.')
     }
     if (!validSide(input.side)) throw new ReviewCommentError('invalid-request', 'The comment side is invalid.')
+    const startLine = input.startLine === undefined || input.startLine === null ? undefined : input.startLine
+    if (startLine !== undefined && (typeof startLine !== 'number' || !Number.isSafeInteger(startLine) || startLine < 1 || startLine > input.line)) {
+      throw new ReviewCommentError('invalid-request', 'The comment start line is invalid.')
+    }
     const existing = this.#comments.get(sessionId) ?? []
     if (existing.length >= MAX_COMMENTS_PER_SESSION) {
       throw new ReviewCommentError('too-many-comments', 'Too many pending review comments. Remove one before adding another.')
     }
-    const comment: ReviewComment = { id: randomUUID(), path, line: input.line, side: input.side, text }
+    const comment: ReviewComment = { id: randomUUID(), path, line: input.line, ...(startLine === undefined || startLine === input.line ? {} : { startLine }), side: input.side, text }
     this.#comments.set(sessionId, [...existing, comment])
     return comment
   }
@@ -88,11 +95,11 @@ export class ReviewCommentStore {
 /** Render drained comments as the prompt block preceding the user's message text. */
 export function formatReviewComments(comments: readonly ReviewComment[]): string {
   const lines = comments.map((comment, index) => (
-    `${index + 1}. ${comment.path}:${comment.line}${comment.side === 'old' ? ' (old side)' : ''} — ${comment.text}`
+    `${index + 1}. ${comment.path}:${comment.startLine === undefined ? comment.line : `${comment.startLine}-${comment.line}`}${comment.side === 'old' ? ' (old side)' : ''} — ${comment.text}`
   ))
   return [
     '<user-review-comments>',
-    'The user attached these code review comments to this message. Each references a file and line from the current working tree diff:',
+    'The user attached these code review comments to this message. Each references a file and line (or line range) from the current working tree diff:',
     ...lines,
     '</user-review-comments>',
   ].join('\n')
