@@ -2014,6 +2014,48 @@ export const askThinkingFull: CSSProperties = {
   wordBreak: 'break-word',
 }
 
+export const askToolRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  margin: '2px 0 6px',
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+export const askToolGlyph: CSSProperties = {
+  flex: 'none',
+  width: 14,
+  textAlign: 'center',
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const askToolGlyphDone: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary)',
+}
+
+export const askToolGlyphError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const askToolName: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontWeight: 600,
+}
+
+export const askToolSummary: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  fontFamily: 'var(--dsw-font-family-code, ui-monospace, monospace)',
+  fontSize: 11,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
 export const askStatus: CSSProperties = {
   marginRight: 'auto',
   color: 'var(--dsw-alias-label-tertiary)',

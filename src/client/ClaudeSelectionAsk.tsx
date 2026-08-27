@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MarkdownText, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { askAboutSelection } from './ask-api.ts'
+import { askAboutSelection, type AskProgress } from './ask-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 
@@ -41,6 +41,38 @@ const POPUP_WIDTH = 560
 const POPUP_ESTIMATED_HEIGHT = 320
 const TOOLBAR_WIDTH = 64
 const HIGHLIGHT_NAME = 'dsh-claude-ask'
+
+/** Answer content in arrival order, like the main window: tool steps and
+ *  text segments interleave; text deltas extend the trailing text block. */
+export type AnswerBlock =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'tool'; readonly id: string; readonly name: string; readonly summary?: string; readonly state: 'running' | 'done' | 'error' }
+
+export function appendAnswerBlock(blocks: readonly AnswerBlock[], progress: AskProgress): readonly AnswerBlock[] {
+  if (progress.type === 'text') {
+    const last = blocks.at(-1)
+    if (last?.kind === 'text') return [...blocks.slice(0, -1), { kind: 'text', text: last.text + progress.text }]
+    return [...blocks, { kind: 'text', text: progress.text }]
+  }
+  if (progress.type !== 'tool') return blocks
+  const index = blocks.findIndex(block => block.kind === 'tool' && block.id === progress.id)
+  if (index < 0) {
+    if (progress.phase === 'done') return blocks
+    return [...blocks, { kind: 'tool', id: progress.id, name: progress.name ?? 'tool', state: 'running', ...(progress.summary === undefined ? {} : { summary: progress.summary }) }]
+  }
+  const current = blocks[index] as Extract<AnswerBlock, { kind: 'tool' }>
+  const next: AnswerBlock = {
+    ...current,
+    ...(progress.name === undefined ? {} : { name: progress.name }),
+    ...(progress.summary === undefined ? {} : { summary: progress.summary }),
+    state: progress.phase === 'done' ? (progress.error === true ? 'error' : 'done') : current.state,
+  }
+  return [...blocks.slice(0, index), next, ...blocks.slice(index + 1)]
+}
+
+export function answerText(blocks: readonly AnswerBlock[]): string {
+  return blocks.filter((block): block is Extract<AnswerBlock, { kind: 'text' }> => block.kind === 'text').map(block => block.text.trim()).filter(text => text.length > 0).join('\n\n')
+}
 
 function rectOf(range: Range): SelectionRect {
   const rect = range.getBoundingClientRect()
@@ -119,7 +151,8 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const [selection, setSelection] = useState<SelectionInfo>()
   const [open, setOpen] = useState(false)
   const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState('')
+  const [blocks, setBlocks] = useState<readonly AnswerBlock[]>([])
+  const answer = answerText(blocks)
   const [thinking, setThinking] = useState('')
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [started, setStarted] = useState(false)
@@ -140,7 +173,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     setOpen(false)
     setSelection(undefined)
     setQuestion('')
-    setAnswer('')
+    setBlocks([])
     setThinking('')
     setThinkingOpen(false)
     setStarted(false)
@@ -240,7 +273,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     controller.current?.abort()
     const aborter = new AbortController()
     controller.current = aborter
-    setAnswer('')
+    setBlocks([])
     setThinking('')
     setThinkingOpen(false)
     setStarted(false)
@@ -249,7 +282,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     void askAboutSelection(selection.sessionId, { selection: selection.text, context: selection.context, question }, progress => {
       if (progress.type === 'status') setStarted(true)
       else if (progress.type === 'thinking') setThinking(current => current + progress.text)
-      else setAnswer(current => current + progress.text)
+      else setBlocks(current => appendAnswerBlock(current, progress))
     }, aborter.signal).then(() => {
       if (!aborter.signal.aborted) setPhase('done')
     }, (reason: unknown) => {
@@ -315,8 +348,18 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
                 <span style={thinkingOpen ? styles.askThinkingFull : styles.askThinkingPreview}>{thinkingOpen ? thinking : thinking.trimEnd().split('\n').filter(line => line.trim().length > 0).at(-1)}</span>
               </button>
             )}
-            {answer.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{started ? t('askThinking') : t('askStarting')}</span> : null}
-            {answer.length === 0 ? null : <MarkdownText text={answer} streaming={phase === 'answering'} />}
+            {blocks.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{started ? t('askThinking') : t('askStarting')}</span> : null}
+            {blocks.map((block, index) => block.kind === 'text'
+              ? <MarkdownText key={`text-${index}`} text={block.text} streaming={phase === 'answering' && index === blocks.length - 1} />
+              : (
+                <div key={block.id} style={styles.askToolRow}>
+                  <span style={{ ...styles.askToolGlyph, ...(block.state === 'error' ? styles.askToolGlyphError : block.state === 'done' ? styles.askToolGlyphDone : {}) }} aria-hidden="true">
+                    {block.state === 'running' ? '…' : block.state === 'done' ? '✓' : '×'}
+                  </span>
+                  <span style={styles.askToolName}>{block.name}</span>
+                  {block.summary === undefined ? null : <span style={styles.askToolSummary}>{block.summary}</span>}
+                </div>
+              ))}
             {error === undefined ? null : <p role="alert" style={styles.askError}>{error}</p>}
           </div>
           <div style={styles.askActions}>

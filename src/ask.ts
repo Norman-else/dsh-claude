@@ -6,6 +6,8 @@ const MAX_CONTEXT_CHARS = 16_000
 const MAX_QUESTION_CHARS = 2_000
 const ASK_TIMEOUT_MS = 180_000
 const MAX_STDERR_BYTES = 64 * 1024
+const MAX_TOOL_SUMMARY_CHARS = 160
+export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'] as const
 
 type AskRuntime = Pick<SubprocessRuntime, 'spawn'>
 
@@ -49,6 +51,7 @@ export function askPrompt(request: AskRequest): string {
     `Question: ${question}`,
     '',
     'Answer the question directly and concisely, in the same language as the question. Use Markdown.',
+    'Only the read-only tools Read, Grep, and Glob are available; use them when the answer depends on project code, otherwise answer from the passage.',
   ].join('\n')
 }
 
@@ -62,12 +65,15 @@ export function effortFor(thinkingMode: string | undefined): string | undefined 
 export function askArguments(preferences: AskPreferences): readonly string[] {
   const effort = effortFor(preferences.thinkingMode)
   return [
-    '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '',
+    '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     // No MCP servers: a follow-up question never needs them and connecting
     // them roughly doubles cold start.
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     ...(preferences.model === undefined || preferences.model === 'default' ? [] : ['--model', preferences.model]),
     ...(effort === undefined ? [] : ['--effort', effort]),
+    // Read-only inspection only; both flags are variadic, so they stay last
+    // and the prompt travels over stdin.
+    '--tools', ...READ_ONLY_TOOLS, '--allowedTools', ...READ_ONLY_TOOLS,
   ]
 }
 
@@ -77,31 +83,65 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 /** What one stream-json line contributes: streamed answer text, streamed
  *  thinking, or the final result (used only when no text streamed). */
+export type AskToolPhase = 'start' | 'input' | 'done'
+
 export type AskStreamEvent =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'thinking'; readonly text: string }
   | { readonly type: 'status'; readonly text: string }
+  | { readonly type: 'tool'; readonly id: string; readonly phase: AskToolPhase; readonly name?: string; readonly summary?: string; readonly error?: boolean }
   | { readonly type: 'result'; readonly text: string }
 
-export function eventOfStreamLine(line: string): AskStreamEvent | undefined {
+/** One-line description of a tool call, mirroring the main window's step titles. */
+export function toolSummary(input: unknown): string | undefined {
+  const fields = record(input)
+  if (fields === undefined) return undefined
+  const candidate = [fields.command, fields.pattern, fields.file_path, fields.path, fields.query].find(value => typeof value === 'string' && value.length > 0)
+  const text = typeof candidate === 'string' ? candidate : JSON.stringify(fields)
+  return text.replaceAll(/\s+/gu, ' ').trim().slice(0, MAX_TOOL_SUMMARY_CHARS)
+}
+
+export function eventsOfStreamLine(line: string): readonly AskStreamEvent[] {
   let parsed: Record<string, unknown> | undefined
   try {
     parsed = record(JSON.parse(line))
   } catch {
-    return undefined
+    return []
   }
-  if (parsed === undefined) return undefined
-  if (parsed.type === 'system' && parsed.subtype === 'init') return { type: 'status', text: 'ready' }
+  if (parsed === undefined) return []
+  if (parsed.type === 'system' && parsed.subtype === 'init') return [{ type: 'status', text: 'ready' }]
   if (parsed.type === 'stream_event') {
     const event = record(parsed.event)
+    if (event?.type === 'content_block_start') {
+      const block = record(event.content_block)
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+        return [{ type: 'tool', id: block.id, phase: 'start', name: block.name }]
+      }
+      return []
+    }
     const delta = record(event?.delta)
-    if (event?.type !== 'content_block_delta' || delta === undefined) return undefined
-    if (delta.type === 'text_delta' && typeof delta.text === 'string') return { type: 'text', text: delta.text }
-    if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') return { type: 'thinking', text: delta.thinking }
-    return undefined
+    if (event?.type !== 'content_block_delta' || delta === undefined) return []
+    if (delta.type === 'text_delta' && typeof delta.text === 'string') return [{ type: 'text', text: delta.text }]
+    if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') return [{ type: 'thinking', text: delta.thinking }]
+    return []
   }
-  if (parsed.type === 'result' && typeof parsed.result === 'string') return { type: 'result', text: parsed.result }
-  return undefined
+  if (parsed.type === 'assistant' || parsed.type === 'user') {
+    const content = record(parsed.message)?.content
+    if (!Array.isArray(content)) return []
+    const events: AskStreamEvent[] = []
+    for (const item of content) {
+      const block = record(item)
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+        const summary = toolSummary(block.input)
+        events.push({ type: 'tool', id: block.id, phase: 'input', name: block.name, ...(summary === undefined ? {} : { summary }) })
+      } else if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+        events.push({ type: 'tool', id: block.tool_use_id, phase: 'done', ...(block.is_error === true ? { error: true } : {}) })
+      }
+    }
+    return events
+  }
+  if (parsed.type === 'result' && typeof parsed.result === 'string') return [{ type: 'result', text: parsed.result }]
+  return []
 }
 
 export type AskProgressEvent = Exclude<AskStreamEvent, { type: 'result' }>
@@ -139,14 +179,15 @@ export class AskService {
     let emitted = false
     let result: string | undefined
     const consume = (line: string): void => {
-      const event = eventOfStreamLine(line)
-      if (event === undefined || event.text.length === 0) return
-      if (event.type === 'result') {
-        result = event.text
-        return
+      for (const event of eventsOfStreamLine(line)) {
+        if (event.type === 'result') {
+          result = event.text
+          continue
+        }
+        if (event.type !== 'tool' && event.text.length === 0) continue
+        if (event.type === 'text') emitted = true
+        onEvent(event)
       }
-      if (event.type === 'text') emitted = true
-      onEvent(event)
     }
     for await (const chunk of stdout) {
       buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk as Buffer)

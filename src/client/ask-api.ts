@@ -6,14 +6,24 @@ export interface AskSelectionRequest {
   readonly question: string
 }
 
+export interface AskToolEvent {
+  readonly type: 'tool'
+  readonly id: string
+  readonly phase: 'start' | 'input' | 'done'
+  readonly name?: string
+  readonly summary?: string
+  readonly error?: boolean
+}
+
 export type AskEvent =
   | { readonly type: 'delta'; readonly text: string }
   | { readonly type: 'thinking'; readonly text: string }
   | { readonly type: 'status'; readonly text: string }
+  | AskToolEvent
   | { readonly type: 'done' }
   | { readonly type: 'error'; readonly message: string }
 
-export type AskProgress = { readonly type: 'text' | 'thinking' | 'status'; readonly text: string }
+export type AskProgress = { readonly type: 'text' | 'thinking' | 'status'; readonly text: string } | AskToolEvent
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -24,6 +34,16 @@ export function parseAskEvent(line: string): AskEvent {
   if (event?.type === 'delta' && typeof event.text === 'string') return { type: 'delta', text: event.text }
   if (event?.type === 'thinking' && typeof event.text === 'string') return { type: 'thinking', text: event.text }
   if (event?.type === 'status' && typeof event.text === 'string') return { type: 'status', text: event.text }
+  if (event?.type === 'tool' && typeof event.id === 'string' && (event.phase === 'start' || event.phase === 'input' || event.phase === 'done')) {
+    return {
+      type: 'tool',
+      id: event.id,
+      phase: event.phase,
+      ...(typeof event.name === 'string' ? { name: event.name } : {}),
+      ...(typeof event.summary === 'string' ? { summary: event.summary } : {}),
+      ...(event.error === true ? { error: true } : {}),
+    }
+  }
   if (event?.type === 'done') return { type: 'done' }
   if (event?.type === 'error') return { type: 'error', message: typeof event.message === 'string' ? event.message : 'The question could not be answered.' }
   throw new Error('Invalid ask stream event.')
@@ -58,6 +78,7 @@ export async function askAboutSelection(
     if (event.type === 'delta') onProgress({ type: 'text', text: event.text })
     else if (event.type === 'thinking') onProgress({ type: 'thinking', text: event.text })
     else if (event.type === 'status') onProgress({ type: 'status', text: event.text })
+    else if (event.type === 'tool') onProgress(event)
     else if (event.type === 'done') finished = true
     else throw new Error(event.message)
   }

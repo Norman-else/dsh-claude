@@ -1,15 +1,32 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { parseAskEvent } from '../src/client/ask-api.ts'
-import { ClaudeSelectionAsk, popupPosition, toolbarPosition } from '../src/client/ClaudeSelectionAsk.tsx'
+import { ClaudeSelectionAsk, answerText, appendAnswerBlock, popupPosition, toolbarPosition } from '../src/client/ClaudeSelectionAsk.tsx'
 
 describe('selection ask client', () => {
   it('parses answer stream events', () => {
     expect(parseAskEvent('{"type":"delta","text":"Hi"}')).toEqual({ type: 'delta', text: 'Hi' })
     expect(parseAskEvent('{"type":"thinking","text":"hmm"}')).toEqual({ type: 'thinking', text: 'hmm' })
+    expect(parseAskEvent('{"type":"tool","id":"t1","phase":"input","name":"Read","summary":"a.ts"}')).toEqual({ type: 'tool', id: 't1', phase: 'input', name: 'Read', summary: 'a.ts' })
     expect(parseAskEvent('{"type":"done"}')).toEqual({ type: 'done' })
     expect(parseAskEvent('{"type":"error","message":"nope"}')).toEqual({ type: 'error', message: 'nope' })
     expect(() => parseAskEvent('{"type":"mystery"}')).toThrow('Invalid ask stream event')
+  })
+
+  it('interleaves tool steps and text like the main window', () => {
+    let blocks = appendAnswerBlock([], { type: 'text', text: 'Let me check. ' })
+    blocks = appendAnswerBlock(blocks, { type: 'tool', id: 't1', phase: 'start', name: 'Grep' })
+    blocks = appendAnswerBlock(blocks, { type: 'tool', id: 't1', phase: 'input', summary: 'loadURL' })
+    blocks = appendAnswerBlock(blocks, { type: 'tool', id: 't1', phase: 'done' })
+    blocks = appendAnswerBlock(blocks, { type: 'text', text: 'Because ' })
+    blocks = appendAnswerBlock(blocks, { type: 'text', text: 'of X.' })
+    blocks = appendAnswerBlock(blocks, { type: 'tool', id: 'ghost', phase: 'done' })
+    expect(blocks).toEqual([
+      { kind: 'text', text: 'Let me check. ' },
+      { kind: 'tool', id: 't1', name: 'Grep', summary: 'loadURL', state: 'done' },
+      { kind: 'text', text: 'Because of X.' },
+    ])
+    expect(answerText(blocks)).toBe('Let me check.\n\nBecause of X.')
   })
 
   it('keeps the toolbar and popup inside the viewport', () => {
