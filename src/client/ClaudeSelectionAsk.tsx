@@ -146,11 +146,13 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
       if (openRef.current) close()
     }
     document.addEventListener('selectionchange', schedule)
+    document.addEventListener('mouseup', schedule)
     document.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onPointerDown)
     return () => {
       if (timer !== undefined) clearTimeout(timer)
       document.removeEventListener('selectionchange', schedule)
+      document.removeEventListener('mouseup', schedule)
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onPointerDown)
     }
@@ -162,7 +164,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     return () => clearTimeout(timer)
   }, [copied])
 
-  if (selection === undefined) return null
+  if (selection === undefined) return <span data-dsh-claude-selection-ask="armed" hidden />
 
   const copy = (text: string, what: 'selection' | 'answer'): void => {
     void navigator.clipboard.writeText(text).then(() => { setCopied(what) }, () => undefined)

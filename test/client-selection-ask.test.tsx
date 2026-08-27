@@ -20,6 +20,6 @@ describe('selection ask client', () => {
 
   it('renders nothing until a selection inside an assistant reply exists', () => {
     const markup = renderToStaticMarkup(<ClaudeSelectionAsk t={((key: string) => key) as never} currentSessionId={() => 'session'} ownsSession={() => true} />)
-    expect(markup).toBe('')
+    expect(markup).toBe('<span data-dsh-claude-selection-ask="armed" hidden=""></span>')
   })
 })

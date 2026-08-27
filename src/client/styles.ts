@@ -1853,6 +1853,8 @@ const askSurfaceShadow = 'var(--dsw-shadow-lv3, 0 8px 24px color-mix(in srgb, #0
 export const askToolbar: CSSProperties = {
   position: 'fixed',
   zIndex: 2000,
+  // The Host overlay layer is pointer-events: none; opt this surface back in.
+  pointerEvents: 'auto',
   display: 'inline-flex',
   alignItems: 'center',
   gap: 2,
@@ -1867,6 +1869,8 @@ export const askToolbar: CSSProperties = {
 export const askPopup: CSSProperties = {
   position: 'fixed',
   zIndex: 2000,
+  // The Host overlay layer is pointer-events: none; opt this surface back in.
+  pointerEvents: 'auto',
   boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
