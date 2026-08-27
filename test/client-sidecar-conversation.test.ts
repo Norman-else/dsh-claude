@@ -8,10 +8,9 @@ import type {
   ConversationTimelineSnapshot,
   ConversationViewDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ClaudeActivityEvent } from '../src/events.ts'
+import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../src/events.ts'
+import type { ClaudeActivityChatData } from '../src/client/conversation-sidecar.ts'
 import {
-  activityRowsForStep,
-  activityRowsForTurn,
   claudeActiveTasksDefinition,
   claudeActivityStepDefinition,
   claudeTurnDefinition,
@@ -46,6 +45,19 @@ const nestedDone: ClaudeActivityEvent = { ...nestedStarted, ordinal: 3, phase: '
 const taskDone: ClaudeActivityEvent = {
   turn: 2, step: 1, ordinal: 4, kind: 'tool-result', phase: 'completed',
   toolUseId: 'task-1', title: 'Tool completed',
+}
+
+/** `transcriptItemsForStep` is the only path the chat actually renders, so
+ *  lifecycle folding has to be asserted through it rather than through a
+ *  helper the UI never calls. */
+function lifecycleRows(
+  activities: readonly ClaudeActivityEvent[],
+  turn: number,
+  step: number,
+  tasks: readonly ClaudeTaskInfo[] = [],
+): readonly ClaudeActivityChatData[] {
+  return transcriptItemsForStep(activities, turn, step, tasks)
+    .flatMap(item => item.kind === 'activity' ? [item.row] : [])
 }
 
 let loadedConversationNodeAssembler: typeof ConversationNodeAssemblerType | undefined
@@ -194,20 +206,75 @@ async function projectConversation(events: readonly unknown[]): Promise<TestProj
 }
 
 describe('Claude sidecar conversation projection', () => {
-  it('folds task and nested subagent lifecycle within one turn', () => {
-    const rows = activityRowsForTurn([taskCall, nestedStarted, nestedDone, taskDone], 2)
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({
-      running: false,
-      activity: { title: 'Tool completed', toolName: 'Task' },
-      subcalls: [{ toolUseId: 'sub-1', phase: 'completed', toolName: 'Read' }],
+  it('folds a task call, its nested subagent calls, and its result into one group entry', () => {
+    const items = transcriptItemsForStep([taskCall, nestedStarted, nestedDone, taskDone], 2, 1)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      kind: 'tools',
+      tools: [{
+        toolUseId: 'task-1',
+        toolName: 'Task',
+        phase: 'completed',
+        subcalls: [{ toolUseId: 'sub-1', phase: 'completed', toolName: 'Read' }],
+      }],
     })
-    expect(activityRowsForTurn([taskCall], 1)).toEqual([])
-    expect(activityRowsForStep([
+    expect(transcriptItemsForStep([taskCall], 1, 1)).toEqual([])
+    expect(transcriptItemsForStep([
       taskCall,
       { ...taskCall, step: 2, ordinal: 2, toolUseId: 'task-2' },
       { ...taskCall, turn: 3, ordinal: 3, toolUseId: 'task-3' },
-    ], 2, 1)).toEqual([expect.objectContaining({ activity: taskCall })])
+    ], 2, 1)).toEqual([expect.objectContaining({
+      kind: 'tools',
+      tools: [expect.objectContaining({ toolUseId: 'task-1' })],
+    })])
+  })
+
+  /** Regression: the CLI emits one task_progress per tool a subagent runs. The
+   *  transcript used to fold activity one event at a time, so each of those
+   *  pings became its own row that never stopped pulsing. */
+  it('keeps a subagent to one live row no matter how many progress pings it sends', () => {
+    const dispatch: ClaudeActivityEvent = {
+      turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
+      toolUseId: 'agent-call-1', toolName: 'Agent',
+      detail: JSON.stringify({ description: 'Find model picker ordering' }),
+    }
+    const lifecycle: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 2, kind: 'subagent', phase: 'started', taskId: 'agent-1', title: 'Find model picker ordering' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'subagent', phase: 'updated', taskId: 'agent-1', title: 'Running List DeepSeek packages' },
+      { turn: 2, step: 1, ordinal: 4, kind: 'subagent', phase: 'updated', taskId: 'agent-1', title: 'Searching for LlmProviderInfo' },
+      { turn: 2, step: 1, ordinal: 5, kind: 'subagent', phase: 'updated', taskId: 'agent-1', title: 'Running Show symlink targets' },
+    ]
+    const running: ClaudeTaskInfo[] = [
+      { taskId: 'agent-1', description: 'Find model picker ordering', status: 'running', subagentType: 'Explore' },
+    ]
+
+    // One row, showing the newest ping rather than a stack of stale ones.
+    expect(lifecycleRows([dispatch, ...lifecycle], 2, 1, running)).toEqual([expect.objectContaining({
+      running: true,
+      activity: expect.objectContaining({ taskId: 'agent-1', title: 'Running Show symlink targets' }),
+    })])
+
+    // ...and it settles once, instead of leaving four permanent checkmarks.
+    expect(lifecycleRows([dispatch, ...lifecycle], 2, 1, [
+      { ...running[0]!, status: 'completed' },
+    ])).toEqual([expect.objectContaining({
+      running: false,
+      activity: expect.objectContaining({ phase: 'completed', title: 'Show symlink targets' }),
+    })])
+  })
+
+  /** The row belongs where the work first appeared, even when later pings
+   *  arrive after an unrelated tool group has opened. */
+  it('anchors a folded lifecycle row at its first appearance', () => {
+    const items = transcriptItemsForStep([
+      { turn: 2, step: 1, ordinal: 1, kind: 'subagent', phase: 'started', taskId: 'agent-1', title: 'Explore code' },
+      { turn: 2, step: 1, ordinal: 2, kind: 'text', text: 'Meanwhile:' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'tool-call', phase: 'started', toolUseId: 'read-1', toolName: 'Read', detail: JSON.stringify({ file_path: 'a.ts' }) },
+      { turn: 2, step: 1, ordinal: 4, kind: 'subagent', phase: 'updated', taskId: 'agent-1', title: 'Running grep' },
+    ], 2, 1, [
+      { taskId: 'agent-1', description: 'Explore code', status: 'running', subagentType: 'Explore' },
+    ])
+    expect(items.map(item => item.kind)).toEqual(['activity', 'text', 'tools'])
   })
 
   it('interleaves text and consecutive folded tool groups by shared ordinal', () => {
@@ -551,7 +618,7 @@ describe('Claude sidecar conversation projection', () => {
       summary: 'Inspect files',
     }
 
-    expect(activityRowsForStep([started, completed], 2, 1, [
+    expect(lifecycleRows([started, completed], 2, 1, [
       { taskId: 'background-1', description: 'Inspect files', status: 'completed', backgrounded: true },
     ])).toEqual([expect.objectContaining({
       running: false,
@@ -569,16 +636,16 @@ describe('Claude sidecar conversation projection', () => {
       taskId: 'subagent-1',
       title: 'Running inspect files',
     }
-    expect(activityRowsForStep([progress], 2, 1, [
+    expect(lifecycleRows([progress], 2, 1, [
       { taskId: 'subagent-1', description: 'inspect files', status: 'completed', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({
       running: false,
       activity: expect.objectContaining({ phase: 'completed', title: 'inspect files' }),
     })])
-    expect(activityRowsForStep([progress], 2, 1, [
+    expect(lifecycleRows([progress], 2, 1, [
       { taskId: 'subagent-1', description: 'inspect files', status: 'running', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({ running: true })])
-    expect(activityRowsForStep([progress], 2, 1, [
+    expect(lifecycleRows([progress], 2, 1, [
       { taskId: 'subagent-1', description: 'inspect files', status: 'failed', subagentType: 'Explore' },
     ])).toEqual([expect.objectContaining({
       running: false,

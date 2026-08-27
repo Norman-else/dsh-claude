@@ -19,11 +19,11 @@ import type { ClaudeUsage } from './events.ts'
 import { formatReviewComments, type ReviewComment } from './review-comments.ts'
 
 const MODELS = [
-  { id: 'default', name: 'Default (recommended)', description: 'Use Claude Code’s recommended default model.' },
-  { id: 'opus[1m]', name: 'Opus (1M context)', description: 'Use Opus with a 1M-token context window.', contextWindow: 1_000_000 },
-  { id: 'fable', name: 'Fable', description: 'Use Fable, Claude Code’s most capable coding model.' },
-  { id: 'sonnet', name: 'Sonnet', description: 'Use Sonnet for efficient routine coding work.' },
-  { id: 'haiku', name: 'Haiku', description: 'Use Haiku for fast, lightweight tasks.' },
+  { id: 'default', name: 'Default (recommended)', description: '' },
+  { id: 'opus[1m]', name: 'Opus (1M context)', description: '', contextWindow: 1_000_000 },
+  { id: 'fable', name: 'Fable', description: '' },
+  { id: 'sonnet', name: 'Sonnet', description: '' },
+  { id: 'haiku', name: 'Haiku', description: '' },
 ] as const
 
 const THINKING_MODES = [

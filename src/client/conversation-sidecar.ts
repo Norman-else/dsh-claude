@@ -3,7 +3,7 @@ import type {
   ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo } from '../events.ts'
+import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus } from '../events.ts'
 import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
 import { isProjectedTaskActivity } from './task-projection.ts'
 
@@ -131,35 +131,69 @@ function subcallOf(value: ClaudeActivityEvent): ClaudeSubcall | undefined {
   }
 }
 
-/** Fold raw sidecar activity into the same lifecycle cards the old event projection rendered. */
-function activityRows(
+/** Row identity for lifecycle folding. A subagent reports progress once per
+ *  tool it runs, so its dispatch, every one of those pings, and its terminal
+ *  notification all address the SAME row — they are one piece of work being
+ *  re-described, not a queue of separate steps.
+ *
+ *  `known` reports whether a row already exists under a candidate id, which is
+ *  what lets a Task tool-result land on the row its tool-call opened. */
+function foldKey(
+  value: ClaudeActivityEvent,
+  known: (id: string) => boolean,
+): string | undefined {
+  const taskCallId = value.toolUseId === undefined ? undefined : `task-${value.toolUseId}`
+  const updatesExistingTask = value.kind === 'tool-result'
+    && taskCallId !== undefined
+    && known(taskCallId)
+  if (!presentable(value) && !updatesExistingTask) return undefined
+  if ((isTaskActivity(value) || updatesExistingTask) && taskCallId !== undefined) return taskCallId
+  if (value.kind === 'subagent' && value.parentToolUseId !== undefined) return `task-${value.parentToolUseId}`
+  if (value.kind === 'subagent' && value.taskId !== undefined) return `subagent-task-${value.taskId}`
+  if (value.kind === 'subagent' && value.toolUseId !== undefined) return `call-${value.toolUseId}`
+  return `act-${value.turn}-${value.step}-${value.ordinal}`
+}
+
+/** The task snapshot is authoritative over the lifecycle stream: a row whose
+ *  task already settled must not keep pulsing just because the last ping it
+ *  received said 'updated'. */
+function settled(
+  row: ClaudeActivityChatData,
+  taskStatus: ReadonlyMap<string, ClaudeTaskStatus>,
+): ClaudeActivityChatData {
+  const taskId = row.activity.taskId
+  const status = taskId === undefined ? undefined : taskStatus.get(taskId)
+  if (status === undefined || status === 'running') return row
+  const failed = status === 'failed' || status === 'stopped' || status === 'killed'
+  const settledTitle = row.activity.title?.replace(/^Running\s+/u, '')
+  return {
+    ...row,
+    running: false,
+    activity: {
+      ...row.activity,
+      phase: failed ? 'failed' : 'completed',
+      ...(settledTitle === undefined ? {} : { title: settledTitle }),
+      ...(failed ? { isError: true } : {}),
+    },
+  }
+}
+
+/** Fold raw sidecar activity into the same lifecycle cards the old event
+ *  projection rendered, keyed so a caller that interleaves these rows with
+ *  other transcript items can look one up instead of re-folding per activity. */
+function foldedRows(
   activities: readonly ClaudeActivityEvent[],
-  accepts: (activity: ClaudeActivityEvent) => boolean,
-  tasks: readonly ClaudeTaskInfo[] = [],
-): readonly ClaudeActivityChatData[] {
-  const rows: ClaudeActivityChatData[] = []
-  const byId = new Map<string, number>()
+  tasks: readonly ClaudeTaskInfo[],
+): ReadonlyMap<string, ClaudeActivityChatData> {
+  const rows = new Map<string, ClaudeActivityChatData>()
   for (const value of activities) {
-    if (!accepts(value) || !isProjectedTaskActivity(value, tasks)) continue
-    const existingTaskId = value.toolUseId === undefined ? undefined : `task-${value.toolUseId}`
-    const updatesExistingTask = value.kind === 'tool-result'
-      && existingTaskId !== undefined
-      && byId.has(existingTaskId)
-    if (!presentable(value) && !updatesExistingTask) continue
-    let id: string
-    if ((isTaskActivity(value) || updatesExistingTask) && existingTaskId !== undefined) id = existingTaskId
-    else if (value.kind === 'subagent' && value.parentToolUseId !== undefined) id = `task-${value.parentToolUseId}`
-    else if (value.kind === 'subagent' && value.taskId !== undefined) id = `subagent-task-${value.taskId}`
-    else if (value.kind === 'subagent' && value.toolUseId !== undefined) id = `call-${value.toolUseId}`
-    else id = `act-${value.turn}-${value.step}-${value.ordinal}`
-    const index = byId.get(id)
-    if (index === undefined) {
-      byId.set(id, rows.length)
-      rows.push({ activity: value, running: running(value), subcalls: [] })
+    const id = foldKey(value, candidate => rows.has(candidate))
+    if (id === undefined) continue
+    const previous = rows.get(id)
+    if (previous === undefined) {
+      rows.set(id, { activity: value, running: running(value), subcalls: [] })
       continue
     }
-    const previous = rows[index]
-    if (previous === undefined) continue
     if (value.kind === 'subagent' && value.parentToolUseId !== undefined) {
       const nested = subcallOf(value)
       if (nested === undefined) continue
@@ -167,10 +201,10 @@ function activityRows(
       const subcalls = nestedIndex === -1
         ? [...previous.subcalls, nested]
         : previous.subcalls.map((item, position) => position === nestedIndex ? { ...item, ...nested } : item)
-      rows[index] = { ...previous, subcalls }
+      rows.set(id, { ...previous, subcalls })
       continue
     }
-    rows[index] = {
+    rows.set(id, {
       activity: {
         ...value,
         ...(value.toolName === undefined && previous.activity.toolName !== undefined
@@ -179,43 +213,10 @@ function activityRows(
       },
       running: running(value),
       subcalls: previous.subcalls,
-    }
+    })
   }
   const taskStatus = new Map(tasks.map(task => [task.taskId, task.status]))
-  return rows.map(row => {
-    const taskId = row.activity.taskId
-    const status = taskId === undefined ? undefined : taskStatus.get(taskId)
-    if (status === undefined || status === 'running') return row
-    const failed = status === 'failed' || status === 'stopped' || status === 'killed'
-    const settledTitle = row.activity.title?.replace(/^Running\s+/u, '')
-    return {
-      ...row,
-      running: false,
-      activity: {
-        ...row.activity,
-        phase: failed ? 'failed' : 'completed',
-        ...(settledTitle === undefined ? {} : { title: settledTitle }),
-        ...(failed ? { isError: true } : {}),
-      },
-    }
-  })
-}
-
-export function activityRowsForTurn(
-  activities: readonly ClaudeActivityEvent[],
-  turn: number,
-  tasks: readonly ClaudeTaskInfo[] = [],
-): readonly ClaudeActivityChatData[] {
-  return activityRows(activities, activity => activity.turn === turn, tasks)
-}
-
-export function activityRowsForStep(
-  activities: readonly ClaudeActivityEvent[],
-  turn: number,
-  step: number,
-  tasks: readonly ClaudeTaskInfo[] = [],
-): readonly ClaudeActivityChatData[] {
-  return activityRows(activities, activity => activity.turn === turn && activity.step === step, tasks)
+  return new Map([...rows].map(([id, row]) => [id, settled(row, taskStatus)]))
 }
 
 function inputRecord(detail: string | undefined): Record<string, unknown> | undefined {
@@ -337,9 +338,16 @@ export function transcriptItemsForStep(
   tasks: readonly ClaudeTaskInfo[] = [],
 ): readonly ClaudeTranscriptItem[] {
   const ordered = activities
-    .filter(activity => activity.turn === turn && activity.step === step)
+    .filter(activity => activity.turn === turn
+      && activity.step === step
+      && isProjectedTaskActivity(activity, tasks))
     .slice()
     .sort((left, right) => left.ordinal - right.ordinal)
+  // Fold the whole step at once. Folding per activity would give every task
+  // progress ping its own private row, so a single subagent would paint one
+  // permanently-running line per tool it happened to use.
+  const rows = foldedRows(ordered, tasks)
+  const placed = new Set<string>()
   const items: ClaudeTranscriptItem[] = []
   let group: {
     ordinal: number
@@ -347,6 +355,16 @@ export function transcriptItemsForStep(
     byId: Map<string, number>
     trailingActivities: ClaudeActivityEvent[]
   } | undefined
+  /** Emit an activity's folded row where it first appears; later pings that
+   *  fold onto the same row update it in place rather than stacking up. */
+  const emitRow = (activity: ClaudeActivityEvent): void => {
+    const id = foldKey(activity, candidate => rows.has(candidate))
+    if (id === undefined || placed.has(id)) return
+    const row = rows.get(id)
+    if (row === undefined) return
+    placed.add(id)
+    items.push({ kind: 'activity', ordinal: activity.ordinal, row })
+  }
   const flushGroup = (): void => {
     if (group === undefined || group.tools.length === 0) return
     const current = group
@@ -361,13 +379,9 @@ export function transcriptItemsForStep(
       ...(diffs.length === 0 ? {} : { additions, deletions, files }),
     })
     group = undefined
-    for (const activity of current.trailingActivities) {
-      const row = activityRows([activity], () => true, tasks)[0]
-      if (row !== undefined) items.push({ kind: 'activity', ordinal: activity.ordinal, row })
-    }
+    for (const activity of current.trailingActivities) emitRow(activity)
   }
   for (const activity of ordered) {
-    if (!isProjectedTaskActivity(activity, tasks)) continue
     if (activity.kind === 'text') {
       flushGroup()
       if (activity.text !== undefined && activity.text.length > 0) {
@@ -437,8 +451,7 @@ export function transcriptItemsForStep(
       group.trailingActivities.push(activity)
       continue
     }
-    const row = activityRows([activity], () => true, tasks)[0]
-    if (row !== undefined) items.push({ kind: 'activity', ordinal: activity.ordinal, row })
+    emitRow(activity)
   }
   flushGroup()
   return items
