@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MarkdownText, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { askAboutSelection } from './ask-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -26,6 +26,8 @@ interface SelectionInfo {
   readonly text: string
   readonly context: string
   readonly rect: SelectionRect
+  /** Live range: re-measured on scroll and painted via the Highlight API. */
+  readonly range: Range
 }
 
 // Chat rows carry data-chat-flow-kind; Claude output renders under plugin
@@ -36,7 +38,14 @@ const USER_KIND = 'user'
 const MAX_SELECTION_CHARS = 8_000
 const MAX_CONTEXT_CHARS = 16_000
 const POPUP_WIDTH = 560
+const POPUP_ESTIMATED_HEIGHT = 320
 const TOOLBAR_WIDTH = 64
+const HIGHLIGHT_NAME = 'dsh-claude-ask'
+
+function rectOf(range: Range): SelectionRect {
+  const rect = range.getBoundingClientRect()
+  return { top: rect.top, left: rect.left, width: rect.width, bottom: rect.bottom }
+}
 
 /** Read the current selection when it sits inside an assistant reply. */
 export function selectionInfoOf(selection: Selection | null, sessionId: string | undefined): Omit<SelectionInfo, 'sessionId'> | undefined {
@@ -53,11 +62,11 @@ export function selectionInfoOf(selection: Selection | null, sessionId: string |
   if (host === null || host.dataset.chatFlowKind === USER_KIND) return undefined
   const text = selection.toString().trim()
   if (text.length === 0) return undefined
-  const rect = range.getBoundingClientRect()
   return {
     text: text.slice(0, MAX_SELECTION_CHARS),
     context: (host.textContent ?? '').trim().slice(0, MAX_CONTEXT_CHARS),
-    rect: { top: rect.top, left: rect.left, width: rect.width, bottom: rect.bottom },
+    rect: rectOf(range),
+    range: range.cloneRange(),
   }
 }
 
@@ -68,10 +77,13 @@ export function toolbarPosition(rect: SelectionRect, viewportWidth: number): { t
   }
 }
 
-export function popupPosition(rect: SelectionRect, viewportWidth: number, viewportHeight: number): { top: number; left: number; width: number } {
+/** Below the selection when it fits, else above it; never over the text unless
+ *  neither side has room. */
+export function popupPosition(rect: SelectionRect, viewportWidth: number, viewportHeight: number, height = POPUP_ESTIMATED_HEIGHT): { top: number; left: number; width: number } {
   const width = Math.min(POPUP_WIDTH, viewportWidth - 16)
   const below = rect.bottom + 8
-  const top = below + 320 <= viewportHeight ? below : Math.max(8, Math.min(below, viewportHeight - 328))
+  const above = rect.top - 8 - height
+  const top = below + height <= viewportHeight - 8 ? below : above >= 8 ? above : Math.max(8, Math.min(below, viewportHeight - height - 8))
   return { top, left: Math.min(Math.max(8, rect.left), Math.max(8, viewportWidth - width - 8)), width }
 }
 
@@ -111,6 +123,8 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const [phase, setPhase] = useState<'idle' | 'answering' | 'done'>('idle')
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState<'selection' | 'answer'>()
+  const [rect, setRect] = useState<SelectionRect>()
+  const [popupHeight, setPopupHeight] = useState(POPUP_ESTIMATED_HEIGHT)
   const popupRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const controller = useRef<AbortController>()
@@ -167,13 +181,50 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     }
   }, [close, currentSessionId, ownsSession])
   useEffect(() => () => controller.current?.abort(), [])
+  // Follow the text: re-measure the live range on scroll and resize.
+  useEffect(() => {
+    setRect(selection?.rect)
+    if (selection === undefined) return
+    let frame: number | undefined
+    const reposition = (): void => {
+      if (frame !== undefined) return
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        const next = rectOf(selection.range)
+        if (next.width === 0 && next.bottom === next.top) return
+        setRect(next)
+      })
+    }
+    document.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      document.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [selection])
+  // Keep the asked-about text visibly marked while the popup owns focus. The
+  // Highlight API paints without touching the Host's DOM.
+  useEffect(() => {
+    if (!open || selection === undefined) return
+    const runtime = globalThis as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (range: Range) => unknown }
+    const registry = runtime.CSS?.highlights
+    if (registry === undefined || runtime.Highlight === undefined) return
+    registry.set(HIGHLIGHT_NAME, new runtime.Highlight(selection.range))
+    return () => { registry.delete(HIGHLIGHT_NAME) }
+  }, [open, selection])
+  useLayoutEffect(() => {
+    const element = popupRef.current
+    if (!open || element === null) return
+    setPopupHeight(element.offsetHeight)
+  }, [open, answer, error, phase])
   useEffect(() => {
     if (copied === undefined) return
     const timer = setTimeout(() => setCopied(undefined), 1_200)
     return () => clearTimeout(timer)
   }, [copied])
 
-  if (selection === undefined) return <span data-dsh-claude-selection-ask="armed" hidden />
+  if (selection === undefined || rect === undefined) return <span data-dsh-claude-selection-ask="armed" hidden />
 
   const copy = (text: string, what: 'selection' | 'answer'): void => {
     void navigator.clipboard.writeText(text).then(() => { setCopied(what) }, () => undefined)
@@ -200,7 +251,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
 
   if (!open) {
-    const position = toolbarPosition(selection.rect, viewportWidth)
+    const position = toolbarPosition(rect, viewportWidth)
     return (
       <div ref={toolbarRef} role="toolbar" aria-label={t('askToolbar')} style={{ ...styles.askToolbar, top: position.top, left: position.left }}>
         <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}</style>
@@ -218,10 +269,10 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     )
   }
 
-  const position = popupPosition(selection.rect, viewportWidth, viewportHeight)
+  const position = popupPosition(rect, viewportWidth, viewportHeight, popupHeight)
   return (
     <div ref={popupRef} role="dialog" aria-label={t('askTooltip')} style={{ ...styles.askPopup, top: position.top, left: position.left, width: position.width }}>
-      <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}</style>
+      <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}{styles.askHighlightCss}</style>
       <p style={styles.askQuote}>{selection.text}</p>
       {phase === 'idle' ? (
         <>

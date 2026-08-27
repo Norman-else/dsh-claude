@@ -1850,6 +1850,14 @@ export const overviewEmpty: CSSProperties = {
 const askSurfaceBorder = '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))'
 const askSurfaceShadow = 'var(--dsw-shadow-lv3, 0 8px 24px color-mix(in srgb, #000 24%, transparent))'
 
+/** Painted through CSS.highlights while the follow-up popup is open. */
+export const askHighlightCss = `
+::highlight(dsh-claude-ask) {
+  background-color: color-mix(in srgb, var(--dsw-static-blue-450) 30%, transparent);
+  color: inherit;
+}
+`
+
 export const askToolbar: CSSProperties = {
   position: 'fixed',
   zIndex: 2000,
