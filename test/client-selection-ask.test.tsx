@@ -6,6 +6,7 @@ import { ClaudeSelectionAsk, popupPosition, toolbarPosition } from '../src/clien
 describe('selection ask client', () => {
   it('parses answer stream events', () => {
     expect(parseAskEvent('{"type":"delta","text":"Hi"}')).toEqual({ type: 'delta', text: 'Hi' })
+    expect(parseAskEvent('{"type":"thinking","text":"hmm"}')).toEqual({ type: 'thinking', text: 'hmm' })
     expect(parseAskEvent('{"type":"done"}')).toEqual({ type: 'done' })
     expect(parseAskEvent('{"type":"error","message":"nope"}')).toEqual({ type: 'error', message: 'nope' })
     expect(() => parseAskEvent('{"type":"mystery"}')).toThrow('Invalid ask stream event')

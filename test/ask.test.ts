@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import { AskService, askArguments, askPrompt, effortFor, textOfStreamLine } from '../src/ask.ts'
+import { AskService, askArguments, askPrompt, effortFor, eventOfStreamLine } from '../src/ask.ts'
 import { registerAskRoute } from '../src/ask-routes.ts'
 import { CLAUDE_ASK_PATH } from '../src/constants.ts'
 
@@ -38,11 +38,12 @@ describe('ask prompt and CLI arguments', () => {
     expect(effortFor('weird')).toBeUndefined()
   })
 
-  it('reads text deltas and final results from stream-json lines', () => {
-    expect(textOfStreamLine(delta('Hel'))).toEqual({ delta: 'Hel' })
-    expect(textOfStreamLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'Full answer' }))).toEqual({ result: 'Full answer' })
-    expect(textOfStreamLine(JSON.stringify({ type: 'system', subtype: 'init' }))).toBeUndefined()
-    expect(textOfStreamLine('not json')).toBeUndefined()
+  it('reads text, thinking, and final results from stream-json lines', () => {
+    expect(eventOfStreamLine(delta('Hel'))).toEqual({ type: 'text', text: 'Hel' })
+    expect(eventOfStreamLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } }))).toEqual({ type: 'thinking', text: 'hmm' })
+    expect(eventOfStreamLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'Full answer' }))).toEqual({ type: 'result', text: 'Full answer' })
+    expect(eventOfStreamLine(JSON.stringify({ type: 'system', subtype: 'init' }))).toBeUndefined()
+    expect(eventOfStreamLine('not json')).toBeUndefined()
   })
 })
 
@@ -50,14 +51,20 @@ describe('ask service', () => {
   it('streams deltas from a tool-free one-shot Claude query in the session cwd', async () => {
     const spawn = vi.fn((_spec: SubprocessSpawnSpec) => streamingHandle([
       JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'Consider cash…' } } }),
       delta('Because '),
       delta('PENDING is not cash.'),
       JSON.stringify({ type: 'result', subtype: 'success', result: 'Because PENDING is not cash.' }),
     ]))
     const service = new AskService({ spawn }, '/bin/claude')
     const chunks: string[] = []
-    await service.ask('/repo', { selection: 'PENDING', question: 'why?' }, { model: 'claude-fable-5', thinkingMode: 'high' }, text => chunks.push(text))
+    const thoughts: string[] = []
+    await service.ask('/repo', { selection: 'PENDING', question: 'why?' }, { model: 'claude-fable-5', thinkingMode: 'high' }, event => {
+      if (event.type === 'thinking') thoughts.push(event.text)
+      else chunks.push(event.text)
+    })
     expect(chunks.join('')).toBe('Because PENDING is not cash.')
+    expect(thoughts).toEqual(['Consider cash…'])
     const spec = spawn.mock.calls[0]?.[0]
     expect(spec).toMatchObject({ cwd: '/repo', env: {}, stdio: { stdout: 'pipe' } })
     expect(spec?.argv.slice(0, 8)).toEqual(['/bin/claude', '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', ''])
@@ -68,7 +75,7 @@ describe('ask service', () => {
   it('falls back to the final result and surfaces failures', async () => {
     const onlyResult = new AskService({ spawn: () => streamingHandle([JSON.stringify({ type: 'result', subtype: 'success', result: 'Whole' })]) }, '/bin/claude')
     const chunks: string[] = []
-    await onlyResult.ask('/repo', { selection: 's', question: 'q' }, {}, text => chunks.push(text))
+    await onlyResult.ask('/repo', { selection: 's', question: 'q' }, {}, event => chunks.push(event.text))
     expect(chunks).toEqual(['Whole'])
 
     const failing = new AskService({ spawn: () => streamingHandle([], 1, 'boom: not logged in') }, '/bin/claude')
@@ -119,10 +126,11 @@ describe('ask route', () => {
   it('streams deltas as NDJSON for owned sessions and rejects unknown ones', async () => {
     const ctx = context()
     const service = {
-      ask: vi.fn(async (_cwd: string, _request: unknown, preferences: unknown, onDelta: (text: string) => void) => {
+      ask: vi.fn(async (_cwd: string, _request: unknown, preferences: unknown, onEvent: (event: { type: 'text' | 'thinking'; text: string }) => void) => {
         expect(preferences).toEqual({ model: 'claude-fable-5', thinkingMode: 'high' })
-        onDelta('Hello ')
-        onDelta('world')
+        onEvent({ type: 'thinking', text: 'hmm' })
+        onEvent({ type: 'text', text: 'Hello ' })
+        onEvent({ type: 'text', text: 'world' })
       }),
     }
     registerAskRoute(ctx, service as unknown as AskService, id => (id === 'owned' ? '/repo' : undefined), () => ({ model: 'claude-fable-5', thinkingMode: 'high' }))
@@ -131,6 +139,7 @@ describe('ask route', () => {
     await ctx.handler(request(`${CLAUDE_ASK_PATH}?sessionId=owned`, { selection: 'PENDING', context: 'ctx', question: 'why' }), ok)
     expect(ok.statusCode).toBe(200)
     expect(ok.body.trim().split('\n').map(line => JSON.parse(line))).toEqual([
+      { type: 'thinking', text: 'hmm' },
       { type: 'delta', text: 'Hello ' },
       { type: 'delta', text: 'world' },
       { type: 'done' },

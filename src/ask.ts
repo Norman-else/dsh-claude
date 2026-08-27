@@ -72,8 +72,14 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-/** Text carried by one stream-json line: a partial delta or the final result. */
-export function textOfStreamLine(line: string): { readonly delta?: string; readonly result?: string } | undefined {
+/** What one stream-json line contributes: streamed answer text, streamed
+ *  thinking, or the final result (used only when no text streamed). */
+export type AskStreamEvent =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'thinking'; readonly text: string }
+  | { readonly type: 'result'; readonly text: string }
+
+export function eventOfStreamLine(line: string): AskStreamEvent | undefined {
   let parsed: Record<string, unknown> | undefined
   try {
     parsed = record(JSON.parse(line))
@@ -84,12 +90,16 @@ export function textOfStreamLine(line: string): { readonly delta?: string; reado
   if (parsed.type === 'stream_event') {
     const event = record(parsed.event)
     const delta = record(event?.delta)
-    if (event?.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string') return { delta: delta.text }
+    if (event?.type !== 'content_block_delta' || delta === undefined) return undefined
+    if (delta.type === 'text_delta' && typeof delta.text === 'string') return { type: 'text', text: delta.text }
+    if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') return { type: 'thinking', text: delta.thinking }
     return undefined
   }
-  if (parsed.type === 'result' && typeof parsed.result === 'string') return { result: parsed.result }
+  if (parsed.type === 'result' && typeof parsed.result === 'string') return { type: 'result', text: parsed.result }
   return undefined
 }
+
+export type AskProgressEvent = Exclude<AskStreamEvent, { type: 'result' }>
 
 /** One-shot Claude Code query answering a question about selected reply text. */
 export class AskService {
@@ -101,7 +111,7 @@ export class AskService {
     this.#executablePath = executablePath
   }
 
-  async ask(cwd: string, request: AskRequest, preferences: AskPreferences, onDelta: (text: string) => void, signal?: AbortSignal): Promise<void> {
+  async ask(cwd: string, request: AskRequest, preferences: AskPreferences, onEvent: (event: AskProgressEvent) => void, signal?: AbortSignal): Promise<void> {
     if (request.question.trim().length === 0 || request.selection.trim().length === 0) {
       throw new AskError('invalid-request', 'A selection and a question are required.')
     }
@@ -124,12 +134,14 @@ export class AskService {
     let emitted = false
     let result: string | undefined
     const consume = (line: string): void => {
-      const text = textOfStreamLine(line)
-      if (text?.delta !== undefined && text.delta.length > 0) {
-        emitted = true
-        onDelta(text.delta)
+      const event = eventOfStreamLine(line)
+      if (event === undefined || event.text.length === 0) return
+      if (event.type === 'result') {
+        result = event.text
+        return
       }
-      if (text?.result !== undefined) result = text.result
+      if (event.type === 'text') emitted = true
+      onEvent(event)
     }
     for await (const chunk of stdout) {
       buffer += typeof chunk === 'string' ? chunk : decoder.write(chunk as Buffer)
@@ -142,7 +154,7 @@ export class AskService {
     const outcome = await handle.done
     if (!emitted && result !== undefined && result.length > 0) {
       emitted = true
-      onDelta(result)
+      onEvent({ type: 'text', text: result })
     }
     if (!emitted) {
       if (signal?.aborted === true) throw new AskError('aborted', 'The question was cancelled.')

@@ -1952,6 +1952,67 @@ export const askAnswer: CSSProperties = {
   wordBreak: 'break-word',
 }
 
+export const askButton: CSSProperties = {
+  minHeight: 26,
+  padding: '3px 10px',
+  border: askSurfaceBorder,
+  borderRadius: 7,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 600,
+  cursor: 'pointer',
+}
+
+export const askPrimaryButton: CSSProperties = {
+  border: '1px solid transparent',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+}
+
+export const askThinkingRow: CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  margin: '0 0 8px',
+  padding: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const askThinkingLabel: CSSProperties = {
+  flex: 'none',
+  fontWeight: 600,
+}
+
+export const askThinkingPreview: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const askThinkingFull: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  maxHeight: 200,
+  overflowY: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+}
+
 export const askStatus: CSSProperties = {
   marginRight: 'auto',
   color: 'var(--dsw-alias-label-tertiary)',

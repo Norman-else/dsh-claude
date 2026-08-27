@@ -120,6 +120,8 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const [open, setOpen] = useState(false)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
+  const [thinking, setThinking] = useState('')
+  const [thinkingOpen, setThinkingOpen] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'answering' | 'done'>('idle')
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState<'selection' | 'answer'>()
@@ -138,6 +140,8 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     setSelection(undefined)
     setQuestion('')
     setAnswer('')
+    setThinking('')
+    setThinkingOpen(false)
     setPhase('idle')
     setError(undefined)
     setCopied(undefined)
@@ -235,10 +239,13 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     const aborter = new AbortController()
     controller.current = aborter
     setAnswer('')
+    setThinking('')
+    setThinkingOpen(false)
     setError(undefined)
     setPhase('answering')
-    void askAboutSelection(selection.sessionId, { selection: selection.text, context: selection.context, question }, delta => {
-      setAnswer(current => current + delta)
+    void askAboutSelection(selection.sessionId, { selection: selection.text, context: selection.context, question }, progress => {
+      if (progress.type === 'thinking') setThinking(current => current + progress.text)
+      else setAnswer(current => current + progress.text)
     }, aborter.signal).then(() => {
       if (!aborter.signal.aborted) setPhase('done')
     }, (reason: unknown) => {
@@ -290,30 +297,35 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
             }}
           />
           <div style={styles.askActions}>
-            <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} onClick={close}>{t('askClose')}</button>
-            <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={question.trim().length === 0} onClick={submit}>{t('askSubmit')}</button>
+            <button type="button" style={styles.askButton} onClick={close}>{t('askClose')}</button>
+            <button type="button" style={{ ...styles.askButton, ...styles.askPrimaryButton }} disabled={question.trim().length === 0} onClick={submit}>{t('askSubmit')}</button>
           </div>
         </>
       ) : (
         <>
           <p style={styles.askQuestion}>{question}</p>
           <div style={styles.askAnswer}>
-            {answer.length === 0 && error === undefined ? <span style={styles.askStatus}>{t('askThinking')}</span> : null}
+            {thinking.length === 0 ? null : (
+              <button type="button" style={styles.askThinkingRow} aria-expanded={thinkingOpen} onClick={() => { setThinkingOpen(value => !value) }}>
+                <span style={styles.askThinkingLabel}>{phase === 'answering' && answer.length === 0 ? t('askThinkingLive') : t('askThinkingLabel')}</span>
+                <span style={thinkingOpen ? styles.askThinkingFull : styles.askThinkingPreview}>{thinkingOpen ? thinking : thinking.trimEnd().split('\n').filter(line => line.trim().length > 0).at(-1)}</span>
+              </button>
+            )}
+            {answer.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{t('askThinking')}</span> : null}
             {answer.length === 0 ? null : <MarkdownText text={answer} streaming={phase === 'answering'} />}
             {error === undefined ? null : <p role="alert" style={styles.askError}>{error}</p>}
           </div>
           <div style={styles.askActions}>
-            {phase === 'answering' ? <span style={styles.askStatus}>{t('askThinking')}</span> : null}
             {answer.length === 0 ? null : (
-              <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} onClick={() => { copy(answer, 'answer') }}>{copied === 'answer' ? t('askCopied') : t('askCopyAnswer')}</button>
+              <button type="button" style={styles.askButton} onClick={() => { copy(answer, 'answer') }}>{copied === 'answer' ? t('askCopied') : t('askCopyAnswer')}</button>
             )}
             {answer.length === 0 || insertIntoChat === undefined ? null : (
-              <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} onClick={() => {
+              <button type="button" style={styles.askButton} onClick={() => {
                 insertIntoChat(selection.sessionId, `> ${selection.text.replaceAll('\n', '\n> ')}\n\n**${question}**\n\n${answer}`)
                 close()
               }}>{t('askSendToChat')}</button>
             )}
-            <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} onClick={close}>{t('askClose')}</button>
+            <button type="button" style={{ ...styles.askButton, ...styles.askPrimaryButton }} onClick={close}>{t('askClose')}</button>
           </div>
         </>
       )}
