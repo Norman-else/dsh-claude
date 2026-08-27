@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { MarkdownText, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { askAboutSelection, type AskProgress } from './ask-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -109,14 +109,28 @@ export function toolbarPosition(rect: SelectionRect, viewportWidth: number): { t
   }
 }
 
-/** Below the selection when it fits, else above it; never over the text unless
- *  neither side has room. */
-export function popupPosition(rect: SelectionRect, viewportWidth: number, viewportHeight: number, height = POPUP_ESTIMATED_HEIGHT): { top: number; left: number; width: number } {
+export type PopupSide = 'below' | 'above'
+
+/** Pick the side with room once, when the popup opens: below the selection
+ *  unless the space there is short and above is roomier. */
+export function popupSide(rect: SelectionRect, viewportHeight: number): PopupSide {
+  const roomBelow = viewportHeight - rect.bottom - 16
+  const roomAbove = rect.top - 16
+  return roomBelow >= POPUP_ESTIMATED_HEIGHT || roomBelow >= roomAbove ? 'below' : 'above'
+}
+
+/** Anchor on the chosen side so streamed content grows away from the text and
+ *  scrolls inside the popup instead of running off screen. */
+export function popupPlacement(rect: SelectionRect, side: PopupSide, viewportWidth: number, viewportHeight: number): { top?: number; bottom?: number; left: number; width: number; maxHeight: number } {
   const width = Math.min(POPUP_WIDTH, viewportWidth - 16)
-  const below = rect.bottom + 8
-  const above = rect.top - 8 - height
-  const top = below + height <= viewportHeight - 8 ? below : above >= 8 ? above : Math.max(8, Math.min(below, viewportHeight - height - 8))
-  return { top, left: Math.min(Math.max(8, rect.left), Math.max(8, viewportWidth - width - 8)), width }
+  const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportWidth - width - 8))
+  const cap = Math.round(viewportHeight * 0.7)
+  if (side === 'below') {
+    const top = Math.max(8, rect.bottom + 8)
+    return { top, left, width, maxHeight: Math.max(120, Math.min(cap, viewportHeight - top - 8)) }
+  }
+  const bottom = Math.max(8, viewportHeight - rect.top + 8)
+  return { bottom, left, width, maxHeight: Math.max(120, Math.min(cap, viewportHeight - bottom - 8)) }
 }
 
 function CopyIcon() {
@@ -160,7 +174,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState<'selection' | 'answer'>()
   const [rect, setRect] = useState<SelectionRect>()
-  const [popupHeight, setPopupHeight] = useState(POPUP_ESTIMATED_HEIGHT)
+  const [side, setSide] = useState<PopupSide>('below')
   const popupRef = useRef<HTMLDivElement>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
   const controller = useRef<AbortController>()
@@ -252,11 +266,6 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     registry.set(HIGHLIGHT_NAME, new runtime.Highlight(selection.range))
     return () => { registry.delete(HIGHLIGHT_NAME) }
   }, [open, selection])
-  useLayoutEffect(() => {
-    const element = popupRef.current
-    if (!open || element === null) return
-    setPopupHeight(element.offsetHeight)
-  }, [open, answer, error, phase])
   useEffect(() => {
     if (copied === undefined) return
     const timer = setTimeout(() => setCopied(undefined), 1_200)
@@ -305,7 +314,10 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
           </button>
         </Tooltip>
         <Tooltip label={t('askTooltip')} side="top" delayMs={300}>
-          <button type="button" className={styles.panelIconButtonClass} aria-label={t('askTooltip')} onMouseDown={event => { event.preventDefault() }} onClick={() => { setOpen(true) }}>
+          <button type="button" className={styles.panelIconButtonClass} aria-label={t('askTooltip')} onMouseDown={event => { event.preventDefault() }} onClick={() => {
+            setSide(popupSide(rect, viewportHeight))
+            setOpen(true)
+          }}>
             <AskIcon />
           </button>
         </Tooltip>
@@ -313,9 +325,9 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     )
   }
 
-  const position = popupPosition(rect, viewportWidth, viewportHeight, popupHeight)
+  const placement = popupPlacement(rect, side, viewportWidth, viewportHeight)
   return (
-    <div ref={popupRef} role="dialog" aria-label={t('askTooltip')} style={{ ...styles.askPopup, top: position.top, left: position.left, width: position.width }}>
+    <div ref={popupRef} role="dialog" aria-label={t('askTooltip')} style={{ ...styles.askPopup, ...placement }}>
       <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}{styles.askHighlightCss}</style>
       <p style={styles.askQuote}>{selection.text}</p>
       {phase === 'idle' ? (

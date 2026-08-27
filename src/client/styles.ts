@@ -1883,7 +1883,6 @@ export const askPopup: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 10,
-  maxHeight: '70vh',
   padding: 12,
   border: askSurfaceBorder,
   borderRadius: 12,
