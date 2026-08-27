@@ -473,7 +473,7 @@ describe('Claude repository status UI', () => {
     expect(styles.diffModalFileState).toMatchObject({ flex: 'none' })
   })
 
-  it('doubles the repository action modal and uses readable form text', () => {
+  it('keeps the repository action modal wide but with compact text and round-input-safe focus styling', () => {
     const modalCss = Reflect.get(styles, 'diffModalCss') as string | undefined
     const modalButton = Reflect.get(styles, 'diffModalButton') as Record<string, unknown> | undefined
     const markup = renderToStaticMarkup(<ClaudeDiffPanel
@@ -492,15 +492,18 @@ describe('Claude repository status UI', () => {
     expect(modalCss).toContain('box-sizing: border-box')
     expect(modalCss).toContain('overflow-y: auto')
     expect(modalCss).toMatch(/> div:first-child \{\s*position: sticky;\s*top: 0;/u)
-    expect(modalCss).toContain('font-size: 24px')
     expect(modalCss).toContain('font-size: 18px')
-    expect(styles.diffModalMeta).toMatchObject({ fontSize: 16, lineHeight: '24px' })
-    expect(styles.diffModalFile).toMatchObject({ fontSize: 15, lineHeight: '22px' })
-    expect(styles.diffModalField).toMatchObject({ fontSize: 16, lineHeight: '24px' })
-    expect(styles.diffModalCheckbox).toMatchObject({ fontSize: 16, lineHeight: '24px' })
-    expect(styles.diffModalTextarea).toMatchObject({ minHeight: 140, fontSize: 16, lineHeight: '24px' })
-    expect(styles.diffModalStatus).toMatchObject({ fontSize: 16, lineHeight: '24px' })
-    expect(modalButton).toMatchObject({ minHeight: 42, fontSize: 16, lineHeight: '24px' })
+    expect(modalCss).toContain('font-size: 14px')
+    // The inset focus box is for rectangular fields; a radio would show it as a square around a circle.
+    expect(modalCss).toContain("input:not([type='checkbox'], [type='radio']):focus")
+    expect(modalCss).toContain("input:is([type='checkbox'], [type='radio'])")
+    expect(styles.diffModalMeta).toMatchObject({ fontSize: 14, lineHeight: '22px' })
+    expect(styles.diffModalFile).toMatchObject({ fontSize: 13, lineHeight: '20px' })
+    expect(styles.diffModalField).toMatchObject({ fontSize: 14, lineHeight: '22px' })
+    expect(styles.diffModalCheckbox).toMatchObject({ fontSize: 14, lineHeight: '22px' })
+    expect(styles.diffModalTextarea).toMatchObject({ minHeight: 140, fontSize: 14, lineHeight: '22px' })
+    expect(styles.diffModalStatus).toMatchObject({ fontSize: 14, lineHeight: '22px' })
+    expect(modalButton).toMatchObject({ minHeight: 36, fontSize: 14, lineHeight: '22px' })
   })
 })
 
