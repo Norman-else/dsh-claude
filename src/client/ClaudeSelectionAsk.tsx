@@ -28,7 +28,11 @@ interface SelectionInfo {
   readonly rect: SelectionRect
 }
 
-const ASSISTANT_NODE = '[data-chat-flow-kind="assistant"]'
+// Chat rows carry data-chat-flow-kind; Claude output renders under plugin
+// node kinds (claude-activity-step, …) as well as the Host 'assistant' kind,
+// so match any chat node that is not the user's own message.
+const CHAT_NODE = '[data-chat-flow-kind]'
+const USER_KIND = 'user'
 const MAX_SELECTION_CHARS = 8_000
 const MAX_CONTEXT_CHARS = 16_000
 const POPUP_WIDTH = 560
@@ -40,8 +44,8 @@ export function selectionInfoOf(selection: Selection | null, sessionId: string |
   const range = selection.getRangeAt(0)
   const node = range.commonAncestorContainer
   const element = node instanceof Element ? node : node.parentElement
-  const host = element?.closest(ASSISTANT_NODE)
-  if (host === null || host === undefined) return undefined
+  const host = element?.closest<HTMLElement>(CHAT_NODE)
+  if (host === null || host === undefined || host.dataset.chatFlowKind === USER_KIND) return undefined
   const text = selection.toString().trim()
   if (text.length === 0) return undefined
   const rect = range.getBoundingClientRect()
