@@ -132,7 +132,8 @@ describe('Claude client slot registration', () => {
     const detailsActions = details?.inject?.() as { toggleMaximized(): void }
     detailsActions.toggleMaximized()
 
-    const firstOverlay = registrations.find(entry => entry.name === 'shell.overlay' && entry.active)
+    // The selection toolbar overlay is registered for the plugin's lifetime; skip it.
+    const firstOverlay = registrations.find(entry => entry.name === 'shell.overlay' && entry.active && entry.id !== 'claude-selection-ask')
     expect(firstOverlay).toMatchObject({
       id: 'claude-diff-overlay',
     })
@@ -141,7 +142,7 @@ describe('Claude client slot registration', () => {
     expect(resizeLifecycle.events.slice(-2)).toEqual(['resize-dispose', 'layout-close'])
     const firstOverlayElement = firstOverlay?.component?.() as ReactElement<{ closeDetails(): void }>
     firstOverlayElement.props.closeDetails()
-    expect(registrations.some(entry => entry.active && (entry.name === 'details' || entry.name === 'shell.overlay'))).toBe(false)
+    expect(registrations.some(entry => entry.active && (entry.name === 'details' || (entry.name === 'shell.overlay' && entry.id !== 'claude-selection-ask')))).toBe(false)
     expect(resizeLifecycle.dispose).toHaveBeenCalledOnce()
 
     repositoryActions.openDiff()
