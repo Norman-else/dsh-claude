@@ -1,5 +1,7 @@
 const DETAILS_MIN_WIDTH = 300
-const DETAILS_DEFAULT_WIDTH = 480
+// Wide enough for an ~80-column diff line once the gutter (line number,
+// marker, comment button) is subtracted; still clamped to half the frame.
+const DETAILS_DEFAULT_WIDTH = 720
 const DETAILS_MAX_RATIO = 0.5
 const DRAG_THRESHOLD = 4
 

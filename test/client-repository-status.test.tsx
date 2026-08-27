@@ -120,8 +120,10 @@ describe('Claude repository status UI', () => {
     expect(clampDetailsWidth(900, 1_600)).toBe(800)
     expect(clampDetailsWidth(100, 1_600)).toBe(300)
     expect(clampDetailsWidth(400, 500)).toBe(300)
-    expect(defaultDetailsWidth(1_600)).toBe(480)
+    expect(defaultDetailsWidth(1_600)).toBe(720)
     expect(defaultDetailsWidth(800)).toBe(400)
+    // Narrow frames still cap at half the width rather than honouring the default.
+    expect(defaultDetailsWidth(1_200)).toBe(600)
   })
 
   it('summarizes branch, worktree, changes, PR, checks, and review', () => {
