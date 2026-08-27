@@ -2501,7 +2501,6 @@ export const diffFileStats: CSSProperties = {
 }
 
 export const diffCode: CSSProperties = {
-  minWidth: 'max-content',
   padding: '4px 0 8px',
   background: 'var(--dsw-alias-bg-base)',
   fontFamily: 'var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace)',
@@ -2512,7 +2511,14 @@ export const diffCode: CSSProperties = {
 export const diffLine: CSSProperties = {
   minHeight: 17,
   display: 'flex',
-  whiteSpace: 'pre',
+  // Wrap to the panel width (reflows as the details column is dragged) instead of scrolling sideways.
+  whiteSpace: 'pre-wrap',
+  overflowWrap: 'anywhere',
+}
+
+export const diffLineText: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
 }
 
 export const diffLineNumber: CSSProperties = {

@@ -133,7 +133,7 @@ function DiffLine({ entry, addLabel, onComment }: { entry: NumberedDiffLine; add
   const lineNumber = entry.oldLine === undefined && entry.newLine === undefined
     ? ''
     : entry.oldLine === undefined ? String(entry.newLine) : entry.newLine === undefined ? String(entry.oldLine) : String(entry.newLine)
-  return <div className={styles.diffLineRowClass} style={{ ...styles.diffLine, ...style }}><button type="button" className={styles.diffCommentButtonClass} disabled={onComment === undefined} aria-label={addLabel} onClick={onComment}>+</button><span style={styles.diffLineNumber}>{lineNumber}</span><span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : entry.kind === 'collapsed' ? '⌄' : ' '}</span><span>{entry.kind === 'collapsed' ? entry.line : entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span></div>
+  return <div className={styles.diffLineRowClass} style={{ ...styles.diffLine, ...style }}><button type="button" className={styles.diffCommentButtonClass} disabled={onComment === undefined} aria-label={addLabel} onClick={onComment}>+</button><span style={styles.diffLineNumber}>{lineNumber}</span><span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : entry.kind === 'collapsed' ? '⌄' : ' '}</span><span style={styles.diffLineText}>{entry.kind === 'collapsed' ? entry.line : entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span></div>
 }
 
 interface DiffFileSectionProps {
