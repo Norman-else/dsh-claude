@@ -272,16 +272,18 @@ describe('repository branch update', () => {
   const head = 'a'.repeat(40)
   const merged = 'c'.repeat(40)
 
-  it('merges the base branch and pushes the merge commit', async () => {
-    const fake = runtime([
-      ...previewResults(''),
-      ...previewResults(''),
-      { stdout: '' },
-      { stdout: '' },
-      { stdout: `${merged}\n` },
-      { stdout: 'origin/feature/actions\n' },
-      { stdout: '' },
-    ])
+  const updateResults = () => [
+    ...previewResults(''),
+    ...previewResults(''),
+    { stdout: '' },
+    { stdout: '' },
+    { stdout: `${merged}\n` },
+    { stdout: 'origin/feature/actions\n' },
+    { stdout: '' },
+  ]
+
+  it('rebases onto the base branch by default and pushes with --force-with-lease', async () => {
+    const fake = runtime(updateResults())
     const service = new RepositoryActionService(fake, 'claude')
     const preview = await service.preview('C:/repo')
     await expect(service.execute('C:/repo', {
@@ -289,11 +291,23 @@ describe('repository branch update', () => {
     })).resolves.toEqual({ commit: merged, pushed: true })
     const argv = fake.spawn.mock.calls.map(call => call[0].argv)
     expect(argv).toContainEqual(['C:/bin/git.exe', 'fetch', 'origin', '--', 'master'])
+    expect(argv).toContainEqual(['C:/bin/git.exe', 'rebase', '--', 'origin/master'])
+    expect(argv.at(-1)).toEqual(['C:/bin/git.exe', 'push', '--force-with-lease'])
+  })
+
+  it('merges the base branch and pushes the merge commit when asked to merge', async () => {
+    const fake = runtime(updateResults())
+    const service = new RepositoryActionService(fake, 'claude')
+    const preview = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'update-branch', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, baseBranch: 'master', mergeMethod: 'merge',
+    })).resolves.toEqual({ commit: merged, pushed: true })
+    const argv = fake.spawn.mock.calls.map(call => call[0].argv)
     expect(argv).toContainEqual(['C:/bin/git.exe', 'merge', '--no-edit', '--', 'origin/master'])
     expect(argv.at(-1)).toEqual(['C:/bin/git.exe', 'push'])
   })
 
-  it('reports conflicted files and leaves the merge in place', async () => {
+  it('reports conflicted files and leaves the rebase in place', async () => {
     const fake = runtime([
       ...previewResults(''),
       ...previewResults(''),

@@ -66,7 +66,7 @@ export interface RepositoryActionResult {
   readonly commit: string
   readonly pushed: boolean
   readonly pullRequestUrl?: string
-  /** Conflicted paths left in the working tree by an update-branch merge. */
+  /** Conflicted paths left in the working tree by an update-branch merge or rebase. */
   readonly conflicts?: readonly string[]
 }
 
@@ -238,25 +238,28 @@ export class RepositoryActionService {
       if (before.files.length > 0) {
         throw new RepositoryActionError('dirty-workspace', 'Commit or stash workspace changes before updating the branch.')
       }
+      const method = request.mergeMethod ?? 'rebase'
+      if (method !== 'merge' && method !== 'rebase') throw new RepositoryActionError('invalid-request', 'Update branch supports merge or rebase.')
       const git = await this.#git()
       await this.#mustRun(git, ['fetch', 'origin', '--', base], before.root, REMOTE_TIMEOUT_MS, 'fetch-failed', 'Git could not fetch the base branch.')
-      const merged = await this.#run(git, ['merge', '--no-edit', '--', `origin/${base}`], before.root, REMOTE_TIMEOUT_MS)
+      const merged = await this.#run(git, method === 'rebase' ? ['rebase', '--', `origin/${base}`] : ['merge', '--no-edit', '--', `origin/${base}`], before.root, REMOTE_TIMEOUT_MS)
       if (merged.exitCode !== 0 || merged.lossy) {
         const conflicted = await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], before.root, GIT_TIMEOUT_MS)
         const conflicts = conflicted.exitCode === 0 && !conflicted.lossy
           ? conflicted.stdout.split(/\r?\n/u).filter(line => line.length > 0).slice(0, 100)
           : []
         if (conflicts.length === 0) {
-          await this.#run(git, ['merge', '--abort'], before.root, GIT_TIMEOUT_MS).catch(() => undefined)
-          throw new RepositoryActionError('merge-failed', 'Git could not merge the base branch.')
+          await this.#run(git, [method, '--abort'], before.root, GIT_TIMEOUT_MS).catch(() => undefined)
+          throw new RepositoryActionError('merge-failed', `Git could not ${method} the base branch.`)
         }
         // Leave the conflicted tree in place: resolving it is the next step.
         this.#invalidate(before.root)
         return { commit: before.head, pushed: false, conflicts }
       }
-      const mergedHead = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'merge-failed', 'The merge commit could not be verified.')).stdout.trim()
+      const mergedHead = (await this.#mustRun(git, ['rev-parse', 'HEAD'], before.root, GIT_TIMEOUT_MS, 'merge-failed', 'The updated commit could not be verified.')).stdout.trim()
       try {
-        await this.#push(git, before.root, before.branch)
+        // A rebase rewrites the branch, so the push must replace the remote ref; --force-with-lease still refuses if someone else pushed.
+        await this.#push(git, before.root, before.branch, method === 'rebase')
       } catch (error) {
         throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.', mergedHead)
       }
@@ -367,9 +370,9 @@ export class RepositoryActionService {
     }
   }
 
-  async #push(git: string, cwd: string, branch: string): Promise<void> {
+  async #push(git: string, cwd: string, branch: string, forceWithLease = false): Promise<void> {
     const upstream = await this.#run(git, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], cwd, GIT_TIMEOUT_MS)
-    const args = upstream.exitCode === 0 ? ['push'] : ['push', '--set-upstream', 'origin', branch]
+    const args = upstream.exitCode === 0 ? ['push', ...(forceWithLease ? ['--force-with-lease'] : [])] : ['push', '--set-upstream', 'origin', branch]
     await this.#mustRun(git, args, cwd, REMOTE_TIMEOUT_MS, 'push-failed', 'Git push failed.')
   }
 
