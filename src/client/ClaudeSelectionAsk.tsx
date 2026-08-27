@@ -42,10 +42,15 @@ const TOOLBAR_WIDTH = 64
 export function selectionInfoOf(selection: Selection | null, sessionId: string | undefined): Omit<SelectionInfo, 'sessionId'> | undefined {
   if (sessionId === undefined || selection === null || selection.isCollapsed || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
-  const node = range.commonAncestorContainer
-  const element = node instanceof Element ? node : node.parentElement
-  const host = element?.closest<HTMLElement>(CHAT_NODE)
-  if (host === null || host === undefined || host.dataset.chatFlowKind === USER_KIND) return undefined
+  // A whole-line (triple-click) selection ends at the start of the NEXT chat
+  // row, so the common ancestor climbs above any row; anchor on the start
+  // node instead and fall back to the end node.
+  const hostOf = (node: Node | null): HTMLElement | null => {
+    const element = node instanceof Element ? node : node?.parentElement ?? null
+    return element?.closest<HTMLElement>(CHAT_NODE) ?? null
+  }
+  const host = hostOf(range.startContainer) ?? hostOf(range.endContainer)
+  if (host === null || host.dataset.chatFlowKind === USER_KIND) return undefined
   const text = selection.toString().trim()
   if (text.length === 0) return undefined
   const rect = range.getBoundingClientRect()
