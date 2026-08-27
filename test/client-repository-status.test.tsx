@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { composeConflictsPrompt } from '../src/client/pr-feedback-api.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeDiffPanel, actionLabel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, rateLimitBlocked, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
@@ -528,6 +529,12 @@ describe('pull request feedback controls', () => {
     openDiff={vi.fn()}
     submitPrompt={vi.fn()}
   />)
+
+  it('tells Claude how to finish a conflicted rebase versus a conflicted merge', () => {
+    expect(composeConflictsPrompt('master', ['src/a.ts'], 'rebase')).toContain('git rebase --continue')
+    expect(composeConflictsPrompt('master', ['src/a.ts'], 'rebase')).toContain('--force-with-lease')
+    expect(composeConflictsPrompt('master', ['src/a.ts'])).toContain('commit the merge')
+  })
 
   it('offers Update branch only for clean checkouts behind the base', () => {
     const behind = render({ dirty: false, baseBehind: 2 })
