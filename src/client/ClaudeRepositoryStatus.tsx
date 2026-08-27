@@ -344,6 +344,7 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
   const [dialog, setDialog] = useState<UpdateDialogState>()
+  const [method, setMethod] = useState<'merge' | 'rebase'>('rebase')
   const controller = useRef<AbortController>()
   const pullRequest = repository.pullRequest
   const base = pullRequest?.baseBranch
@@ -383,6 +384,7 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
       message: '',
       includeUnstaged: false,
       baseBranch: base,
+      mergeMethod: method,
     }).then(result => {
       setDialog({
         ...pending,
@@ -409,12 +411,18 @@ export function UpdateBranchControl({ sessionId, repository, t, submitPrompt }: 
             <strong style={styles.diffModalMetaText} title={pullRequest.title}>{repository.branch ?? t('repositoryUnknownBranch')} ← origin/{base}</strong>
             <span style={styles.diffModalFileState}>{t('diffUpdateBranchBehind', { base, count: behind })}</span>
           </div>
+          {(['rebase', 'merge'] as const).map(option => (
+            <label key={option} style={styles.diffModalCheckbox}>
+              <input type="radio" name="dsh-claude-update-branch-method" value={option} checked={method === option} disabled={settled || dialog.submitting} onChange={() => setMethod(option)} />
+              {t(`diffUpdateBranch_${option}`, { base })}
+            </label>
+          ))}
           {dialog.pushed === undefined ? null : <p style={styles.diffModalSuccess}>{t('diffUpdateBranchCompleted', { commit: dialog.pushed.slice(0, 8) })}</p>}
           {dialog.conflicts === undefined ? null : <>
             <p style={styles.diffModalStatus}>{t('diffUpdateBranchConflicts')}</p>
             <ul style={styles.diffModalConflicts}>{dialog.conflicts.map(file => <li key={file}>{file}</li>)}</ul>
             {submitPrompt === undefined ? null : (
-              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(base, dialog.conflicts ?? [])); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
+              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(base, dialog.conflicts ?? [], method)); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
             )}
           </>}
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}

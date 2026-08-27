@@ -70,6 +70,10 @@ export function composeChecksPrompt(checks: readonly FailingCheck[]): string {
 }
 
 /** Draft handed to Claude after an update-branch merge left conflicts behind. */
-export function composeConflictsPrompt(baseBranch: string, conflicts: readonly string[]): string {
-  return `Merging origin/${baseBranch} into the current branch left merge conflicts in the files below. Resolve each conflict preserving the intent of both sides, then commit the merge.\n\n${conflicts.map(file => `- ${file}`).join('\n')}`
+export function composeConflictsPrompt(baseBranch: string, conflicts: readonly string[], method: 'merge' | 'rebase' = 'merge'): string {
+  const list = conflicts.map(file => `- ${file}`).join('\n')
+  if (method === 'rebase') {
+    return `Rebasing the current branch onto origin/${baseBranch} stopped on conflicts in the files below. Resolve each conflict preserving the intent of both sides, stage the files, run \`git rebase --continue\` until the rebase finishes, then push with \`git push --force-with-lease\`.\n\n${list}`
+  }
+  return `Merging origin/${baseBranch} into the current branch left merge conflicts in the files below. Resolve each conflict preserving the intent of both sides, then commit the merge.\n\n${list}`
 }
