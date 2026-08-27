@@ -35,9 +35,15 @@ export function locateClaudePresetSeat(root: ParentNode = document): { hero: HTM
   return undefined
 }
 
+/** Reuse the row's existing portal even when the host moved a node between it
+ *  and the seat: a fresh element would change React's portal identity and
+ *  restart (and abort) every effect keyed on it. */
 export function ensureClaudeHeroPortal(seat: Element): HTMLElement {
-  const sibling = seat.nextElementSibling
-  if (sibling instanceof HTMLElement && sibling.hasAttribute(PORTAL_ATTRIBUTE)) return sibling
+  const existing = seat.parentElement?.querySelector<HTMLElement>(`:scope > [${PORTAL_ATTRIBUTE}]`) ?? null
+  if (existing !== null) {
+    if (existing.previousElementSibling !== seat) seat.insertAdjacentElement('afterend', existing)
+    return existing
+  }
   const portal = document.createElement('span')
   portal.setAttribute(PORTAL_ATTRIBUTE, '')
   seat.insertAdjacentElement('afterend', portal)

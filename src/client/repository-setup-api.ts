@@ -57,12 +57,16 @@ async function response<T>(pending: Promise<Response>): Promise<T> {
   return body as T
 }
 
+/** A wedged host must surface as an error; the hero has no other way out of its loading state. */
+export const BRANCH_LOAD_TIMEOUT_MS = 15_000
+
 export function loadRepositoryBranches(cwd: string, signal?: AbortSignal): Promise<RepositoryBranchList> {
+  const timeout = AbortSignal.timeout(BRANCH_LOAD_TIMEOUT_MS)
   return response(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/branches?cwd=${encodeURIComponent(cwd)}`, {
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
-    ...(signal === undefined ? {} : { signal }),
+    signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
   }))
 }
 

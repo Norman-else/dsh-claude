@@ -444,7 +444,13 @@ export class RepositorySetupService {
   }
 
   #git(): Promise<string> {
-    this.#gitPath ??= this.#runtime.resolveExecutable('git')
+    // A cached pending or rejected lookup would wedge every later request, so
+    // bound it and drop the cache on failure.
+    this.#gitPath ??= this.#runtime.resolveExecutable('git', undefined, AbortSignal.timeout(GIT_TIMEOUT_MS))
+      .catch((error: unknown) => {
+        this.#gitPath = undefined
+        throw error
+      })
     return this.#gitPath
   }
 

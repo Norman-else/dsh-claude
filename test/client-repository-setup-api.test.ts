@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseRepositorySetupEvent, prepareRepository } from '../src/client/repository-setup-api.ts'
+import { BRANCH_LOAD_TIMEOUT_MS, loadRepositoryBranches, parseRepositorySetupEvent, prepareRepository } from '../src/client/repository-setup-api.ts'
 
 const RESULT = { mode: 'worktree' as const, root: '/repo', path: '/worktree', branch: 'claude/main-x', leaseId: 'lease-1' }
 
@@ -15,6 +15,7 @@ function streamedResponse(chunks: readonly string[]): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('repository setup progress API', () => {
@@ -55,5 +56,31 @@ describe('repository setup progress API', () => {
 
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })))
     await expect(prepareRepository('/repo', 'main', true)).rejects.toThrow('Repository setup progress stream is unavailable.')
+  })
+
+  it('aborts a wedged branch request instead of pending forever', async () => {
+    // A host that never answers must not strand the hero in its loading state.
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => { reject(new Error('timed out')) })
+    })))
+    const clock = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(clock.signal)
+
+    const pending = loadRepositoryBranches('/repo')
+    const assertion = expect(pending).rejects.toThrow('timed out')
+    clock.abort()
+    await assertion
+    expect(timeout).toHaveBeenCalledWith(BRANCH_LOAD_TIMEOUT_MS)
+  })
+
+  it('passes the caller signal through so an effect cleanup still cancels', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => { reject(new Error('aborted')) })
+    })))
+    const controller = new AbortController()
+    const pending = loadRepositoryBranches('/repo', controller.signal)
+    const assertion = expect(pending).rejects.toThrow('aborted')
+    controller.abort()
+    await assertion
   })
 })

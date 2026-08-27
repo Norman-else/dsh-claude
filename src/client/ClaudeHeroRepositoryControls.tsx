@@ -84,6 +84,9 @@ export function branchMenuNavigationIndex(current: number, count: number, key: '
   return (current + (key === 'ArrowDown' ? 1 : -1) + count) % count
 }
 
+const BRANCH_LOAD_RETRIES = 2
+const BRANCH_LOAD_RETRY_MS = 1_000
+
 export const WORKTREE_PROGRESS_STAGES: readonly RepositoryPreparationStage[] = [
   'inspecting',
   'fetching',
@@ -395,13 +398,27 @@ export function ClaudeHeroRepositoryControls({
     setTicketError(undefined)
     if (portal === undefined || path === undefined) return
     const controller = new AbortController()
-    void loadRepositoryBranches(path, controller.signal).then((value) => {
-      setBranches(value)
-      setSelected(value.current ?? value.branches[0] ?? '')
-    }, (reason: unknown) => {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason))
-    })
-    return () => { controller.abort() }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = (remaining: number): void => {
+      void loadRepositoryBranches(path, controller.signal).then((value) => {
+        setBranches(value)
+        setSelected(value.current ?? value.branches[0] ?? '')
+      }, (reason: unknown) => {
+        if (controller.signal.aborted) return
+        // Keep showing the loading copy while retries remain; a transient host
+        // hiccup must not strand the capsule with no way back.
+        if (remaining > 0) {
+          timer = setTimeout(() => { load(remaining - 1) }, BRANCH_LOAD_RETRY_MS)
+          return
+        }
+        setError(reason instanceof Error ? reason.message : String(reason))
+      })
+    }
+    load(BRANCH_LOAD_RETRIES)
+    return () => {
+      controller.abort()
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }, [portal, path, sessionId])
 
   const availableBranches = branches === undefined ? [] : repositoryBranchOptions(branches)
