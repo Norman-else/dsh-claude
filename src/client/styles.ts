@@ -2132,8 +2132,11 @@ export const diffCommentCss = `
   flex: none;
   display: grid;
   place-items: center;
-  align-self: center;
-  margin: 0 2px;
+  /* Stay on the line-number row: a wrapped line makes the flex row taller, and
+     centering would float the button into the middle of the wrapped block.
+     The margin centers the 18px button inside the first 22px line box. */
+  align-self: flex-start;
+  margin: 2px 2px 0;
   padding: 0;
   border: none;
   border-radius: 4px;
