@@ -20,9 +20,13 @@ import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
+import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
+import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './ClaudeAgentPresetLabel.tsx'
+import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
+import { DiffOpenStore } from './diff-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
-import { suppressHostChrome } from './host-chrome.ts'
+import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
@@ -79,7 +83,7 @@ export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
-  ctx.effect(() => suppressHostChrome(), 'dsh-claude: hide the Host Session log capsule')
+  ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
   const projections = new ClaudeProjectionStore()
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
@@ -125,6 +129,7 @@ export function apply(ctx: ClientContext): void {
   let disposeDiffOverlay: (() => void) | undefined
   let disposeExpandedDetailsResize: (() => void) | undefined
   let detailsSessionId: string | undefined
+  const diffOpen = new DiffOpenStore()
   const restoreDiff = (): void => {
     if (disposeDiffOverlay === undefined) return
     disposeDiffOverlay()
@@ -141,6 +146,7 @@ export function apply(ctx: ClientContext): void {
     disposePluginDetails?.()
     disposePluginDetails = undefined
     detailsSessionId = undefined
+    diffOpen.close()
     layout?.closeDetails()
   }
   ctx.effect(() => ctx.slots.onEntryError((key, entry) => {
@@ -244,6 +250,7 @@ export function apply(ctx: ClientContext): void {
       detailsSessionId = undefined
       return
     }
+    diffOpen.open(sessionId)
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
   ctx.effect(() => {
@@ -275,6 +282,48 @@ export function apply(ctx: ClientContext): void {
       openTasks: turn => openTasksPanel(sessionId, turn),
     }),
   }, ClaudeActivityTail))
+  // Icon-only diff trigger in the Session header's right-aligned utility
+  // group. The action row next to the title is left-aligned (it rides inside
+  // the flex:1 title cluster), so the utilities group is the actual top-right
+  // corner — the seat the Host's hidden Session log capsule used to hold.
+  // Shadow the Host's header preset label: same slot id, lower priority, so
+  // one cell renders and it is this one. Only two things change — the native
+  // `title` popup becomes the DSH tooltip bubble, and the Claude preset gets
+  // its own mark instead of the generic preset glyph. Everything else is
+  // reproduced, because this entry renders in every Session, not only
+  // plugin-owned ones.
+  if (connection !== undefined) {
+    const roster = new AgentPresetRoster(connection.api.agentPresets as unknown as AgentPresetRosterApi)
+    const hostT = ctx.locale.bind('settings.agentPreset')
+    ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'agent-preset',
+      order: -10,
+      priority: -10,
+      locale: namespace,
+      inject: (): ClaudeAgentPresetLabelInjected => ({
+        t,
+        hostT: key => hostT(key as never),
+        roster: { subscribe: roster.subscribe, getSnapshot: roster.getSnapshot, load: () => roster.load() },
+      }),
+    }, ClaudeAgentPresetLabel))
+  }
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-diff',
+    order: 30,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
+      t,
+      // Toggling closes the whole details registration, so a maximized diff
+      // collapses from the same press that would have collapsed the column.
+      toggleDiff: () => {
+        if (diffOpen.isOpen(sessionId)) closePluginDetails()
+        else openDiffPanel(sessionId)
+      },
+      diffOpen: diffOpen.sourceFor(sessionId),
+    }),
+  }, ClaudeDiffHeaderAction))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-review-comments',
