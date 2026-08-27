@@ -4,6 +4,21 @@
  *  advertises its own instability, so every read is guarded: a missing method,
  *  a shape change, or an API-key session all degrade to `available: false`
  *  instead of breaking the settings page. */
+import { query as claudeQuery, type Options as ClaudeOptions, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+
+/** The SDK's own name for the unstable `/usage` control request; it is
+ *  documented to change when the API stabilizes, so it lives in one place. */
+export const PLAN_USAGE_METHOD = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'
+
+/** A throwaway probe should not outlive a wedged control request. */
+export const PLAN_USAGE_TIMEOUT_MS = 20_000
+
+/** Invoke the experimental usage control request, or say why we cannot. */
+export function readPlanUsageFrom(query: Query): Promise<unknown> {
+  const read = (query as Partial<Record<typeof PLAN_USAGE_METHOD, () => Promise<unknown>>>)[PLAN_USAGE_METHOD]
+  if (typeof read !== 'function') throw new Error('dsh-claude: this Claude Agent SDK build exposes no plan usage API')
+  return read.call(query)
+}
 
 /** One utilization window. `label` is only set for server-named model buckets
  *  (e.g. 'Fable'); the fixed windows are translated client-side from `id`. */
@@ -78,6 +93,45 @@ export function normalizePlanUsage(value: unknown, fetchedAt: number): PlanUsage
     ...(subscription === undefined ? {} : { subscription }),
     windows,
     fetchedAt,
+  }
+}
+
+/** Read plan limits from a throwaway Claude process.
+ *
+ *  Deliberately NOT routed through the supervisor. Borrowing a session's
+ *  process fails outright while that session is mid-turn, and for a session
+ *  with no process yet it would resume the whole conversation — and possibly
+ *  evict another idle session to make room — just to read three numbers. This
+ *  query carries no tools, no permission bridge, and no session binding: it
+ *  starts, answers one control request, and is killed. */
+export async function probePlanUsage(
+  executablePath: string,
+  fetchedAt: number,
+  factory: (params: { prompt: AsyncIterable<SDKUserMessage>; options: ClaudeOptions }) => Query = claudeQuery,
+): Promise<PlanUsageReport> {
+  const lifetime = new AbortController()
+  const timer = setTimeout(() => lifetime.abort(), PLAN_USAGE_TIMEOUT_MS)
+  timer.unref?.()
+  // The SDK ends a query as soon as its prompt stream closes, so hold the
+  // stream open and let the abort below tear the process down instead.
+  const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
+    await new Promise<never>(() => {})
+  })()
+  const query = factory({
+    prompt,
+    options: {
+      cwd: process.cwd(),
+      abortController: lifetime,
+      ...(executablePath.length === 0 ? {} : { pathToClaudeCodeExecutable: executablePath }),
+    },
+  })
+  try {
+    // Control responses only arrive while the message stream is pumped.
+    void (async () => { for await (const _ of query) { /* drain */ } })().catch(() => undefined)
+    return normalizePlanUsage(await readPlanUsageFrom(query), fetchedAt)
+  } finally {
+    clearTimeout(timer)
+    lifetime.abort()
   }
 }
 

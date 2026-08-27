@@ -373,8 +373,6 @@ export function PlanUsageCard({ t, load }: {
       {report !== undefined && report.fetchedAt > 0
         ? <p style={styles.notice}>{t('planUsageUpdated', { age: durationLabel(now - report.fetchedAt) })}</p>
         : null}
-      {report?.message === 'no-session' ? <p style={styles.notice}>{t('planUsageNoSession')}</p> : null}
-      {report?.message === 'busy' ? <p style={styles.notice}>{t('planUsageBusy')}</p> : null}
       {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('planUsageError')}: {error}</p>}
     </section>
   )

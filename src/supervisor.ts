@@ -28,11 +28,8 @@ import { createPermissionBridge } from './permission.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
+import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
-
-/** The SDK's own name for the unstable `/usage` control request; it is
- *  documented to change when the API stabilizes, so it lives in one place. */
-const PLAN_USAGE_METHOD = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -316,16 +313,11 @@ export class ClaudeSupervisor {
     return this.#contextWindows.get(model)
   }
 
-  /** Raw `/usage` payload carrying the claude.ai plan rate-limit windows.
-   *  The SDK method is explicitly experimental and its name encodes that it
-   *  may be renamed or removed, so a build without it degrades to an error the
-   *  caller reports rather than a crash. */
+  /** Raw `/usage` payload, read over a session's existing process. Only the
+   *  idle-time metadata bridge uses this; a user-triggered refresh runs
+   *  probePlanUsage instead so it never waits on, or perturbs, a session. */
   planUsage(agent: Agent, model = this.#config.defaultModel): Promise<unknown> {
-    return this.#runMetadata(agent, model, query => {
-      const read = (query as Partial<Record<typeof PLAN_USAGE_METHOD, () => Promise<unknown>>>)[PLAN_USAGE_METHOD]
-      if (typeof read !== 'function') throw new Error('dsh-claude: this Claude Agent SDK build exposes no plan usage API')
-      return read.call(query)
-    })
+    return this.#runMetadata(agent, model, query => readPlanUsageFrom(query))
   }
 
   runTurn(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {

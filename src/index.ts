@@ -33,7 +33,7 @@ import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
-import { normalizePlanUsage, recordPlanUsage } from './plan-usage.ts'
+import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
@@ -395,7 +395,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
     }
     registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
-    registerPlanUsageRoute(webCtx, supervisor, () => webCtx.agents.list().filter(agent => webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID))
+    registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
     registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
