@@ -46,6 +46,9 @@ describe('Claude pull requests overview', () => {
   it('renders session rows and an empty state', () => {
     const markup = renderToStaticMarkup(<ClaudePullRequestsPanel t={t} closeDetails={vi.fn()} openSession={vi.fn()} loadStatus={vi.fn()} sessions={store(byId)} />)
     expect(markup).toContain('overviewTitle')
+    // Details cards must clear the DSH Desktop macOS caption row that overlaps the column top.
+    expect(markup).toContain('class="dshClaudeDetailsCard"')
+    expect(markup).toContain('.dshDesktopDetailsSurface .dshClaudeDetailsCard {\n  height: calc(100% - 28px);\n  margin-top: 20px;')
     expect(markup).toContain('Dark mode')
     expect(markup).toContain('Login fix')
     expect(markup).not.toContain('Native')

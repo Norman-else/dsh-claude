@@ -283,16 +283,35 @@ export const primaryButton: CSSProperties = {
 export const tasksPanel: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  width: 'calc(100% - 16px)',
-  height: 'calc(100% - 16px)',
   minWidth: 0,
-  margin: 8,
   overflow: 'hidden',
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-1)',
   boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
 }
+
+export const detailsCardClass = 'dshClaudeDetailsCard'
+
+/**
+ * Geometry shared by every details-column card. Lives in a stylesheet rather
+ * than inline so the DSH Desktop macOS shell can be special-cased: its
+ * "advanced" frame floats a 32px opaque caption/drag row over the top of the
+ * conversation and details columns, 12px of which lands inside the column and
+ * used to cover the card's top border and corners.
+ */
+export const detailsCardCss = `
+.${detailsCardClass} {
+  box-sizing: border-box;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  margin: 8px;
+}
+.dshDesktopFrame[data-desktop-mode="advanced"][data-desktop-platform="darwin"] .dshDesktopDetailsSurface .${detailsCardClass} {
+  height: calc(100% - 28px);
+  margin-top: 20px;
+}
+`
 
 export const tasksHeader: CSSProperties = {
   boxSizing: 'border-box',
@@ -2329,10 +2348,7 @@ export const diffDeleteMuted: CSSProperties = {
 export const diffPanel: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  width: 'calc(100% - 16px)',
-  height: 'calc(100% - 16px)',
   minWidth: 0,
-  margin: 8,
   overflow: 'hidden',
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   borderRadius: 12,

@@ -180,8 +180,8 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
   ]))
   if (!projection.owned) return null
   return (
-    <div style={styles.tasksPanel}>
-      <style data-dsh-claude-panel-icon-styles>{styles.panelIconButtonCss}</style>
+    <div className={styles.detailsCardClass} style={styles.tasksPanel}>
+      <style data-dsh-claude-panel-icon-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}</style>
       <div style={styles.tasksHeader}>
         <div>
           <span style={styles.tasksHeading}>{t('tasksPanelTurn')}</span>

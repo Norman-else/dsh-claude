@@ -146,8 +146,8 @@ export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStat
     }
   }, [cwdKey, loadStatus])
   return (
-    <div style={styles.tasksPanel}>
-      <style data-dsh-claude-overview-styles>{styles.panelIconButtonCss}</style>
+    <div className={styles.detailsCardClass} style={styles.tasksPanel}>
+      <style data-dsh-claude-overview-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}</style>
       <header style={styles.tasksHeader}>
         <div>
           <span style={styles.tasksHeading}>{t('overviewTitle')}</span>

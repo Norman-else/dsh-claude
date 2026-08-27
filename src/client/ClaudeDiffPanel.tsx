@@ -431,8 +431,8 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   )
   return (
     <>
-      <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
-      <div style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
+      <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
+      <div className={styles.detailsCardClass} style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
           <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span style={styles.diffHeaderLabel}>{t('diffWorkingTree')}</span></div>
           <div style={styles.diffHeaderActions}>
