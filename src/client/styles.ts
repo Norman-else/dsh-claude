@@ -237,6 +237,22 @@ export const settingSelectCheck: CSSProperties = {
   textAlign: 'center',
 }
 
+export const settingHint: CSSProperties = {
+  display: 'inline-grid',
+  placeItems: 'center',
+  width: 14,
+  height: 14,
+  marginLeft: 6,
+  verticalAlign: 'text-top',
+  borderRadius: '50%',
+  border: '1px solid currentColor',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 9,
+  fontWeight: 600,
+  lineHeight: 1,
+  cursor: 'help',
+  userSelect: 'none',
+}
 export const planUsageMeter: CSSProperties = {
   display: 'flex',
   alignItems: 'center',

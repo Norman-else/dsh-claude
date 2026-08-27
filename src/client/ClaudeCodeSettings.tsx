@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
 import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -235,6 +236,24 @@ export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSetti
 /** Fixed windows carry a translated label; server-named model buckets (e.g.
  *  'Fable') arrive with their own `label` and are shown verbatim. */
 const TRANSLATED_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'])
+
+/** Per-setting label and the effect note that used to sit as a standalone
+ *  paragraph under the card; it now hangs off the label as a hover hint. */
+export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKey; hint: ClaudeCodeSettingsKey }>> = {
+  outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
+  worktreeBranchPrefix: { label: 'worktreeBranchPrefix', hint: 'worktreeBranchPrefixEffect' },
+  maxProcesses: { label: 'maxProcessesSetting', hint: 'maxProcessesEffect' },
+  idleTimeoutMinutes: { label: 'idleTimeoutSetting', hint: 'idleTimeoutEffect' },
+}
+
+/** '?' badge that reveals a setting's effect note on hover or keyboard focus. */
+export function SettingHint({ text, label }: { text: string; label: string }) {
+  return (
+    <Tooltip label={text} side="top" delayMs={150} maxWidth={320}>
+      <span role="note" tabIndex={0} aria-label={`${label}: ${text}`} style={styles.settingHint}>?</span>
+    </Tooltip>
+  )
+}
 
 export function isPlanUsageReport(value: unknown): value is PlanUsageReport {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -526,15 +545,14 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           <h3 style={styles.settingsSectionHeading}>{t('globalSettings')}</h3>
           <p style={styles.settingsBody}>{t('globalSettingsBody')}</p>
         </div>
-        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => (
+        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => {
+          const copy = SETTING_COPY[setting.key]
+          return (
           <div key={setting.key} style={styles.diagnosticGrid}>
-            <span style={styles.diagnosticLabel}>{setting.key === 'outputStyle'
-              ? t('outputStyle')
-              : setting.key === 'worktreeBranchPrefix'
-                ? t('worktreeBranchPrefix')
-                : setting.key === 'maxProcesses'
-                  ? t('maxProcessesSetting')
-                  : setting.key === 'idleTimeoutMinutes' ? t('idleTimeoutSetting') : setting.key}</span>
+            <span style={styles.diagnosticLabel}>
+              {copy === undefined ? setting.key : t(copy.label)}
+              {copy === undefined ? null : <SettingHint text={t(copy.hint)} label={t('settingHint')} />}
+            </span>
             {setting.kind === 'select' ? (
               <GlobalSettingSelect
                 setting={setting}
@@ -549,16 +567,8 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
               />
             )}
           </div>
-        ))}
-        {globalSettings?.settings.some(setting => setting.effect === 'new-session') === true
-          ? <p style={styles.notice}>{t('globalSettingsNewSession')}</p>
-          : null}
-        {globalSettings?.settings.some(setting => setting.effect === 'next-worktree') === true
-          ? <p style={styles.notice}>{t('worktreeBranchPrefixEffect')}</p>
-          : null}
-        {globalSettings?.settings.some(setting => setting.key === 'maxProcesses') === true
-          ? <p style={styles.notice}>{t('limitsSettingEffect')}</p>
-          : null}
+          )
+        })}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>
 
