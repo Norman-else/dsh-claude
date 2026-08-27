@@ -11,6 +11,7 @@ export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(['Task', 'Agent'])
 export const SDK_VERSION = '0.3.247'
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
 export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'
+export const CLAUDE_USAGE_PATH = '/plugins/dsh-claude/usage'
 export const CLAUDE_UPDATE_PATH = '/plugins/dsh-claude/update'
 export const CLAUDE_PROJECTION_PATH = '/plugins/dsh-claude/projection'
 export const CLAUDE_GLOBAL_SETTINGS_PATH = '/plugins/dsh-claude/settings/global'

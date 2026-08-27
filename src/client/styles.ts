@@ -237,6 +237,32 @@ export const settingSelectCheck: CSSProperties = {
   textAlign: 'center',
 }
 
+export const planUsageMeter: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  minWidth: 0,
+}
+export const planUsageTrack: CSSProperties = {
+  flex: '1 1 auto',
+  height: 6,
+  minWidth: 60,
+  borderRadius: 3,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  overflow: 'hidden',
+}
+export const planUsageFill: CSSProperties = {
+  height: '100%',
+  borderRadius: 3,
+  background: 'currentColor',
+  transition: 'width 200ms ease',
+}
+export const planUsageMeta: CSSProperties = {
+  flex: '0 0 auto',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  whiteSpace: 'nowrap',
+}
 export const settingsActions: CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
