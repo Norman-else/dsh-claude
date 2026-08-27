@@ -75,7 +75,7 @@ export function registerAskRoute(
       const controller = new AbortController()
       req.on('close', () => { controller.abort() })
       try {
-        await service.ask(cwd, request, preferencesFor(sessionId) ?? {}, event => { ndjson(res, event.type === 'text' ? { type: 'delta', text: event.text } : { type: 'thinking', text: event.text }) }, controller.signal)
+        await service.ask(cwd, request, preferencesFor(sessionId) ?? {}, event => { ndjson(res, event.type === 'text' ? { type: 'delta', text: event.text } : { type: event.type, text: event.text }) }, controller.signal)
         ndjson(res, { type: 'done' })
       } catch (error) {
         ndjson(res, {

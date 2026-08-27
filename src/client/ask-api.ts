@@ -9,10 +9,11 @@ export interface AskSelectionRequest {
 export type AskEvent =
   | { readonly type: 'delta'; readonly text: string }
   | { readonly type: 'thinking'; readonly text: string }
+  | { readonly type: 'status'; readonly text: string }
   | { readonly type: 'done' }
   | { readonly type: 'error'; readonly message: string }
 
-export type AskProgress = { readonly type: 'text' | 'thinking'; readonly text: string }
+export type AskProgress = { readonly type: 'text' | 'thinking' | 'status'; readonly text: string }
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -22,6 +23,7 @@ export function parseAskEvent(line: string): AskEvent {
   const event = record(JSON.parse(line) as unknown)
   if (event?.type === 'delta' && typeof event.text === 'string') return { type: 'delta', text: event.text }
   if (event?.type === 'thinking' && typeof event.text === 'string') return { type: 'thinking', text: event.text }
+  if (event?.type === 'status' && typeof event.text === 'string') return { type: 'status', text: event.text }
   if (event?.type === 'done') return { type: 'done' }
   if (event?.type === 'error') return { type: 'error', message: typeof event.message === 'string' ? event.message : 'The question could not be answered.' }
   throw new Error('Invalid ask stream event.')
@@ -55,6 +57,7 @@ export async function askAboutSelection(
     const event = parseAskEvent(line)
     if (event.type === 'delta') onProgress({ type: 'text', text: event.text })
     else if (event.type === 'thinking') onProgress({ type: 'thinking', text: event.text })
+    else if (event.type === 'status') onProgress({ type: 'status', text: event.text })
     else if (event.type === 'done') finished = true
     else throw new Error(event.message)
   }

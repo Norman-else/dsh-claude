@@ -1946,6 +1946,7 @@ export const askActions: CSSProperties = {
 }
 
 export const askAnswer: CSSProperties = {
+  flex: '1 1 auto',
   minHeight: 0,
   overflowY: 'auto',
   padding: '2px 2px 0',

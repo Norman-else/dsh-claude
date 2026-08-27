@@ -31,7 +31,7 @@ describe('ask prompt and CLI arguments', () => {
     expect(prompt).toContain('Surrounding reply, for context only:')
     expect(prompt).toContain('Question: 为什么不算已收?')
     expect(askPrompt({ selection: 'same', context: 'same', question: 'q' })).not.toContain('Surrounding reply')
-    expect(askArguments({})).toEqual(['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', ''])
+    expect(askArguments({})).toEqual(['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'])
     expect(askArguments({ model: 'default', thinkingMode: 'off' })).not.toContain('--model')
     expect(askArguments({ model: 'claude-fable-5', thinkingMode: 'ultracode' }).slice(-4)).toEqual(['--model', 'claude-fable-5', '--effort', 'max'])
     expect(effortFor('high')).toBe('high')
@@ -42,7 +42,8 @@ describe('ask prompt and CLI arguments', () => {
     expect(eventOfStreamLine(delta('Hel'))).toEqual({ type: 'text', text: 'Hel' })
     expect(eventOfStreamLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } }))).toEqual({ type: 'thinking', text: 'hmm' })
     expect(eventOfStreamLine(JSON.stringify({ type: 'result', subtype: 'success', result: 'Full answer' }))).toEqual({ type: 'result', text: 'Full answer' })
-    expect(eventOfStreamLine(JSON.stringify({ type: 'system', subtype: 'init' }))).toBeUndefined()
+    expect(eventOfStreamLine(JSON.stringify({ type: 'system', subtype: 'init' }))).toEqual({ type: 'status', text: 'ready' })
+    expect(eventOfStreamLine(JSON.stringify({ type: 'system', subtype: 'other' }))).toBeUndefined()
     expect(eventOfStreamLine('not json')).toBeUndefined()
   })
 })
@@ -59,10 +60,13 @@ describe('ask service', () => {
     const service = new AskService({ spawn }, '/bin/claude')
     const chunks: string[] = []
     const thoughts: string[] = []
+    const statuses: string[] = []
     await service.ask('/repo', { selection: 'PENDING', question: 'why?' }, { model: 'claude-fable-5', thinkingMode: 'high' }, event => {
       if (event.type === 'thinking') thoughts.push(event.text)
+      else if (event.type === 'status') statuses.push(event.text)
       else chunks.push(event.text)
     })
+    expect(statuses).toEqual(['ready'])
     expect(chunks.join('')).toBe('Because PENDING is not cash.')
     expect(thoughts).toEqual(['Consider cash…'])
     const spec = spawn.mock.calls[0]?.[0]
@@ -126,7 +130,7 @@ describe('ask route', () => {
   it('streams deltas as NDJSON for owned sessions and rejects unknown ones', async () => {
     const ctx = context()
     const service = {
-      ask: vi.fn(async (_cwd: string, _request: unknown, preferences: unknown, onEvent: (event: { type: 'text' | 'thinking'; text: string }) => void) => {
+      ask: vi.fn(async (_cwd: string, _request: unknown, preferences: unknown, onEvent: (event: { type: 'text' | 'thinking' | 'status'; text: string }) => void) => {
         expect(preferences).toEqual({ model: 'claude-fable-5', thinkingMode: 'high' })
         onEvent({ type: 'thinking', text: 'hmm' })
         onEvent({ type: 'text', text: 'Hello ' })

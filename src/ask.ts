@@ -63,6 +63,9 @@ export function askArguments(preferences: AskPreferences): readonly string[] {
   const effort = effortFor(preferences.thinkingMode)
   return [
     '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '',
+    // No MCP servers: a follow-up question never needs them and connecting
+    // them roughly doubles cold start.
+    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     ...(preferences.model === undefined || preferences.model === 'default' ? [] : ['--model', preferences.model]),
     ...(effort === undefined ? [] : ['--effort', effort]),
   ]
@@ -77,6 +80,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 export type AskStreamEvent =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'thinking'; readonly text: string }
+  | { readonly type: 'status'; readonly text: string }
   | { readonly type: 'result'; readonly text: string }
 
 export function eventOfStreamLine(line: string): AskStreamEvent | undefined {
@@ -87,6 +91,7 @@ export function eventOfStreamLine(line: string): AskStreamEvent | undefined {
     return undefined
   }
   if (parsed === undefined) return undefined
+  if (parsed.type === 'system' && parsed.subtype === 'init') return { type: 'status', text: 'ready' }
   if (parsed.type === 'stream_event') {
     const event = record(parsed.event)
     const delta = record(event?.delta)

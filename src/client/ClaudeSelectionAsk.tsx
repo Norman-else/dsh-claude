@@ -122,6 +122,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
   const [answer, setAnswer] = useState('')
   const [thinking, setThinking] = useState('')
   const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [started, setStarted] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'answering' | 'done'>('idle')
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState<'selection' | 'answer'>()
@@ -142,6 +143,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     setAnswer('')
     setThinking('')
     setThinkingOpen(false)
+    setStarted(false)
     setPhase('idle')
     setError(undefined)
     setCopied(undefined)
@@ -241,10 +243,12 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
     setAnswer('')
     setThinking('')
     setThinkingOpen(false)
+    setStarted(false)
     setError(undefined)
     setPhase('answering')
     void askAboutSelection(selection.sessionId, { selection: selection.text, context: selection.context, question }, progress => {
-      if (progress.type === 'thinking') setThinking(current => current + progress.text)
+      if (progress.type === 'status') setStarted(true)
+      else if (progress.type === 'thinking') setThinking(current => current + progress.text)
       else setAnswer(current => current + progress.text)
     }, aborter.signal).then(() => {
       if (!aborter.signal.aborted) setPhase('done')
@@ -311,7 +315,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
                 <span style={thinkingOpen ? styles.askThinkingFull : styles.askThinkingPreview}>{thinkingOpen ? thinking : thinking.trimEnd().split('\n').filter(line => line.trim().length > 0).at(-1)}</span>
               </button>
             )}
-            {answer.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{t('askThinking')}</span> : null}
+            {answer.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{started ? t('askThinking') : t('askStarting')}</span> : null}
             {answer.length === 0 ? null : <MarkdownText text={answer} streaming={phase === 'answering'} />}
             {error === undefined ? null : <p role="alert" style={styles.askError}>{error}</p>}
           </div>
