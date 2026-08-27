@@ -67,6 +67,77 @@ describe('Claude SDK message normalization', () => {
     }))).toEqual([{ kind: 'protocol-error', title: 'Malformed Claude user message', detail: expect.anything() }])
   })
 
+  it('normalizes the per-call prompt accounting an assistant message carries', () => {
+    // This is the sample DSH's context meter divides by the context window.
+    // The result message's usage sums every call the turn made and must never
+    // stand in for it.
+    expect(normalizeSdkMessage(sdk({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: 'text', text: 'hi' }],
+        usage: { input_tokens: 12, output_tokens: 30, cache_read_input_tokens: 155_000, cache_creation_input_tokens: 400 },
+      },
+    }))).toEqual([
+      { kind: 'assistant-text', text: 'hi' },
+      {
+        kind: 'request-usage',
+        usage: { inputTokens: 12, outputTokens: 30, cacheReadTokens: 155_000, cacheCreationTokens: 400 },
+      },
+    ])
+  })
+
+  it('keeps a subagent call out of the main conversation prompt sample', () => {
+    // A subagent bills against its own context; adopting its prompt size would
+    // make the meter read whichever subagent happened to answer last.
+    expect(normalizeSdkMessage(sdk({
+      type: 'assistant',
+      parent_tool_use_id: 'task-1',
+      message: { content: [], usage: { input_tokens: 3, output_tokens: 1 } },
+    }))).toEqual([{
+      kind: 'request-usage',
+      usage: { inputTokens: 3, outputTokens: 1 },
+      parentToolUseId: 'task-1',
+    }])
+  })
+
+  it('reports no prompt sample when an assistant message carries no usage', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'text', text: 'hi' }] },
+    }))).toEqual([{ kind: 'assistant-text', text: 'hi' }])
+  })
+
+  it('normalizes the compaction boundary that /compact leaves behind', () => {
+    // `/compact` runs no model turn and its `Compacted` echo is a block-less
+    // user message, so this boundary is the only trace the conversation was
+    // rewritten. Falling through to the generic 'status' fallback would make a
+    // compacted conversation render nothing at all.
+    expect(normalizeSdkMessage(sdk({
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: 'session-1',
+      compact_metadata: { trigger: 'manual', pre_tokens: 128_000, post_tokens: 32_000, duration_ms: 4_200 },
+    }))).toEqual([{ kind: 'compaction', trigger: 'manual', preTokens: 128_000, postTokens: 32_000, durationMs: 4_200 }])
+  })
+
+  it('keeps the compaction boundary usable when the CLI reports no metadata', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: 'session-1',
+    }))).toEqual([{ kind: 'compaction' }])
+    // An unrecognized trigger is dropped rather than guessed: the divider says
+    // a compaction happened without claiming who asked for it.
+    expect(normalizeSdkMessage(sdk({
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: 'session-1',
+      compact_metadata: { trigger: 'scheduled', pre_tokens: 'lots' },
+    }))).toEqual([{ kind: 'compaction' }])
+  })
+
   it('normalizes successful result usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'result',

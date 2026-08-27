@@ -27,7 +27,12 @@ import {
 } from '../src/client/ClaudeTasksPanel.tsx'
 import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from '../src/client/ClaudeActiveTasksNode.tsx'
-import { ClaudeActivityNode, ClaudeTranscriptToolGroup, ClaudeTranscriptToolItem } from '../src/client/ClaudeActivityNode.tsx'
+import {
+  ClaudeActivityNode,
+  ClaudeCompactionDivider,
+  ClaudeTranscriptToolGroup,
+  ClaudeTranscriptToolItem,
+} from '../src/client/ClaudeActivityNode.tsx'
 
 const taskCall: ClaudeActivityEvent = {
   turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
@@ -300,6 +305,59 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).not.toContain('dsh-claude-tool-group-card')
     expect(markup).toContain('+2')
     expect(markup).toContain('−1')
+  })
+
+  it('splits the transcript at a compaction boundary instead of dropping it', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 0, kind: 'text', text: 'Before compaction.' },
+      { turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'read-1', toolName: 'Read', detail: '{"file_path":"a.ts"}' },
+      { turn: 2, step: 1, ordinal: 2, kind: 'tool-result', phase: 'completed', toolUseId: 'read-1', detail: 'contents' },
+      {
+        turn: 2, step: 1, ordinal: 3, kind: 'compaction', phase: 'completed',
+        title: 'Claude compacted the conversation',
+        detail: JSON.stringify({ trigger: 'manual', preTokens: 128_000, postTokens: 32_000, durationMs: 4_200 }),
+      },
+      { turn: 2, step: 1, ordinal: 4, kind: 'text', text: 'After compaction.' },
+    ]
+
+    // The boundary closes the open tool group: it separates prose rather than
+    // reporting work, so it can never land inside one group.
+    expect(transcriptItemsForStep(activities, 2, 1)).toEqual([
+      { kind: 'text', ordinal: 0, text: 'Before compaction.' },
+      { kind: 'tools', ordinal: 1, tools: [expect.objectContaining({ toolUseId: 'read-1' })] },
+      { kind: 'compaction', ordinal: 3, compaction: { trigger: 'manual', preTokens: 128_000, postTokens: 32_000 } },
+      { kind: 'text', ordinal: 4, text: 'After compaction.' },
+    ])
+  })
+
+  it('reads a metadata-less compaction boundary without inventing figures', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 0, kind: 'compaction', phase: 'completed', detail: '{}' },
+      { turn: 2, step: 1, ordinal: 1, kind: 'compaction', phase: 'completed' },
+    ]
+
+    expect(transcriptItemsForStep(activities, 2, 1)).toEqual([
+      { kind: 'compaction', ordinal: 0, compaction: {} },
+      { kind: 'compaction', ordinal: 1, compaction: {} },
+    ])
+  })
+
+  it('renders the compaction divider with token figures only when both are known', () => {
+    const render = (compaction: Parameters<typeof ClaudeCompactionDivider>[0]['compaction']) =>
+      renderToStaticMarkup(createElement(ClaudeCompactionDivider, {
+        compaction,
+        t: ((key: string) => key) as never,
+      }))
+
+    expect(render({ trigger: 'manual', preTokens: 128_000, postTokens: 32_000 }))
+      .toContain('compacted · 128K → 32K')
+    expect(render({ trigger: 'auto', preTokens: 128_000, postTokens: 32_000 }))
+      .toContain('compactedAuto · 128K → 32K')
+    // A half-reported boundary still draws the rule; it just says less.
+    const partial = render({ preTokens: 128_000 })
+    expect(partial).toContain('compacted')
+    expect(partial).not.toContain('→')
+    expect(partial).toContain('role="separator"')
   })
 
   it('renders sidecar text and tools from the unified transcript', () => {

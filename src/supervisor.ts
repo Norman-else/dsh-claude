@@ -147,6 +147,8 @@ interface ActiveTurn {
   /** Stable sidecar ordinal reused while the current assistant segment grows. */
   transcriptTextOrdinal: number | undefined
   thinking: string
+  /** Newest single-call prompt accounting; what DSH's context meter divides. */
+  requestUsage: ClaudeUsage | undefined
   aborted: boolean
   deniedToolUseIds: Set<string>
   /** Root call names by toolUseId; tool results carry none of their own. */
@@ -301,12 +303,46 @@ export class ClaudeSupervisor {
 
   async contextUsage(agent: Agent, model = this.#config.defaultModel): Promise<SDKControlGetContextUsageResponse> {
     const usage = await this.#runMetadata(agent, model, query => query.getContextUsage())
-    const contextWindow = usage.rawMaxTokens > 0 ? usage.rawMaxTokens : usage.maxTokens
-    if (contextWindow > 0) {
-      this.#contextWindows.set(model, contextWindow)
-      this.#contextWindows.set(usage.model, contextWindow)
-    }
+    this.#recordContextWindow(model, usage)
     return usage
+  }
+
+  /** Cache a window under both the selector id the caller asked for and the
+   *  concrete model the CLI reports, so either name resolves it later. */
+  #recordContextWindow(model: string, usage: SDKControlGetContextUsageResponse): void {
+    const contextWindow = usage.rawMaxTokens > 0 ? usage.rawMaxTokens : usage.maxTokens
+    if (contextWindow <= 0) return
+    this.#contextWindows.set(model, contextWindow)
+    this.#contextWindows.set(usage.model, contextWindow)
+  }
+
+  /** Learn a model's context window the first time a turn finishes on it.
+   *
+   *  DSH hides its context meter entirely unless the route publishes a
+   *  capacity, and these numbers move with Claude releases — so none are
+   *  hardcoded; the CLI is asked over the session's own live process.
+   *
+   *  Turn completion is the earliest honest moment to ask. `entry.model` is
+   *  already the model that just ran, so no model switch is provoked — which
+   *  rules out asking from `resolveModel`, since DSH resolves every model in
+   *  the catalog to build its picker and `#metadataEntry` would switch the live
+   *  session once per entry. And nothing is lost by waiting: the meter needs a
+   *  usage sample too, and no turn has reported one before the first turn ends.
+   *
+   *  Best-effort — a failure leaves the window unknown (the meter stays hidden,
+   *  exactly as before) and the next completed turn tries again. */
+  async #learnContextWindow(entry: SupervisorEntry): Promise<void> {
+    if (this.#contextWindows.has(entry.model)) return
+    try {
+      const usage = await withTimeout(
+        entry.query.getContextUsage(),
+        CLAUDE_METADATA_TIMEOUT_MS,
+        'Claude context window probe',
+      )
+      this.#recordContextWindow(entry.model, usage)
+    } catch {
+      // Intentionally silent: this is opportunistic chrome, never turn-critical.
+    }
   }
 
   contextWindow(model: string): number | undefined {
@@ -390,6 +426,7 @@ export class ClaudeSupervisor {
       transcriptText: '',
       transcriptTextOrdinal: undefined,
       thinking: '',
+      requestUsage: undefined,
       aborted: false,
       deniedToolUseIds: new Set(),
       callNames: new Map(),
@@ -757,6 +794,27 @@ export class ClaudeSupervisor {
           isError: message.phase === 'failed',
         })
         return
+      case 'request-usage':
+        // A subagent call bills against its own context, so it never stands in
+        // for the main conversation's size.
+        if (message.parentToolUseId === undefined) active.requestUsage = message.usage
+        return
+      case 'compaction':
+        // Close the open prose span first: compaction sits *between* what was
+        // said before and after it, never inside one text segment.
+        this.#closeTranscriptTextSegment(active)
+        await this.#appendActivity(active, {
+          kind: 'compaction',
+          phase: 'completed',
+          title: 'Claude compacted the conversation',
+          detail: {
+            ...(message.trigger === undefined ? {} : { trigger: message.trigger }),
+            ...(message.preTokens === undefined ? {} : { preTokens: message.preTokens }),
+            ...(message.postTokens === undefined ? {} : { postTokens: message.postTokens }),
+            ...(message.durationMs === undefined ? {} : { durationMs: message.durationMs }),
+          },
+        })
+        return
       case 'status':
       case 'warning':
       case 'unknown':
@@ -903,6 +961,25 @@ export class ClaudeSupervisor {
     await this.#sidecar.writeTasks(entry.sessionId, [...entry.tasks.values()]).catch(() => undefined)
   }
 
+  /** What DSH is told about token usage.
+   *
+   *  `TokenUsage` is documented as "token accounting for ONE model call", and
+   *  DSH's token meter divides `uncachedInput + cacheRead + cacheWrite` by the
+   *  context window to draw context pressure. One Claude turn makes many calls
+   *  and the CLI's result usage sums all of them, so reporting that sum pinned
+   *  the meter at 100%: a 35-call turn reads the same prompt from cache 35
+   *  times, which sums past the window without the conversation ever growing.
+   *  The newest single call answers "how big is this conversation now".
+   *
+   *  The sidecar activity keeps the turn total instead — that is the audit and
+   *  cost record, and nothing divides it by a window. */
+  #reportedUsage(
+    active: ActiveTurn,
+    result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
+  ): ClaudeUsage {
+    return active.requestUsage ?? result.usage
+  }
+
   async #completeProgressSegment(
     active: ActiveTurn,
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
@@ -916,7 +993,7 @@ export class ClaudeSupervisor {
         summary: usageSummary(result.usage),
         usage: result.usage,
       })
-      active.output.push({ type: 'usage', usage: result.usage })
+      active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
     }
     if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
       active.text = result.text
@@ -960,7 +1037,7 @@ export class ClaudeSupervisor {
         summary: usageSummary(result.usage),
         usage: result.usage,
       })
-      active.output.push({ type: 'usage', usage: result.usage })
+      active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
     }
     const unmatchedDenials = (result.permissionDenials ?? [])
       .filter(denial => !active.deniedToolUseIds.has(denial.toolUseId))
@@ -1024,6 +1101,7 @@ export class ClaudeSupervisor {
     entry.active = undefined
     entry.state = 'idle'
     entry.lastUsedAt = Date.now()
+    await this.#learnContextWindow(entry)
     this.#armIdleTimer(entry)
   }
 

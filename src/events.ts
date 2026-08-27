@@ -9,6 +9,8 @@ import {
 export type ClaudeActivityKind =
   | 'text'
   | 'status'
+  /** Context compaction boundary; the transcript draws it as a divider. */
+  | 'compaction'
   | 'thinking'
   | 'tool-call'
   | 'tool-result'

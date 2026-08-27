@@ -30,6 +30,24 @@ export type NormalizedSdkMessage =
     kind: 'background-tasks'
     tasks: readonly { taskId: string; taskType?: string; description: string }[]
   }
+  | {
+    /** Context compaction boundary. The CLI compacts locally without running a
+     *  model turn, so this is the only evidence the conversation was rewritten;
+     *  `trigger` stays absent when the CLI does not name one. */
+    kind: 'compaction'
+    trigger?: 'manual' | 'auto'
+    preTokens?: number
+    postTokens?: number
+    durationMs?: number
+  }
+  | {
+    /** Prompt-side accounting for ONE provider call, read off an assistant
+     *  message. Distinct from the `result` usage, which sums every call the
+     *  turn made — see `ClaudeSupervisor#reportedUsage`. */
+    kind: 'request-usage'
+    usage: ClaudeUsage
+    parentToolUseId?: string
+  }
   | { kind: 'status'; title: string; summary?: string; detail?: unknown }
   | { kind: 'warning'; title: string; summary?: string; detail?: unknown }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
@@ -43,6 +61,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function string(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function contentText(content: unknown): string {
@@ -64,15 +86,27 @@ function taskUsageOf(usage: Record<string, unknown> | undefined): { totalTokens?
   return Object.keys(normalized).length === 0 ? undefined : normalized
 }
 
-function resultUsage(message: Record<string, unknown>): ClaudeUsage {
-  const usage = record(message.usage)
+/** Read one Anthropic `usage` envelope. Shared by the per-call sample on an
+ *  assistant message and the turn total on a result message. */
+function usageOf(usage: Record<string, unknown> | undefined): ClaudeUsage {
   const normalized: ClaudeUsage = {}
-  if (usage !== undefined) {
-    if (typeof usage.input_tokens === 'number') normalized.inputTokens = usage.input_tokens
-    if (typeof usage.output_tokens === 'number') normalized.outputTokens = usage.output_tokens
-    if (typeof usage.cache_read_input_tokens === 'number') normalized.cacheReadTokens = usage.cache_read_input_tokens
-    if (typeof usage.cache_creation_input_tokens === 'number') normalized.cacheCreationTokens = usage.cache_creation_input_tokens
-  }
+  if (usage === undefined) return normalized
+  if (typeof usage.input_tokens === 'number') normalized.inputTokens = usage.input_tokens
+  if (typeof usage.output_tokens === 'number') normalized.outputTokens = usage.output_tokens
+  if (typeof usage.cache_read_input_tokens === 'number') normalized.cacheReadTokens = usage.cache_read_input_tokens
+  if (typeof usage.cache_creation_input_tokens === 'number') normalized.cacheCreationTokens = usage.cache_creation_input_tokens
+  return normalized
+}
+
+function hasUsageCounts(usage: ClaudeUsage): boolean {
+  return usage.inputTokens !== undefined
+    || usage.outputTokens !== undefined
+    || usage.cacheReadTokens !== undefined
+    || usage.cacheCreationTokens !== undefined
+}
+
+function resultUsage(message: Record<string, unknown>): ClaudeUsage {
+  const normalized = usageOf(record(message.usage))
   if (typeof message.total_cost_usd === 'number') normalized.cumulativeCostUsd = message.total_cost_usd
   return normalized
 }
@@ -105,6 +139,10 @@ function normalizeAssistant(message: Record<string, unknown>): NormalizedSdkMess
         })
       }
     }
+  }
+  const usage = usageOf(record(envelope?.usage))
+  if (hasUsageCounts(usage)) {
+    normalized.push({ kind: 'request-usage', usage, ...(parentToolUseId === undefined ? {} : { parentToolUseId }) })
   }
   return normalized
 }
@@ -270,6 +308,25 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
   }
   if (subtype === 'api_retry') {
     return [{ kind: 'warning', title: 'Claude API retry', detail: message }]
+  }
+  if (subtype === 'compact_boundary') {
+    // `/compact` runs entirely inside the CLI: no assistant turn, and the
+    // `Compacted` echo arrives as a block-less user message that
+    // `normalizeUser` drops. Without this branch the boundary fell through to
+    // the generic fallback below and became audit-only 'status', so a
+    // compacted conversation showed nothing at all.
+    const metadata = record(message.compact_metadata)
+    const trigger = metadata?.trigger === 'auto' || metadata?.trigger === 'manual' ? metadata.trigger : undefined
+    const preTokens = finiteNumber(metadata?.pre_tokens)
+    const postTokens = finiteNumber(metadata?.post_tokens)
+    const durationMs = finiteNumber(metadata?.duration_ms)
+    return [{
+      kind: 'compaction',
+      ...(trigger === undefined ? {} : { trigger }),
+      ...(preTokens === undefined ? {} : { preTokens }),
+      ...(postTokens === undefined ? {} : { postTokens }),
+      ...(durationMs === undefined ? {} : { durationMs }),
+    }]
   }
   if (subtype === 'informational' || subtype === 'notification' || subtype === 'local_command_output') {
     return [{

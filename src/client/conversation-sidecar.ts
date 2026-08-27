@@ -42,10 +42,17 @@ export interface ClaudeTranscriptTool {
   subcalls: readonly ClaudeSubcall[]
 }
 
+export interface ClaudeCompaction {
+  trigger?: 'manual' | 'auto'
+  preTokens?: number
+  postTokens?: number
+}
+
 export type ClaudeTranscriptItem =
   | { kind: 'text'; ordinal: number; text: string }
   | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[]; additions?: number; deletions?: number; files?: number }
   | { kind: 'activity'; ordinal: number; row: ClaudeActivityChatData }
+  | { kind: 'compaction'; ordinal: number; compaction: ClaudeCompaction }
 
 export interface ClaudeTurnMarker {
   readonly turn: number
@@ -103,6 +110,8 @@ export function presentable(activity: ClaudeActivityEvent): boolean {
     case 'thinking':
       return activity.summary !== undefined && activity.summary.length > 0
     default:
+      // 'compaction' stays out of the disclosure rows on purpose: the
+      // transcript draws it as a divider instead, in `transcriptItemsForStep`.
       return false
   }
 }
@@ -224,6 +233,21 @@ function inputRecord(detail: string | undefined): Record<string, unknown> | unde
 function inputString(input: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = input?.[key]
   return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/** Read the compaction figures the supervisor stored as redacted JSON detail.
+ *  Every field is optional: an older CLI reports the boundary without metadata,
+ *  and the divider still renders — just without the token counts. */
+function compactionOf(activity: ClaudeActivityEvent): ClaudeCompaction {
+  const detail = inputRecord(activity.detail)
+  const trigger = detail?.trigger
+  const preTokens = detail?.preTokens
+  const postTokens = detail?.postTokens
+  return {
+    ...(trigger === 'manual' || trigger === 'auto' ? { trigger } : {}),
+    ...(typeof preTokens === 'number' ? { preTokens } : {}),
+    ...(typeof postTokens === 'number' ? { postTokens } : {}),
+  }
 }
 
 function lineCount(text: string): number {
@@ -349,6 +373,11 @@ export function transcriptItemsForStep(
       if (activity.text !== undefined && activity.text.length > 0) {
         items.push({ kind: 'text', ordinal: activity.ordinal, text: activity.text })
       }
+      continue
+    }
+    if (activity.kind === 'compaction') {
+      flushGroup()
+      items.push({ kind: 'compaction', ordinal: activity.ordinal, compaction: compactionOf(activity) })
       continue
     }
     if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {

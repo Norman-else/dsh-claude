@@ -9,9 +9,10 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent } from '../events.ts'
-import type { ClaudeActivityChatData, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
+import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
 import { selectStepActivities } from './projection.ts'
+import { formatTokenCount } from './token-format.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -63,6 +64,9 @@ const ACTIVITY_CSS = [
   '.dsh-claude-flow-body{margin:4px 0 4px 22px;color:var(--dsw-alias-label-tertiary);font-size:14px;line-height:24px;white-space:pre-wrap;overflow-wrap:anywhere}',
   '.dsh-claude-flow-detail{max-height:260px;overflow:auto;margin:4px 0 4px 4px;padding:12px 16px;border:1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent));border-radius:12px;background:var(--dsw-alias-markdown-code-block);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-code-block-small);white-space:pre-wrap}',
   '.dsh-claude-flow-subcalls{display:flex;flex-direction:column;gap:2px;margin:4px 0 4px 22px;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:22px}',
+  '.dsh-claude-compaction{display:flex;align-items:center;gap:10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+  '.dsh-claude-compaction::before,.dsh-claude-compaction::after{content:"";flex:1;height:1px;background:var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))}',
+  '.dsh-claude-compaction-label{flex:none;white-space:nowrap}',
   '.dsh-claude-act-running{animation:dsh-claude-act-pulse 1.2s ease-in-out infinite}',
   '@keyframes dsh-claude-act-pulse{0%,100%{opacity:1}50%{opacity:.3}}',
 ].join('')
@@ -138,6 +142,21 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
         ? <div className="dsh-claude-flow-body">{body}</div>
         : <pre className="dsh-claude-flow-detail">{body}</pre>}
     </DisclosureRow>
+  )
+}
+
+/** Compaction has no turn of its own to render, so the transcript marks it with
+ *  a rule instead of a row: it separates prose rather than reporting work. */
+export function ClaudeCompactionDivider({ compaction, t }: { compaction: ClaudeCompaction; t: Translate }) {
+  const { trigger, preTokens, postTokens } = compaction
+  const label = trigger === 'auto' ? t('compactedAuto') : t('compacted')
+  const shrink = preTokens === undefined || postTokens === undefined
+    ? undefined
+    : `${formatTokenCount(preTokens)} → ${formatTokenCount(postTokens)}`
+  return (
+    <div className="dsh-claude-compaction" role="separator">
+      <span className="dsh-claude-compaction-label">{shrink === undefined ? label : `${label} · ${shrink}`}</span>
+    </div>
   )
 }
 
@@ -353,6 +372,8 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
     <div className="dsh-claude-flow">
       {items.map(item => item.kind === 'text'
         ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><MarkdownText text={item.text} /></div>
+        : item.kind === 'compaction'
+        ? <ClaudeCompactionDivider key={`compaction:${item.ordinal}`} compaction={item.compaction} t={t} />
         : item.kind === 'tools'
           ? <ClaudeTranscriptToolGroup
               key={`tools:${item.ordinal}`}

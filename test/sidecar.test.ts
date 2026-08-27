@@ -111,6 +111,15 @@ describe('Claude sidecar repository', () => {
     expect(durable).toContain('[REDACTED]')
   })
 
+  it('accepts the compaction kind so a compacted session still parses', () => {
+    // An unlisted kind fails the whole projection, not just its own row.
+    expect(parseClaudeSidecar({
+      schemaVersion: 1,
+      revision: 0,
+      activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'compaction', phase: 'completed' }],
+    }).activities).toHaveLength(1)
+  })
+
   it('rejects malformed persisted documents', () => {
     expect(() => parseClaudeSidecar({ schemaVersion: 2, revision: 0, activities: [] })).toThrow('invalid sidecar')
     expect(() => parseClaudeSidecar({

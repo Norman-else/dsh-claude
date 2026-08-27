@@ -392,6 +392,115 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('learns the context window of whichever model a finished turn ran on', async () => {
+    // DSH hides its context meter unless the route publishes a capacity, and
+    // only `opus[1m]` carries a static one — every other selector id has to be
+    // learned from the CLI, or the meter never appears for it.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    expect(runtime.contextWindow('sonnet')).toBeUndefined()
+
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello', model: 'sonnet' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(result())
+    await collect(output)
+
+    // The probe deliberately runs after the turn's stream closes, so it never
+    // delays the reply the user is waiting on.
+    await vi.waitFor(() => expect(runtime.contextWindow('sonnet')).toBe(200_000))
+    expect(runtime.contextWindow('claude-test')).toBe(200_000)
+    expect(query.getContextUsage).toHaveBeenCalledTimes(1)
+
+    // Once known, a later turn on the same model must not probe again.
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'again', model: 'sonnet' })
+    query.push(result('again'))
+    await collect(second)
+    expect(query.getContextUsage).toHaveBeenCalledTimes(1)
+    await runtime.dispose()
+  })
+
+  it('keeps a turn alive when the context window probe fails', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello', model: 'haiku' })
+    const query = transport.queries[0]!
+    query.getContextUsage.mockRejectedValueOnce(new Error('probe unavailable'))
+    query.push(init())
+    query.push(result())
+
+    await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'hello' })
+    expect(runtime.contextWindow('haiku')).toBeUndefined()
+    await runtime.dispose()
+  })
+
+  it('reports the newest single call to DSH while the sidecar keeps the turn total', async () => {
+    // DSH divides what it is told by the context window. The result usage sums
+    // every call in the turn — here two calls that each re-read the same
+    // prompt from cache — so reporting it would read as a context twice its
+    // real size.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [], usage: { input_tokens: 1, output_tokens: 10, cache_read_input_tokens: 900 } },
+    } as SDKMessage)
+    query.push({
+      type: 'assistant',
+      parent_tool_use_id: 'task-1',
+      message: { content: [], usage: { input_tokens: 7, output_tokens: 2, cache_read_input_tokens: 50 } },
+    } as SDKMessage)
+    query.push({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [], usage: { input_tokens: 2, output_tokens: 20, cache_read_input_tokens: 1_000 } },
+    } as SDKMessage)
+    query.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'claude-session-1',
+      result: 'hello',
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 3, output_tokens: 30, cache_read_input_tokens: 1_900 },
+    } as SDKMessage)
+
+    const events = await collect(output)
+    expect(events).toContainEqual({
+      type: 'usage',
+      usage: { inputTokens: 2, outputTokens: 20, cacheReadTokens: 1_000 },
+    })
+    // The audit trail still records what the whole turn actually billed.
+    const snapshot = await projection(runtime)
+    expect(snapshot.activities.filter(activity => activity.kind === 'usage')).toContainEqual(
+      expect.objectContaining({
+        usage: { inputTokens: 3, outputTokens: 30, cacheReadTokens: 1_900, cumulativeCostUsd: 0.01 },
+      }),
+    )
+    await runtime.dispose()
+  })
+
+  it('falls back to the turn total when no call reported its own usage', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(result())
+    await expect(collect(output)).resolves.toContainEqual({
+      type: 'usage',
+      usage: { inputTokens: 4, outputTokens: 2, cumulativeCostUsd: 0.01 },
+    })
+    await runtime.dispose()
+  })
+
   it('tolerates a repeated system/init across turns', async () => {
     const transport = factory()
     const owner = fakeAgent()
