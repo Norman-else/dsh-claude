@@ -27,6 +27,8 @@ import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
 import { registerRepositoryStatusRoute } from './repository-status-routes.ts'
 import { JiraService } from './jira.ts'
 import { registerJiraRoute } from './jira-routes.ts'
+import { AskService } from './ask.ts'
+import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
@@ -370,6 +372,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
     registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(webCtx.subprocess), cwdForClaudeSession)
+    registerAskRoute(webCtx, new AskService(webCtx.subprocess, supervisorConfig.executablePath), cwdForClaudeSession, sessionId => {
+      const snapshot = supervisor.snapshots().find(item => item.sessionId === sessionId)
+      return snapshot === undefined ? undefined : { model: snapshot.model, ...(snapshot.thinkingMode === undefined ? {} : { thinkingMode: snapshot.thinkingMode }) }
+    })
     const ownsClaudeSession = (sessionId: string): boolean => {
       const agent = webCtx.agents.get(sessionId as never)
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID

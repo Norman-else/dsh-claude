@@ -1,0 +1,393 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { MarkdownText, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { askAboutSelection, type AskProgress } from './ask-api.ts'
+import type { ClaudeCodeSettingsKey } from './locales.ts'
+import * as styles from './styles.ts'
+
+export interface ClaudeSelectionAskInjected {
+  t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
+  /** The session whose conversation is on screen. */
+  currentSessionId: () => string | undefined
+  /** Whether the plugin owns that session (the ask query needs a Claude cwd). */
+  ownsSession: (sessionId: string) => boolean
+  /** Append text to the session composer without submitting. */
+  insertIntoChat?: (sessionId: string, text: string) => void
+}
+
+interface SelectionRect {
+  readonly top: number
+  readonly left: number
+  readonly width: number
+  readonly bottom: number
+}
+
+interface SelectionInfo {
+  readonly sessionId: string
+  readonly text: string
+  readonly context: string
+  readonly rect: SelectionRect
+  /** Live range: re-measured on scroll and painted via the Highlight API. */
+  readonly range: Range
+}
+
+// Chat rows carry data-chat-flow-kind; Claude output renders under plugin
+// node kinds (claude-activity-step, …) as well as the Host 'assistant' kind,
+// so match any chat node that is not the user's own message.
+const CHAT_NODE = '[data-chat-flow-kind]'
+const USER_KIND = 'user'
+const MAX_SELECTION_CHARS = 8_000
+const MAX_CONTEXT_CHARS = 16_000
+const POPUP_WIDTH = 560
+const POPUP_ESTIMATED_HEIGHT = 320
+const TOOLBAR_WIDTH = 64
+const HIGHLIGHT_NAME = 'dsh-claude-ask'
+
+/** Answer content in arrival order, like the main window: tool steps and
+ *  text segments interleave; text deltas extend the trailing text block. */
+export type AnswerBlock =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'tool'; readonly id: string; readonly name: string; readonly summary?: string; readonly state: 'running' | 'done' | 'error' }
+
+export function appendAnswerBlock(blocks: readonly AnswerBlock[], progress: AskProgress): readonly AnswerBlock[] {
+  if (progress.type === 'text') {
+    const last = blocks.at(-1)
+    if (last?.kind === 'text') return [...blocks.slice(0, -1), { kind: 'text', text: last.text + progress.text }]
+    return [...blocks, { kind: 'text', text: progress.text }]
+  }
+  if (progress.type !== 'tool') return blocks
+  const index = blocks.findIndex(block => block.kind === 'tool' && block.id === progress.id)
+  if (index < 0) {
+    if (progress.phase === 'done') return blocks
+    return [...blocks, { kind: 'tool', id: progress.id, name: progress.name ?? 'tool', state: 'running', ...(progress.summary === undefined ? {} : { summary: progress.summary }) }]
+  }
+  const current = blocks[index] as Extract<AnswerBlock, { kind: 'tool' }>
+  const next: AnswerBlock = {
+    ...current,
+    ...(progress.name === undefined ? {} : { name: progress.name }),
+    ...(progress.summary === undefined ? {} : { summary: progress.summary }),
+    state: progress.phase === 'done' ? (progress.error === true ? 'error' : 'done') : current.state,
+  }
+  return [...blocks.slice(0, index), next, ...blocks.slice(index + 1)]
+}
+
+export function answerText(blocks: readonly AnswerBlock[]): string {
+  return blocks.filter((block): block is Extract<AnswerBlock, { kind: 'text' }> => block.kind === 'text').map(block => block.text.trim()).filter(text => text.length > 0).join('\n\n')
+}
+
+function rectOf(range: Range): SelectionRect {
+  const rect = range.getBoundingClientRect()
+  return { top: rect.top, left: rect.left, width: rect.width, bottom: rect.bottom }
+}
+
+/** Read the current selection when it sits inside an assistant reply. */
+export function selectionInfoOf(selection: Selection | null, sessionId: string | undefined): Omit<SelectionInfo, 'sessionId'> | undefined {
+  if (sessionId === undefined || selection === null || selection.isCollapsed || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  // A whole-line (triple-click) selection ends at the start of the NEXT chat
+  // row, so the common ancestor climbs above any row; anchor on the start
+  // node instead and fall back to the end node.
+  const hostOf = (node: Node | null): HTMLElement | null => {
+    const element = node instanceof Element ? node : node?.parentElement ?? null
+    return element?.closest<HTMLElement>(CHAT_NODE) ?? null
+  }
+  const host = hostOf(range.startContainer) ?? hostOf(range.endContainer)
+  if (host === null || host.dataset.chatFlowKind === USER_KIND) return undefined
+  const text = selection.toString().trim()
+  if (text.length === 0) return undefined
+  return {
+    text: text.slice(0, MAX_SELECTION_CHARS),
+    context: (host.textContent ?? '').trim().slice(0, MAX_CONTEXT_CHARS),
+    rect: rectOf(range),
+    range: range.cloneRange(),
+  }
+}
+
+export function toolbarPosition(rect: SelectionRect, viewportWidth: number): { top: number; left: number } {
+  return {
+    top: Math.max(8, rect.top - 40),
+    left: Math.min(Math.max(8, rect.left + rect.width / 2 - TOOLBAR_WIDTH / 2), Math.max(8, viewportWidth - TOOLBAR_WIDTH - 8)),
+  }
+}
+
+export type PopupSide = 'below' | 'above'
+
+/** Pick the side with room once, when the popup opens: below the selection
+ *  unless the space there is short and above is roomier. */
+export function popupSide(rect: SelectionRect, viewportHeight: number): PopupSide {
+  const roomBelow = viewportHeight - rect.bottom - 16
+  const roomAbove = rect.top - 16
+  return roomBelow >= POPUP_ESTIMATED_HEIGHT || roomBelow >= roomAbove ? 'below' : 'above'
+}
+
+/** Anchor on the chosen side so streamed content grows away from the text and
+ *  scrolls inside the popup instead of running off screen. */
+export function popupPlacement(rect: SelectionRect, side: PopupSide, viewportWidth: number, viewportHeight: number): { top?: number; bottom?: number; left: number; width: number; maxHeight: number } {
+  const width = Math.min(POPUP_WIDTH, viewportWidth - 16)
+  const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportWidth - width - 8))
+  const cap = Math.round(viewportHeight * 0.7)
+  if (side === 'below') {
+    const top = Math.max(8, rect.bottom + 8)
+    return { top, left, width, maxHeight: Math.max(120, Math.min(cap, viewportHeight - top - 8)) }
+  }
+  const bottom = Math.max(8, viewportHeight - rect.top + 8)
+  return { bottom, left, width, maxHeight: Math.max(120, Math.min(cap, viewportHeight - bottom - 8)) }
+}
+
+function CopyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" />
+    </svg>
+  )
+}
+
+function AskIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.75 2.75h10.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H8.2l-3.2 2.9v-2.9H2.75a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z" />
+      <path d="M6.4 6.3a1.6 1.6 0 1 1 2.3 1.5c-.5.3-.7.6-.7 1.1M8 10.6h.01" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m3.5 8.5 3 3 6-7" />
+    </svg>
+  )
+}
+
+/** Selection toolbar over assistant replies: copy, or ask a follow-up whose
+ *  answer streams into a popup rendered with the Host Markdown renderer. */
+export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertIntoChat }: ClaudeSelectionAskInjected) {
+  const [selection, setSelection] = useState<SelectionInfo>()
+  const [open, setOpen] = useState(false)
+  const [question, setQuestion] = useState('')
+  const [blocks, setBlocks] = useState<readonly AnswerBlock[]>([])
+  const answer = answerText(blocks)
+  const [thinking, setThinking] = useState('')
+  const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [started, setStarted] = useState(false)
+  const [phase, setPhase] = useState<'idle' | 'answering' | 'done'>('idle')
+  const [error, setError] = useState<string>()
+  const [copied, setCopied] = useState<'selection' | 'answer'>()
+  const [rect, setRect] = useState<SelectionRect>()
+  const [side, setSide] = useState<PopupSide>('below')
+  const popupRef = useRef<HTMLDivElement>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const controller = useRef<AbortController>()
+  const openRef = useRef(false)
+  openRef.current = open
+
+  const close = useCallback((): void => {
+    controller.current?.abort()
+    controller.current = undefined
+    setOpen(false)
+    setSelection(undefined)
+    setQuestion('')
+    setBlocks([])
+    setThinking('')
+    setThinkingOpen(false)
+    setStarted(false)
+    setPhase('idle')
+    setError(undefined)
+    setCopied(undefined)
+  }, [])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const update = (): void => {
+      if (openRef.current) return
+      const sessionId = currentSessionId()
+      if (sessionId === undefined || !ownsSession(sessionId)) {
+        setSelection(undefined)
+        return
+      }
+      const info = selectionInfoOf(document.getSelection(), sessionId)
+      setSelection(info === undefined ? undefined : { sessionId, ...info })
+    }
+    const schedule = (): void => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = setTimeout(update, 120)
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!(event.target instanceof Node)) return
+      if (popupRef.current?.contains(event.target) === true || toolbarRef.current?.contains(event.target) === true) return
+      if (openRef.current) close()
+    }
+    document.addEventListener('selectionchange', schedule)
+    document.addEventListener('mouseup', schedule)
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      if (timer !== undefined) clearTimeout(timer)
+      document.removeEventListener('selectionchange', schedule)
+      document.removeEventListener('mouseup', schedule)
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [close, currentSessionId, ownsSession])
+  useEffect(() => () => controller.current?.abort(), [])
+  // Follow the text: re-measure the live range on scroll and resize.
+  useEffect(() => {
+    setRect(selection?.rect)
+    if (selection === undefined) return
+    let frame: number | undefined
+    const reposition = (): void => {
+      if (frame !== undefined) return
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        const next = rectOf(selection.range)
+        if (next.width === 0 && next.bottom === next.top) return
+        setRect(next)
+      })
+    }
+    document.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      document.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [selection])
+  // Keep the asked-about text visibly marked while the popup owns focus. The
+  // Highlight API paints without touching the Host's DOM.
+  useEffect(() => {
+    if (!open || selection === undefined) return
+    const runtime = globalThis as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (range: Range) => unknown }
+    const registry = runtime.CSS?.highlights
+    if (registry === undefined || runtime.Highlight === undefined) return
+    registry.set(HIGHLIGHT_NAME, new runtime.Highlight(selection.range))
+    return () => { registry.delete(HIGHLIGHT_NAME) }
+  }, [open, selection])
+  useEffect(() => {
+    if (copied === undefined) return
+    const timer = setTimeout(() => setCopied(undefined), 1_200)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  if (selection === undefined || rect === undefined) return <span data-dsh-claude-selection-ask="armed" hidden />
+
+  const copy = (text: string, what: 'selection' | 'answer'): void => {
+    void navigator.clipboard.writeText(text).then(() => { setCopied(what) }, () => undefined)
+  }
+  const submit = (): void => {
+    if (question.trim().length === 0 || phase === 'answering') return
+    controller.current?.abort()
+    const aborter = new AbortController()
+    controller.current = aborter
+    setBlocks([])
+    setThinking('')
+    setThinkingOpen(false)
+    setStarted(false)
+    setError(undefined)
+    setPhase('answering')
+    void askAboutSelection(selection.sessionId, { selection: selection.text, context: selection.context, question }, progress => {
+      if (progress.type === 'status') setStarted(true)
+      else if (progress.type === 'thinking') setThinking(current => current + progress.text)
+      else setBlocks(current => appendAnswerBlock(current, progress))
+    }, aborter.signal).then(() => {
+      if (!aborter.signal.aborted) setPhase('done')
+    }, (reason: unknown) => {
+      if (aborter.signal.aborted) return
+      setError(reason instanceof Error ? reason.message : t('askFailed'))
+      setPhase('done')
+    })
+  }
+  const viewportWidth = typeof window === 'undefined' ? 1_280 : window.innerWidth
+  const viewportHeight = typeof window === 'undefined' ? 800 : window.innerHeight
+
+  if (!open) {
+    const position = toolbarPosition(rect, viewportWidth)
+    return (
+      <div ref={toolbarRef} role="toolbar" aria-label={t('askToolbar')} style={{ ...styles.askToolbar, top: position.top, left: position.left }}>
+        <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}</style>
+        <Tooltip label={copied === 'selection' ? t('askCopied') : t('copyTooltip')} side="top" delayMs={300}>
+          <button type="button" className={styles.panelIconButtonClass} aria-label={t('copyTooltip')} onMouseDown={event => { event.preventDefault() }} onClick={() => { copy(selection.text, 'selection') }}>
+            {copied === 'selection' ? <CheckIcon /> : <CopyIcon />}
+          </button>
+        </Tooltip>
+        <Tooltip label={t('askTooltip')} side="top" delayMs={300}>
+          <button type="button" className={styles.panelIconButtonClass} aria-label={t('askTooltip')} onMouseDown={event => { event.preventDefault() }} onClick={() => {
+            setSide(popupSide(rect, viewportHeight))
+            setOpen(true)
+          }}>
+            <AskIcon />
+          </button>
+        </Tooltip>
+      </div>
+    )
+  }
+
+  const placement = popupPlacement(rect, side, viewportWidth, viewportHeight)
+  return (
+    <div ref={popupRef} role="dialog" aria-label={t('askTooltip')} style={{ ...styles.askPopup, ...placement }}>
+      <style data-dsh-claude-ask-styles>{styles.panelIconButtonCss}{styles.askHighlightCss}</style>
+      <p style={styles.askQuote}>{selection.text}</p>
+      {phase === 'idle' ? (
+        <>
+          <textarea
+            autoFocus
+            value={question}
+            placeholder={t('askPlaceholder')}
+            style={styles.askTextarea}
+            onChange={event => { setQuestion(event.currentTarget.value) }}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                submit()
+              }
+            }}
+          />
+          <div style={styles.askActions}>
+            <button type="button" style={styles.askButton} onClick={close}>{t('askClose')}</button>
+            <button type="button" style={{ ...styles.askButton, ...styles.askPrimaryButton }} disabled={question.trim().length === 0} onClick={submit}>{t('askSubmit')}</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={styles.askQuestion}>{question}</p>
+          <div style={styles.askAnswer}>
+            {thinking.length === 0 ? null : (
+              <button type="button" style={styles.askThinkingRow} aria-expanded={thinkingOpen} onClick={() => { setThinkingOpen(value => !value) }}>
+                <span style={styles.askThinkingLabel}>{phase === 'answering' && answer.length === 0 ? t('askThinkingLive') : t('askThinkingLabel')}</span>
+                <span style={thinkingOpen ? styles.askThinkingFull : styles.askThinkingPreview}>{thinkingOpen ? thinking : thinking.trimEnd().split('\n').filter(line => line.trim().length > 0).at(-1)}</span>
+              </button>
+            )}
+            {blocks.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{started ? t('askThinking') : t('askStarting')}</span> : null}
+            {blocks.map((block, index) => block.kind === 'text'
+              ? <MarkdownText key={`text-${index}`} text={block.text} streaming={phase === 'answering' && index === blocks.length - 1} />
+              : (
+                <div key={block.id} style={styles.askToolRow}>
+                  <span style={{ ...styles.askToolGlyph, ...(block.state === 'error' ? styles.askToolGlyphError : block.state === 'done' ? styles.askToolGlyphDone : {}) }} aria-hidden="true">
+                    {block.state === 'running' ? '…' : block.state === 'done' ? '✓' : '×'}
+                  </span>
+                  <span style={styles.askToolName}>{block.name}</span>
+                  {block.summary === undefined ? null : <span style={styles.askToolSummary}>{block.summary}</span>}
+                </div>
+              ))}
+            {error === undefined ? null : <p role="alert" style={styles.askError}>{error}</p>}
+          </div>
+          <div style={styles.askActions}>
+            {answer.length === 0 ? null : (
+              <button type="button" style={styles.askButton} onClick={() => { copy(answer, 'answer') }}>{copied === 'answer' ? t('askCopied') : t('askCopyAnswer')}</button>
+            )}
+            {answer.length === 0 || insertIntoChat === undefined ? null : (
+              <button type="button" style={styles.askButton} onClick={() => {
+                insertIntoChat(selection.sessionId, `> ${selection.text.replaceAll('\n', '\n> ')}\n\n**${question}**\n\n${answer}`)
+                close()
+              }}>{t('askSendToChat')}</button>
+            )}
+            <button type="button" style={{ ...styles.askButton, ...styles.askPrimaryButton }} onClick={close}>{t('askClose')}</button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

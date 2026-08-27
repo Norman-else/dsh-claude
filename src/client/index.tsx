@@ -18,6 +18,7 @@ import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel
 import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
+import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
@@ -316,6 +317,27 @@ export function apply(ctx: ClientContext): void {
       }
     },
   }, ClaudeRepositoryStatus))
+  // Selection toolbar over assistant replies (copy / ask a follow-up). Root
+  // scoped: it resolves the on-screen session itself and only arms inside
+  // sessions this plugin owns.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'claude-selection-ask',
+    locale: namespace,
+  }, () => <ClaudeSelectionAsk
+    t={t}
+    currentSessionId={() => sessions?.list.getSnapshot().current as string | undefined}
+    ownsSession={sessionId => projections.source(sessionId).getSnapshot().owned}
+    {...(sessions === undefined || conversation === undefined ? {} : {
+      insertIntoChat: (sessionId: string, text: string) => {
+        const scope = sessions.scope(sessionId as SessionId)
+        if (scope === undefined) return
+        const input = conversation.input.for(scope)
+        const current = input.state.getSnapshot().draft
+        input.setDraft(current.trim() === '' ? text : `${current}\n\n${text}`)
+      },
+    })}
+  />))
   if (sessions !== undefined && conversation !== undefined) {
     // Shadow the Host queue strip: list-slot entries sharing an id form one
     // cell and the lowest priority renders, so this replaces it app-wide with

@@ -1844,6 +1844,229 @@ export const overviewEmpty: CSSProperties = {
   textAlign: 'center',
 }
 
+/* Selection toolbar and follow-up popup over assistant replies. Every border
+   uses the theme token with a currentColor fallback so nothing renders white. */
+
+const askSurfaceBorder = '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))'
+const askSurfaceShadow = 'var(--dsw-shadow-lv3, 0 8px 24px color-mix(in srgb, #000 24%, transparent))'
+
+/** Painted through CSS.highlights while the follow-up popup is open. */
+export const askHighlightCss = `
+::highlight(dsh-claude-ask) {
+  background-color: color-mix(in srgb, var(--dsw-static-blue-450) 30%, transparent);
+  color: inherit;
+}
+`
+
+export const askToolbar: CSSProperties = {
+  position: 'fixed',
+  zIndex: 2000,
+  // The Host overlay layer is pointer-events: none; opt this surface back in.
+  pointerEvents: 'auto',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+  padding: 3,
+  border: askSurfaceBorder,
+  borderRadius: 9,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: askSurfaceShadow,
+}
+
+export const askPopup: CSSProperties = {
+  position: 'fixed',
+  zIndex: 2000,
+  // The Host overlay layer is pointer-events: none; opt this surface back in.
+  pointerEvents: 'auto',
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10,
+  padding: 12,
+  border: askSurfaceBorder,
+  borderRadius: 12,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: askSurfaceShadow,
+  fontSize: 13,
+  lineHeight: '20px',
+}
+
+export const askQuote: CSSProperties = {
+  flex: 'none',
+  display: '-webkit-box',
+  WebkitLineClamp: 3,
+  WebkitBoxOrient: 'vertical',
+  margin: 0,
+  padding: '6px 10px',
+  overflow: 'hidden',
+  borderLeft: '3px solid color-mix(in srgb, var(--dsw-static-blue-450) 60%, transparent)',
+  borderRadius: 6,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+}
+
+export const askQuestion: CSSProperties = {
+  flex: 'none',
+  margin: 0,
+  color: 'var(--dsw-alias-label-primary)',
+  fontWeight: 600,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+}
+
+export const askTextarea: CSSProperties = {
+  width: '100%',
+  minHeight: 64,
+  boxSizing: 'border-box',
+  padding: '8px 10px',
+  border: askSurfaceBorder,
+  borderRadius: 8,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+  resize: 'vertical',
+}
+
+export const askActions: CSSProperties = {
+  flex: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 6,
+}
+
+export const askAnswer: CSSProperties = {
+  flex: '1 1 auto',
+  minHeight: 0,
+  overflowY: 'auto',
+  padding: '2px 2px 0',
+  wordBreak: 'break-word',
+}
+
+export const askButton: CSSProperties = {
+  minHeight: 26,
+  padding: '3px 10px',
+  border: askSurfaceBorder,
+  borderRadius: 7,
+  outline: 'none',
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  fontWeight: 600,
+  cursor: 'pointer',
+}
+
+export const askPrimaryButton: CSSProperties = {
+  border: '1px solid transparent',
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+}
+
+export const askThinkingRow: CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  margin: '0 0 8px',
+  padding: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const askThinkingLabel: CSSProperties = {
+  flex: 'none',
+  fontWeight: 600,
+}
+
+export const askThinkingPreview: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const askThinkingFull: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  maxHeight: 200,
+  overflowY: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+}
+
+export const askToolRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  margin: '2px 0 6px',
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+export const askToolGlyph: CSSProperties = {
+  flex: 'none',
+  width: 14,
+  textAlign: 'center',
+  color: 'var(--dsw-static-blue-450)',
+}
+
+export const askToolGlyphDone: CSSProperties = {
+  color: 'var(--dsw-alias-state-success-primary)',
+}
+
+export const askToolGlyphError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const askToolName: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontWeight: 600,
+}
+
+export const askToolSummary: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  fontFamily: 'var(--dsw-font-family-code, ui-monospace, monospace)',
+  fontSize: 11,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const askStatus: CSSProperties = {
+  marginRight: 'auto',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+}
+
+export const askError: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 12,
+}
+
 export const repositoryMergeTrigger: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',
