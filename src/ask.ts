@@ -107,10 +107,12 @@ export class AskService {
     }
     if (this.#executablePath.length === 0) throw new AskError('claude-unavailable', 'Claude Code is unavailable.')
     const timeout = AbortSignal.timeout(ASK_TIMEOUT_MS)
+    // The prompt rides stdin: `--tools ''` is variadic and would swallow a
+    // trailing positional prompt argument.
     const handle = this.#runtime.spawn({
-      argv: [this.#executablePath, ...askArguments(preferences), askPrompt(request)],
+      argv: [this.#executablePath, ...askArguments(preferences)],
       cwd,
-      stdio: { stdin: 'ignore', stdout: 'pipe', stderr: { maxBytes: MAX_STDERR_BYTES } },
+      stdio: { stdin: { data: askPrompt(request) }, stdout: 'pipe', stderr: { maxBytes: MAX_STDERR_BYTES } },
       graceMs: 1_000,
       signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
       env: {},

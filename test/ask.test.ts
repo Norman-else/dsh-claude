@@ -59,10 +59,10 @@ describe('ask service', () => {
     await service.ask('/repo', { selection: 'PENDING', question: 'why?' }, { model: 'claude-fable-5', thinkingMode: 'high' }, text => chunks.push(text))
     expect(chunks.join('')).toBe('Because PENDING is not cash.')
     const spec = spawn.mock.calls[0]?.[0]
-    expect(spec).toMatchObject({ cwd: '/repo', env: {}, stdio: { stdin: 'ignore', stdout: 'pipe' } })
+    expect(spec).toMatchObject({ cwd: '/repo', env: {}, stdio: { stdout: 'pipe' } })
     expect(spec?.argv.slice(0, 8)).toEqual(['/bin/claude', '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', ''])
-    expect(spec?.argv).toContain('--effort')
-    expect(spec?.argv.at(-1)).toContain('Question: why?')
+    expect(spec?.argv.at(-1)).toBe('high')
+    expect(spec?.stdio.stdin).toEqual({ data: expect.stringContaining('Question: why?') })
   })
 
   it('falls back to the final result and surfaces failures', async () => {
