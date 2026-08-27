@@ -4,6 +4,7 @@ import { CLAUDE_CODE_PRESET_ID } from '../src/constants.ts'
 import { mountClaudeMetadata } from '../src/index.ts'
 import type { ClaudeAgentCommandService } from '../src/command-bridge.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
+import { latestPlanUsage, resetPlanUsage } from '../src/plan-usage.ts'
 
 function createHostContext() {
   return {
@@ -61,6 +62,11 @@ describe('metadata bridge', () => {
         percentage: 0.5,
         categories: [],
       })),
+      planUsage: vi.fn(async () => ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 33, resets_at: '2026-08-27T12:00:00Z' } },
+      })),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
     const sidecar = {
       writeContextUsage: vi.fn(async () => undefined),
@@ -86,6 +92,29 @@ describe('metadata bridge', () => {
     await dispose?.()
   })
 
+  it('caches plan usage for the session-less settings page', async () => {
+    resetPlanUsage()
+    const host = createHostContext()
+    const { agent } = createAgent()
+    const supervisor = {
+      supportedCommands: vi.fn(async () => []),
+      contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0.5, categories: [] })),
+      planUsage: vi.fn(async () => ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 33, resets_at: '2026-08-27T12:00:00Z' } },
+      })),
+    } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+    const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
+    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+
+    await vi.waitFor(() => expect(latestPlanUsage()?.windows).toEqual([
+      { id: 'five_hour', utilization: 33, resetsAt: '2026-08-27T12:00:00Z' },
+    ]))
+    expect(latestPlanUsage()?.subscription).toBe('max')
+    await dispose?.()
+  })
+
   it('retries command projection when the preset service becomes available later', async () => {
     const host = createHostContext()
     const { agent } = createAgent()
@@ -106,6 +135,11 @@ describe('metadata bridge', () => {
         maxTokens: 200_000,
         percentage: 0.5,
         categories: [],
+      })),
+      planUsage: vi.fn(async () => ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 33, resets_at: '2026-08-27T12:00:00Z' } },
       })),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
 

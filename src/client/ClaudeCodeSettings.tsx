@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from '../constants.ts'
+import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
+import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
@@ -231,6 +232,136 @@ export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSetti
   )
 }
 
+/** Fixed windows carry a translated label; server-named model buckets (e.g.
+ *  'Fable') arrive with their own `label` and are shown verbatim. */
+const TRANSLATED_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'])
+
+export function isPlanUsageReport(value: unknown): value is PlanUsageReport {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const report = value as Record<string, unknown>
+  return typeof report.available === 'boolean'
+    && typeof report.fetchedAt === 'number'
+    && Array.isArray(report.windows)
+    && report.windows.every(entry => typeof entry === 'object' && entry !== null
+      && typeof (entry as Record<string, unknown>).id === 'string')
+}
+
+/** Coarse duration for a reset countdown or a fetch age: minutes below an
+ *  hour, then hours, then days. Never negative — a passed reset reads '0m'. */
+export function durationLabel(milliseconds: number): string {
+  const minutes = Math.max(0, Math.round(milliseconds / 60_000))
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`
+  return `${Math.floor(hours / 24)}d`
+}
+
+export function PlanUsageMeter({ window: usageWindow, t, now }: {
+  window: PlanUsageWindow
+  t: ClaudeCodeSettingsInjected['t']
+  now: number
+}) {
+  const used = usageWindow.utilization
+  const tone = used === undefined || used < 75
+    ? styles.diagnosticValue
+    : used < 90 ? styles.repositoryItemWarning : styles.repositoryItemError
+  const resetsIn = usageWindow.resetsAt === undefined ? undefined : Date.parse(usageWindow.resetsAt)
+  return (
+    <span style={{ ...styles.planUsageMeter, ...tone }}>
+      <span style={styles.planUsageTrack}>
+        <span style={{ ...styles.planUsageFill, width: `${used ?? 0}%` }} />
+      </span>
+      <span style={styles.planUsageMeta}>
+        {used === undefined ? '—' : t('planUsageUsed', { percent: Math.round(used) })}
+        {resetsIn === undefined || !Number.isFinite(resetsIn) ? null : ` · ${t('planUsageResets', { age: durationLabel(resetsIn - now) })}`}
+      </span>
+    </span>
+  )
+}
+
+/** Fetch the plan usage report; POST forces the backend to re-read it. */
+export async function loadPlanUsage(refresh: boolean): Promise<PlanUsageReport> {
+  const response = await fetch(CLAUDE_USAGE_PATH, {
+    method: refresh ? 'POST' : 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+  })
+  const payload = await response.json() as unknown
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
+      ? payload.error
+      : `HTTP ${response.status}`
+    throw new Error(message)
+  }
+  if (!isPlanUsageReport(payload)) throw new Error('Invalid plan usage response')
+  return payload
+}
+
+export function PlanUsageCard({ t, load }: {
+  t: ClaudeCodeSettingsInjected['t']
+  load: (refresh: boolean) => Promise<PlanUsageReport>
+}) {
+  const [report, setReport] = useState<PlanUsageReport>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const request = useCallback(async (refresh: boolean) => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      setReport(await load(refresh))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }, [load])
+
+  useEffect(() => { void request(false) }, [request])
+
+  // Countdowns are read at render time; the fetch timestamp is enough of a
+  // clock because a stale reading is labelled with its own age.
+  const now = Date.now()
+  return (
+    <section style={styles.settingsCard}>
+      <div style={styles.settingsCardHeader}>
+        <div>
+          <h3 style={styles.settingsSectionHeading}>{t('planUsage')}</h3>
+          <p style={styles.settingsBody}>{t('planUsageBody')}</p>
+        </div>
+        <button type="button" style={styles.button} disabled={busy} onClick={() => { void request(true) }}>
+          {busy ? t('planUsageRefreshing') : t('planUsageRefresh')}
+        </button>
+      </div>
+      {report === undefined
+        ? <p style={styles.notice}>{busy ? t('planUsageLoading') : t('planUsageNever')}</p>
+        : report.windows.length === 0
+          ? <p style={styles.notice}>{report.fetchedAt === 0 ? t('planUsageNever') : t('planUsageUnavailable')}</p>
+          : (
+            <div style={styles.diagnosticGrid}>
+              {report.subscription === undefined ? null : <>
+                <span style={styles.diagnosticLabel}>{t('planUsageSubscription')}</span>
+                <span style={styles.diagnosticValue}>{report.subscription}</span>
+              </>}
+              {report.windows.flatMap(usageWindow => [
+                <span key={`${usageWindow.id}-label`} style={styles.diagnosticLabel}>
+                  {usageWindow.label ?? (TRANSLATED_WINDOWS.has(usageWindow.id)
+                    ? t(`planWindow_${usageWindow.id}` as ClaudeCodeSettingsKey)
+                    : usageWindow.id)}
+                </span>,
+                <PlanUsageMeter key={`${usageWindow.id}-meter`} window={usageWindow} t={t} now={now} />,
+              ])}
+            </div>
+          )}
+      {report !== undefined && report.fetchedAt > 0
+        ? <p style={styles.notice}>{t('planUsageUpdated', { age: durationLabel(now - report.fetchedAt) })}</p>
+        : null}
+      {report?.message === 'no-session' ? <p style={styles.notice}>{t('planUsageNoSession')}</p> : null}
+      {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('planUsageError')}: {error}</p>}
+    </section>
+  )
+}
+
 export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   const [report, setReport] = useState<DoctorReport>()
   const [error, setError] = useState<string>()
@@ -430,6 +561,8 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           : null}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>
+
+      <PlanUsageCard t={t} load={loadPlanUsage} />
 
       <section style={styles.settingsCard}>
         <div style={styles.settingsCardHeader}>
