@@ -252,16 +252,35 @@ export const planUsageTrack: CSSProperties = {
   overflow: 'hidden',
 }
 export const planUsageFill: CSSProperties = {
+  // A span defaults to inline, where width and height are ignored — the bar
+  // silently renders as an empty track without this.
+  display: 'block',
   height: '100%',
   borderRadius: 3,
-  background: 'currentColor',
   transition: 'width 200ms ease',
 }
 export const planUsageMeta: CSSProperties = {
   flex: '0 0 auto',
-  color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 12,
   whiteSpace: 'nowrap',
+}
+
+export const PLAN_USAGE_WARNING_AT = 75
+export const PLAN_USAGE_ERROR_AT = 90
+
+/** Bar colour, plus a matching text colour once a window is worth noticing.
+ *  Below the warning threshold the reading stays quiet: accent bar, muted text. */
+export function planUsageTone(utilization: number | undefined): { fill: string; text: string } {
+  if (utilization !== undefined && utilization >= PLAN_USAGE_ERROR_AT) {
+    return { fill: 'var(--dsw-alias-state-error-primary)', text: 'var(--dsw-alias-state-error-primary)' }
+  }
+  if (utilization !== undefined && utilization >= PLAN_USAGE_WARNING_AT) {
+    return { fill: 'var(--dsw-alias-state-warning-primary, #d69e2e)', text: 'var(--dsw-alias-state-warning-primary, #d69e2e)' }
+  }
+  return {
+    fill: utilization === undefined ? 'transparent' : 'var(--dsw-static-blue-450)',
+    text: 'var(--dsw-alias-label-tertiary)',
+  }
 }
 export const settingsActions: CSSProperties = {
   display: 'flex',

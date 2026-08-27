@@ -262,16 +262,14 @@ export function PlanUsageMeter({ window: usageWindow, t, now }: {
   now: number
 }) {
   const used = usageWindow.utilization
-  const tone = used === undefined || used < 75
-    ? styles.diagnosticValue
-    : used < 90 ? styles.repositoryItemWarning : styles.repositoryItemError
+  const tone = styles.planUsageTone(used)
   const resetsIn = usageWindow.resetsAt === undefined ? undefined : Date.parse(usageWindow.resetsAt)
   return (
-    <span style={{ ...styles.planUsageMeter, ...tone }}>
+    <span style={styles.planUsageMeter}>
       <span style={styles.planUsageTrack}>
-        <span style={{ ...styles.planUsageFill, width: `${used ?? 0}%` }} />
+        <span style={{ ...styles.planUsageFill, width: `${used ?? 0}%`, background: tone.fill }} />
       </span>
-      <span style={styles.planUsageMeta}>
+      <span style={{ ...styles.planUsageMeta, color: tone.text }}>
         {used === undefined ? '—' : t('planUsageUsed', { percent: Math.round(used) })}
         {resetsIn === undefined || !Number.isFinite(resetsIn) ? null : ` · ${t('planUsageResets', { age: durationLabel(resetsIn - now) })}`}
       </span>
@@ -521,6 +519,8 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('error')}: {error}</p>}
       </section>
 
+      <PlanUsageCard t={t} load={loadPlanUsage} />
+
       <section style={styles.settingsCard}>
         <div>
           <h3 style={styles.settingsSectionHeading}>{t('globalSettings')}</h3>
@@ -561,8 +561,6 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           : null}
         {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
       </section>
-
-      <PlanUsageCard t={t} load={loadPlanUsage} />
 
       <section style={styles.settingsCard}>
         <div style={styles.settingsCardHeader}>

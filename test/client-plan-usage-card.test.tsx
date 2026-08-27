@@ -43,15 +43,26 @@ describe('PlanUsageMeter', () => {
     expect(markup).toContain('Resets in 2h 14m')
   })
 
+  it('paints the fill as a block so its width actually applies', () => {
+    // A span defaults to display:inline, where width is ignored entirely.
+    expect(render({ id: 'five_hour', utilization: 41.6 })).toContain('display:block')
+  })
+
   it('escalates the tone as a window fills', () => {
-    expect(render({ id: 'five_hour', utilization: 50 })).not.toContain('state-warning')
+    const quiet = render({ id: 'five_hour', utilization: 50 })
+    expect(quiet).toContain('--dsw-static-blue-450')
+    expect(quiet).not.toContain('state-warning')
+    expect(quiet).not.toContain('state-error')
     expect(render({ id: 'five_hour', utilization: 80 })).toContain('state-warning')
-    expect(render({ id: 'seven_day', utilization: 95 })).toContain('state-error')
+    const critical = render({ id: 'seven_day', utilization: 95 })
+    expect(critical).toContain('state-error')
+    expect(critical).not.toContain('--dsw-static-blue-450')
   })
 
   it('renders an empty bar when the server sends no number', () => {
     const markup = render({ id: 'seven_day' })
     expect(markup).toContain('width:0%')
+    expect(markup).toContain('background:transparent')
     expect(markup).toContain('—')
     expect(markup).not.toContain('Resets in')
   })
