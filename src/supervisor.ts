@@ -165,20 +165,16 @@ interface SupervisorEntry {
   lastUsedAt: number
   input: AsyncQueue<SDKUserMessage>
   query: Query
+  /** Official SDK initialization control request; no stdin nudge is required. */
+  sdkInitialization: Promise<void>
   lifetime: AbortController
   process: ManagedClaudeProcess | undefined
   claudeSessionId: string | undefined
   active: ActiveTurn | undefined
   idleTimer: ReturnType<typeof setTimeout> | undefined
-  initTimer: ReturnType<typeof setTimeout> | undefined
+  /** Whether the message stream has emitted system/init for session binding. */
   initialized: boolean
   expectedResume: string | undefined
-  /** Settled when init arrives; rejected on disconnect before init. */
-  initWaiters: Array<(error: unknown) => void>
-  /** Uuid of the startup handshake prompt; its local-command result is never a DSH turn outcome. */
-  handshakeUuid: ReturnType<typeof randomUUID>
-  /** True until the handshake's settlement arrives; its output is swallowed. */
-  handshakePending: boolean
   /** Live Claude task board (subagents and background tasks), keyed by task id. */
   tasks: Map<string, ClaudeTaskInfo>
   /** Last time a task snapshot was persisted (progress throttling). */
@@ -227,12 +223,6 @@ const BACKGROUND_TASK_REPORT_PROMPT = [
   'Report their final completed or failed outcomes concisely to the user.',
   'Do not start new tools or tasks, and do not repeat the earlier progress update.',
 ].join(' ')
-
-/** CLI ≥ 2.1.235 emits system/init only after its first stdin input, while
- *  the supervisor must see init before submitting any real turn. A local
- *  slash command nudges startup without costing a model call; its lifecycle
- *  messages are ignored because no DSH turn is active while they arrive. */
-const CLAUDE_HANDSHAKE_PROMPT = '/status'
 
 function usageSummary(usage: ClaudeUsage): string {
   const input = usage.inputTokens ?? 0
@@ -344,12 +334,12 @@ export class ClaudeSupervisor {
       await this.#makeRoom()
       entry = await this.#createEntry(request.agent, request.model ?? this.#config.defaultModel, request.thinkingMode)
       this.#entries.set(sessionId, entry)
-      this.#armInitializationTimer(entry)
     }
     if (entry.ownerAgent !== request.agent) {
       throw new Error(`dsh-claude: live agent identity changed for session ${sessionId}`)
     }
     if (entry.active !== undefined || entry.state === 'interrupting') throw new ClaudeTurnBusyError(sessionId)
+    await entry.sdkInitialization
 
     if (entry.idleTimer !== undefined) {
       clearTimeout(entry.idleTimer)
@@ -363,7 +353,7 @@ export class ClaudeSupervisor {
       await this.#disposeEntry(entry)
       entry = await this.#createEntry(request.agent, model, request.thinkingMode)
       this.#entries.set(sessionId, entry)
-      this.#armInitializationTimer(entry)
+      await entry.sdkInitialization
     } else {
       await this.#syncPermissionMode(entry)
       if (model !== entry.model) {
@@ -445,9 +435,9 @@ export class ClaudeSupervisor {
       if (this.#disposed) throw new Error('dsh-claude: supervisor is disposed')
       const entry = await this.#metadataEntry(agent, model)
       try {
-        // Control requests go out only after the CLI finishes initializing;
-        // issued earlier they can wedge and clog the caller's refresh chain.
-        await withTimeout(this.#whenInitialized(entry), CLAUDE_INITIALIZATION_TIMEOUT_MS, 'Claude metadata initialization')
+        // Use the SDK's initialize control request. system/init is emitted only
+        // after the first real stdin message and is reserved for session binding.
+        await entry.sdkInitialization
         return await withTimeout(operation(entry.query, entry), CLAUDE_METADATA_TIMEOUT_MS, 'Claude metadata request')
       } finally {
         entry.lastUsedAt = Date.now()
@@ -456,16 +446,6 @@ export class ClaudeSupervisor {
     })
     this.#admissionGate = admitted.then(() => undefined, () => undefined)
     return admitted
-  }
-
-  #whenInitialized(entry: SupervisorEntry): Promise<void> {
-    if (entry.initialized) return Promise.resolve()
-    if (entry.state === 'disposed' || entry.state === 'disconnected' || entry.state === 'outcome-unknown') {
-      return Promise.reject(new Error(`dsh-claude: session ${entry.sessionId} is ${entry.state}`))
-    }
-    return new Promise<void>((resolve, reject) => {
-      entry.initWaiters.push(error => (error === undefined ? resolve() : reject(error instanceof Error ? error : new Error(String(error)))))
-    })
   }
 
   async #metadataEntry(agent: Agent, model: string): Promise<SupervisorEntry> {
@@ -480,7 +460,6 @@ export class ClaudeSupervisor {
       await this.#makeRoom()
       entry = await this.#createEntry(agent, model)
       this.#entries.set(sessionId, entry)
-      this.#armInitializationTimer(entry)
     }
     if (entry.ownerAgent !== agent) {
       throw new Error(`dsh-claude: live agent identity changed for session ${sessionId}`)
@@ -551,11 +530,7 @@ export class ClaudeSupervisor {
       lifetime,
       claudeSessionId: binding?.claudeSessionId,
       expectedResume: binding?.claudeSessionId,
-      handshakeUuid: randomUUID(),
-      handshakePending: true,
       initialized: false,
-      initWaiters: [] as Array<(error: unknown) => void>,
-      initTimer: undefined,
       idleTimer: undefined,
       tasks: new Map<string, ClaudeTaskInfo>(),
       taskSnapshotAt: 0,
@@ -603,8 +578,15 @@ export class ClaudeSupervisor {
             : { effort: thinkingMode }),
     }
     entry.query = this.#queryFactory({ prompt: input, options })
-    entry.input.push(sdkUserMessage(CLAUDE_HANDSHAKE_PROMPT, entry.handshakeUuid))
     entry.pump = this.#runDetached(() => this.#pump(entry))
+    entry.sdkInitialization = withTimeout(
+      entry.query.initializationResult(),
+      CLAUDE_INITIALIZATION_TIMEOUT_MS,
+      'Claude SDK initialization',
+    ).then(() => {
+      if (entry.state === 'starting') entry.state = 'idle'
+    })
+    void entry.sdkInitialization.catch(error => this.#handleDisconnect(entry, error))
     return entry
   }
 
@@ -634,14 +616,9 @@ export class ClaudeSupervisor {
       if (message.cwd !== entry.cwd) {
         throw new ClaudeProtocolError(`Claude Code initialized in unexpected cwd ${message.cwd}; expected ${entry.cwd}`)
       }
-      if (entry.initTimer !== undefined) {
-        clearTimeout(entry.initTimer)
-        entry.initTimer = undefined
-      }
       entry.initialized = true
       entry.claudeSessionId = message.sessionId
       entry.state = entry.active === undefined ? 'idle' : 'running'
-      for (const waiter of entry.initWaiters.splice(0)) waiter(undefined)
       // A newly created Query cannot retain tasks from the previous process,
       // but repeated init messages from this same long-lived Query are only
       // protocol refreshes and must not erase background work still running.
@@ -668,24 +645,9 @@ export class ClaudeSupervisor {
       await this.#trackBackgroundLevel(entry, message.tasks, entry.active?.cursor.turn)
     }
 
-    if (entry.handshakePending) {
-      // Startup-handshake output of the local `/status` nudge: never part of
-      // any DSH turn. Protocol failures stay loud; the settlement clears the
-      // phase so subsequent messages belong to real turns.
-      if (message.kind === 'protocol-error') {
-        throw new ClaudeProtocolError(`${message.title}: ${JSON.stringify(message.detail).slice(0, 1_000)}`)
-      }
-      if (message.kind === 'result') entry.handshakePending = false
-      return
-    }
-
     const active = entry.active
     if (active === undefined) return
     if (message.kind === 'result') {
-      if (message.userMessageUuid !== undefined && message.userMessageUuid === entry.handshakeUuid) {
-        // Startup handshake settlement; never a DSH turn outcome.
-        return
-      }
       if (entry.claudeSessionId === undefined) {
         throw new ClaudeProtocolError('Claude Code sent a result before initialization')
       }
@@ -1169,20 +1131,8 @@ export class ClaudeSupervisor {
     } else {
       entry.state = 'disconnected'
     }
-    const waiters = entry.initWaiters.splice(0)
-    const waiterError = error instanceof Error ? error : new Error(String(error))
-    for (const waiter of waiters) waiter(waiterError)
     this.#entries.delete(entry.sessionId)
     await this.#disposeEntry(entry)
-  }
-
-  #armInitializationTimer(entry: SupervisorEntry): void {
-    const timer = setTimeout(() => {
-      if (entry.state !== 'starting' || entry.initialized) return
-      void this.#handleDisconnect(entry, new Error('Claude Code initialization timed out'))
-    }, CLAUDE_INITIALIZATION_TIMEOUT_MS)
-    timer.unref?.()
-    entry.initTimer = timer
   }
 
   #armIdleTimer(entry: SupervisorEntry): void {
@@ -1199,7 +1149,6 @@ export class ClaudeSupervisor {
   async #disposeEntry(entry: SupervisorEntry): Promise<void> {
     if (entry.state === 'disposed') return
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer)
-    if (entry.initTimer !== undefined) clearTimeout(entry.initTimer)
     entry.state = 'disposed'
     entry.input.discard(abortFailure())
     entry.query.close()

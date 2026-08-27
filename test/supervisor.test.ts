@@ -28,6 +28,14 @@ class FakeQuery extends AsyncQueue<SDKMessage> {
   readonly interrupt = vi.fn(async () => undefined)
   readonly setModel = vi.fn(async () => undefined)
   readonly setPermissionMode = vi.fn(async () => undefined)
+  readonly initializationResult = vi.fn(async () => ({
+    commands: [],
+    agents: [],
+    output_style: 'default',
+    available_output_styles: [],
+    models: [],
+    account: {},
+  }))
   readonly supportedCommands = vi.fn(async () => [
     { name: 'review', description: 'Review changes', argumentHint: '<path>' },
   ])
@@ -47,30 +55,11 @@ class FakeQuery extends AsyncQueue<SDKMessage> {
   }))
   readonly options: ClaudeOptions
   readonly input: AsyncIterable<SDKUserMessage>
-  #handshakeSettled = false
 
   constructor(input: AsyncIterable<SDKUserMessage>, options: ClaudeOptions) {
     super()
     this.input = input
     this.options = options
-  }
-
-  /** Mirror the real CLI: the startup `/status` handshake settles right
-   *  after the first init, before any real turn output. */
-  override push(message: SDKMessage): void {
-    super.push(message)
-    const record = message as unknown as { type?: string; subtype?: string; session_id?: string }
-    if (!this.#handshakeSettled && record.type === 'system' && record.subtype === 'init') {
-      this.#handshakeSettled = true
-      super.push({
-        type: 'result',
-        subtype: 'success',
-        session_id: record.session_id ?? 'claude-session-1',
-        result: '',
-        total_cost_usd: 0,
-        usage: { input_tokens: 0, output_tokens: 0 },
-      } as SDKMessage)
-    }
   }
 }
 
@@ -370,10 +359,7 @@ describe('Claude supervisor', () => {
     ]
     const output = await runtime.runTurn({ agent: owner.agent, prompt: content })
     const query = transport.queries[0]!
-    const iterator = query.input[Symbol.asyncIterator]()
-    const handshake = await iterator.next()
-    const input = await iterator.next()
-    expect(handshake.value?.message.content).toBe('/status')
+    const input = await query.input[Symbol.asyncIterator]().next()
     expect(input.value?.message).toEqual({ role: 'user', content })
     query.push(init())
     query.push(result())
@@ -387,9 +373,7 @@ describe('Claude supervisor', () => {
     const runtime = supervisor(transport.create)
     const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
     const query = transport.queries[0]!
-    const iterator = query.input[Symbol.asyncIterator]()
-    await iterator.next() // startup handshake
-    const input = await iterator.next()
+    const input = await query.input[Symbol.asyncIterator]().next()
     expect(input.value?.message).toEqual({ role: 'user', content: 'hello' })
     query.push(init())
     query.push(delta('hel'))
@@ -534,7 +518,6 @@ describe('Claude supervisor', () => {
     const collected = collect(output)
     const query = transport.queries[0]!
     const input = query.input[Symbol.asyncIterator]()
-    await input.next() // startup handshake
     await input.next() // direct user prompt
     query.push(init())
     for (const taskId of ['task-1', 'task-2']) {
@@ -844,8 +827,6 @@ describe('Claude supervisor', () => {
     await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
     const query = transport.queries[0]!
     const iterator = query.input[Symbol.asyncIterator]()
-    const handshake = await iterator.next()
-    expect(handshake.value?.message.content).toBe('/status')
     let receivedPrompt = false
     void iterator.next().then(value => { receivedPrompt = !value.done })
     await Promise.resolve()
@@ -855,20 +836,26 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('ignores the handshake settlement even when it carries the handshake uuid', async () => {
+  it('submits no internal slash command before the direct user prompt', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
-    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: '/compact' })
     const query = transport.queries[0]!
-    const handshake = await query.input[Symbol.asyncIterator]().next()
+    const input = query.input[Symbol.asyncIterator]()
+    await expect(input.next()).resolves.toMatchObject({
+      value: { message: { content: '/compact' } },
+      done: false,
+    })
+    let receivedAnotherInput = false
+    void input.next().then(value => { receivedAnotherInput = !value.done })
+    await Promise.resolve()
+    expect(receivedAnotherInput).toBe(false)
     query.push(init())
-    query.push({ ...result('handshake output'), user_message_uuid: handshake.value?.uuid } as SDKMessage)
-    query.push(result('real answer'))
-    await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'real answer' })
+    query.push(result('Compacted'))
+    await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'Compacted' })
     await runtime.dispose()
   })
-
   it('rejects an already-aborted request before allocating a query', async () => {
     const transport = factory()
     const owner = fakeAgent()
@@ -904,10 +891,8 @@ describe('Claude supervisor', () => {
     const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
     const query = transport.queries[0]!
     const iterator = query.input[Symbol.asyncIterator]()
-    await iterator.next() // startup handshake
-    let promptUuid = ''
-    void iterator.next().then(result => { promptUuid = result.value?.uuid ?? '' })
-    await Promise.resolve()
+    const submitted = await iterator.next()
+    const promptUuid = submitted.value?.uuid ?? ''
     query.interrupt.mockResolvedValue({ still_queued: [promptUuid] })
     controller.abort()
     await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
@@ -1007,7 +992,6 @@ describe('Claude supervisor', () => {
     const secondQuery = transport.queries[1]!
     expect(secondQuery.options.resume).toBe('claude-session-1')
     const input = secondQuery.input[Symbol.asyncIterator]()
-    await input.next() // startup handshake
     await expect(input.next()).resolves.toMatchObject({
       value: { message: { content: 'use a different approach' } },
       done: false,
