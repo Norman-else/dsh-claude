@@ -1436,6 +1436,15 @@ export const repositoryItemDot: CSSProperties = {
   background: 'currentColor',
 }
 
+export const repositoryGlyph: CSSProperties = {
+  width: 16,
+  height: 16,
+  flex: 'none',
+  display: 'grid',
+  placeItems: 'center',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
 export const repositoryItemSuccess: CSSProperties = {
   color: 'var(--dsw-alias-state-success-primary)',
 }

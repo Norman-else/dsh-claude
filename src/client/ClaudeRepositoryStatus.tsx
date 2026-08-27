@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
@@ -68,6 +68,38 @@ function StatusItem({ label, tone = 'neutral' }: { label: string; tone?: 'neutra
     ? styles.repositoryItemSuccess
     : tone === 'warning' ? styles.repositoryItemWarning : tone === 'error' ? styles.repositoryItemError : {}
   return <span style={{ ...styles.repositoryItem, ...toneStyle }}><span style={styles.repositoryItemDot} aria-hidden="true" /><span style={styles.repositoryItemLabel}>{label}</span></span>
+}
+
+/** Icon-only status: the tone carries the state, the full label lives in the tooltip and accessible name. */
+function StatusGlyph({ label, tone, children }: { label: string; tone: 'neutral' | 'success' | 'warning' | 'error'; children: ReactNode }) {
+  const toneStyle = tone === 'success'
+    ? styles.repositoryItemSuccess
+    : tone === 'warning' ? styles.repositoryItemWarning : tone === 'error' ? styles.repositoryItemError : {}
+  return (
+    <Tooltip label={label} side="top" delayMs={250}>
+      <span role="img" aria-label={label} style={{ ...styles.repositoryGlyph, ...toneStyle }}>{children}</span>
+    </Tooltip>
+  )
+}
+
+function ChecksGlyph({ state }: { state: 'passing' | 'pending' | 'failing' }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="5.5" />
+      {state === 'passing' ? <path d="M4.5 7.2l1.8 1.8 3.2-3.6" />
+        : state === 'failing' ? <path d="M5 5l4 4M9 5l-4 4" />
+        : <path d="M4.6 7h.01M7 7h.01M9.4 7h.01" strokeWidth="2" />}
+    </svg>
+  )
+}
+
+function ReviewGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1.5 7s2-3.5 5.5-3.5S12.5 7 12.5 7s-2 3.5-5.5 3.5S1.5 7 1.5 7Z" />
+      <circle cx="7" cy="7" r="1.8" />
+    </svg>
+  )
 }
 
 function PullRequestIcon({ size = 16, merged = false }: { size?: number; merged?: boolean }) {
@@ -290,7 +322,7 @@ export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }:
   return (
     <span ref={frameRef} style={styles.repositoryChecksFrame}>
       <button type="button" style={styles.repositoryChecksTrigger} aria-haspopup="dialog" aria-expanded={open} aria-label={t('repositoryChecksOpen')} onClick={toggle}>
-        <StatusItem label={t('repositoryChecks_failing')} tone="error" />
+        <StatusGlyph label={t('repositoryChecks_failing')} tone="error"><ChecksGlyph state="failing" /></StatusGlyph>
       </button>
       {open ? (
         <span role="dialog" aria-label={t('checksCardTitle')} style={styles.repositoryChecksCard}>
@@ -614,14 +646,14 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           </>) : <>
             {pullRequest.checks === 'failing'
               ? <FailingChecksControl sessionId={sessionId} pullNumber={pullRequest.number} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-              : pullRequest.checks === 'none' ? null : <StatusItem
+              : pullRequest.checks === 'none' ? null : <StatusGlyph
                   label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
                   tone={pullRequest.checks === 'passing' ? 'success' : 'warning'}
-                />}
-            {pullRequest.review === 'none' ? null : <StatusItem
+                ><ChecksGlyph state={pullRequest.checks} /></StatusGlyph>}
+            {pullRequest.review === 'none' ? null : <StatusGlyph
               label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
               tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
-            />}
+            ><ReviewGlyph /></StatusGlyph>}
             <AutoFixControl sessionId={sessionId} repository={repository} running={running} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
             <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} />

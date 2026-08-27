@@ -179,6 +179,11 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('aria-label="View working tree diff"')
     expect(statusMarkup).toContain('aria-label="Open merge options"')
     expect(statusMarkup).toContain('>Merge<')
+    // Checks/review are icon-only with the label in the tooltip and accessible name, so the bar never ellipsizes them.
+    expect(statusMarkup).toContain('role="img" aria-label="Checks passing"')
+    expect(statusMarkup).toContain('role="img" aria-label="Approved"')
+    expect(statusMarkup).not.toContain('>Checks passing<')
+    expect(statusMarkup).not.toContain('>Approved<')
     expect(statusMarkup).toContain('href="https://github.com/Mercaso/premier-store-os/pull/12"')
     expect(statusMarkup).toContain('target="_blank"')
     expect(statusMarkup).toContain('rel="noopener noreferrer"')
