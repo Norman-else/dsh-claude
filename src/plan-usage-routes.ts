@@ -13,15 +13,34 @@ function safeMessage(error: unknown): string {
   return redactText(error instanceof Error ? error.message : String(error), 1_000)
 }
 
+/** A session mid-turn rejects metadata control requests. Match on the name
+ *  rather than instanceof: a linked plugin can resolve a second copy of the
+ *  supervisor module, which would make the class identity check fail. */
+function turnBusy(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ClaudeTurnBusyError'
+}
+
 /** Plan usage: GET serves the value the metadata bridge last cached, POST
  *  forces a fresh read. The settings page is global and owns no session, so a
- *  manual refresh borrows any live Claude agent to run the SDK request. */
+ *  manual refresh borrows an idle Claude agent to run the SDK request.
+ *
+ *  A busy or missing session is not an error: the bridge refreshes the cache
+ *  on its own whenever a session goes idle, so the answer is the cached
+ *  reading plus a note about why it may be stale. */
 export function registerPlanUsageRoute(
   ctx: Context,
-  supervisor: Pick<ClaudeSupervisor, 'planUsage'>,
-  claudeAgent: () => Agent | undefined,
+  supervisor: Pick<ClaudeSupervisor, 'planUsage' | 'snapshots'>,
+  claudeAgents: () => readonly Agent[],
   now: () => number = Date.now,
 ): void {
+  // A session with no supervisor entry yet is idle by definition — the request
+  // starts its process.
+  const idleAgent = (): Agent | undefined => {
+    const busy = new Set(supervisor.snapshots().filter(entry => entry.state !== 'idle').map(entry => entry.sessionId))
+    return claudeAgents().find(agent => !busy.has(agent.id as string))
+  }
+  const cached = (message: string): PlanUsageReport => ({ ...(latestPlanUsage() ?? { ...EMPTY, fetchedAt: 0 }), message })
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: CLAUDE_USAGE_PATH,
@@ -29,18 +48,18 @@ export function registerPlanUsageRoute(
       if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
       if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
       if (req.method === 'GET') return json(res, 200, latestPlanUsage() ?? { ...EMPTY, fetchedAt: 0 })
-      const agent = claudeAgent()
-      // No live Claude session means no query to ask; keep whatever the bridge
-      // cached and let the client explain why the numbers may be stale.
+      const agent = idleAgent()
       if (agent === undefined) {
-        const cached = latestPlanUsage()
-        return json(res, 200, { ...(cached ?? { ...EMPTY, fetchedAt: 0 }), message: 'no-session' })
+        return json(res, 200, cached(claudeAgents().length === 0 ? 'no-session' : 'busy'))
       }
       try {
         const report = normalizePlanUsage(await supervisor.planUsage(agent), now())
         recordPlanUsage(report)
         json(res, 200, report)
       } catch (error) {
+        // The chosen session can still start a turn between the pick and the
+        // control request; that race reads as busy, not as a failure.
+        if (turnBusy(error)) return json(res, 200, cached('busy'))
         json(res, 500, { error: safeMessage(error) })
       }
     },

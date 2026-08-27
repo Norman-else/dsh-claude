@@ -55,14 +55,25 @@ describe('normalizePlanUsage', () => {
 })
 
 describe('plan usage route', () => {
-  function harness(agent: unknown, planUsage = vi.fn(async () => SDK_RESPONSE)) {
+  function harness(
+    agents: readonly { id: string }[],
+    options: { states?: Record<string, string>; planUsage?: ReturnType<typeof vi.fn> } = {},
+  ) {
+    const planUsage = options.planUsage ?? vi.fn(async () => SDK_RESPONSE)
+    const snapshots = vi.fn(() => Object.entries(options.states ?? {}).map(([sessionId, state]) => ({ sessionId, state })))
     let handler!: (req: unknown, res: unknown) => Promise<void>
     const ctx = {
       effect: (setup: () => unknown) => { setup() },
       webServer: { register: (route: { handler: typeof handler }) => { handler = route.handler; return () => {} } },
     } as unknown as Parameters<typeof registerPlanUsageRoute>[0]
-    registerPlanUsageRoute(ctx, { planUsage } as never, () => agent as never, () => 4_242)
+    registerPlanUsageRoute(ctx, { planUsage, snapshots } as never, () => agents as never, () => 4_242)
     return { handler, planUsage }
+  }
+
+  function busyError(): Error {
+    const error = new Error('Claude Code session s1 already has an active or interrupting turn')
+    error.name = 'ClaudeTurnBusyError'
+    return error
   }
 
   function call(handler: (req: unknown, res: unknown) => Promise<void>, method: string) {
@@ -75,7 +86,7 @@ describe('plan usage route', () => {
 
   it('serves the cached report on GET and refreshes it on POST', async () => {
     resetPlanUsage()
-    const { handler, planUsage } = harness({ id: 'agent-1' })
+    const { handler, planUsage } = harness([{ id: 'agent-1' }])
 
     expect(await call(handler, 'GET')).toEqual({ status: 200, body: { available: false, windows: [], fetchedAt: 0 } })
     expect(planUsage).not.toHaveBeenCalled()
@@ -94,7 +105,7 @@ describe('plan usage route', () => {
   it('flags a refresh with no live Claude session instead of failing', async () => {
     resetPlanUsage()
     recordPlanUsage({ available: true, windows: [{ id: 'five_hour', utilization: 10 }], fetchedAt: 99 })
-    const { handler, planUsage } = harness(undefined)
+    const { handler, planUsage } = harness([])
     expect(await call(handler, 'POST')).toEqual({
       status: 200,
       body: { available: true, windows: [{ id: 'five_hour', utilization: 10 }], fetchedAt: 99, message: 'no-session' },
@@ -102,9 +113,44 @@ describe('plan usage route', () => {
     expect(planUsage).not.toHaveBeenCalled()
   })
 
+  it('skips sessions that are mid-turn and picks an idle one', async () => {
+    resetPlanUsage()
+    const { handler, planUsage } = harness(
+      [{ id: 'busy-session' }, { id: 'idle-session' }],
+      { states: { 'busy-session': 'running', 'idle-session': 'idle' } },
+    )
+    expect((await call(handler, 'POST')).status).toBe(200)
+    expect(planUsage).toHaveBeenCalledTimes(1)
+    expect((planUsage.mock.calls[0] as unknown[])[0]).toEqual({ id: 'idle-session' })
+  })
+
+  it('reports busy instead of failing when every session is mid-turn', async () => {
+    resetPlanUsage()
+    recordPlanUsage({ available: true, windows: [{ id: 'five_hour', utilization: 31 }], fetchedAt: 7 })
+    const { handler, planUsage } = harness([{ id: 's1' }], { states: { s1: 'running' } })
+    expect(await call(handler, 'POST')).toEqual({
+      status: 200,
+      body: { available: true, windows: [{ id: 'five_hour', utilization: 31 }], fetchedAt: 7, message: 'busy' },
+    })
+    expect(planUsage).not.toHaveBeenCalled()
+  })
+
+  it('treats a turn starting mid-request as busy rather than a 500', async () => {
+    resetPlanUsage()
+    recordPlanUsage({ available: true, windows: [], fetchedAt: 3 })
+    // Idle at pick time, busy by the time the control request lands.
+    const { handler } = harness([{ id: 's1' }], {
+      states: { s1: 'idle' },
+      planUsage: vi.fn(async () => { throw busyError() }),
+    })
+    const raced = await call(handler, 'POST')
+    expect(raced.status).toBe(200)
+    expect((raced.body as { message?: string }).message).toBe('busy')
+  })
+
   it('rejects other methods and non-loopback callers', async () => {
     resetPlanUsage()
-    const { handler } = harness({ id: 'agent-1' })
+    const { handler } = harness([{ id: 'agent-1' }])
     expect((await call(handler, 'DELETE')).status).toBe(405)
     let status = 0
     await handler(
@@ -117,7 +163,7 @@ describe('plan usage route', () => {
   it('reports an SDK failure as a 500 and leaves the cache untouched', async () => {
     resetPlanUsage()
     recordPlanUsage({ available: true, windows: [], fetchedAt: 12 })
-    const { handler } = harness({ id: 'agent-1' }, vi.fn(async () => { throw new Error('no plan usage API') }))
+    const { handler } = harness([{ id: 'agent-1' }], { planUsage: vi.fn(async () => { throw new Error('no plan usage API') }) })
     const failed = await call(handler, 'POST')
     expect(failed.status).toBe(500)
     expect(latestPlanUsage()?.fetchedAt).toBe(12)
