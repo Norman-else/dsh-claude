@@ -12,6 +12,13 @@ describe('review comment store', () => {
     expect(store.list('other')).toEqual([])
   })
 
+  it('keeps a start line only for real ranges and rejects inverted ones', () => {
+    const store = new ReviewCommentStore()
+    expect(store.add('s', { path: 'a.ts', line: 5, startLine: 3, side: 'new', text: 'range' })).toMatchObject({ line: 5, startLine: 3 })
+    expect(store.add('s', { path: 'a.ts', line: 5, startLine: 5, side: 'new', text: 'single' })).not.toHaveProperty('startLine')
+    expect(() => store.add('s', { path: 'a.ts', line: 5, startLine: 6, side: 'new', text: 'bad' })).toThrow(/start line/u)
+  })
+
   it('rejects invalid paths, lines, sides, and text', () => {
     const store = new ReviewCommentStore()
     expect(() => store.add('s', { path: '', line: 1, side: 'new', text: 'x' })).toThrow('path')
@@ -46,10 +53,12 @@ describe('review comment store', () => {
     const block = formatReviewComments([
       { id: '1', path: 'src/a.ts', line: 12, side: 'new', text: 'Rename this.' },
       { id: '2', path: 'src/b.ts', line: 3, side: 'old', text: 'Why removed?' },
+      { id: '3', path: 'src/c.ts', line: 44, startLine: 42, side: 'new', text: 'Extract this.' },
     ])
     expect(block).toContain('<user-review-comments>')
     expect(block).toContain('1. src/a.ts:12 — Rename this.')
     expect(block).toContain('2. src/b.ts:3 (old side) — Why removed?')
+    expect(block).toContain('3. src/c.ts:42-44 — Extract this.')
     expect(block).toContain('</user-review-comments>')
   })
 })

@@ -1,7 +1,11 @@
+import { readFile } from 'node:fs/promises'
+import { isAbsolute, resolve, sep } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
 const MAX_DIFF_BYTES = 256 * 1024
+const MAX_FILE_BYTES = 8 * 1024 * 1024
+export const MAX_FILE_LINES_PER_REQUEST = 500
 const MAX_UNTRACKED_DIFFS = 50
 const GIT_TIMEOUT_MS = 5_000
 const GH_TIMEOUT_MS = 8_000
@@ -241,6 +245,23 @@ export function parsePullRequest(value: unknown): RepositoryPullRequestStatus | 
   }
 }
 
+export interface RepositoryFileLines {
+  /** Requested 1-based inclusive slice of the working-tree file, clipped to its end. */
+  readonly lines: readonly string[]
+  /** Total line count of the file. */
+  readonly total: number
+}
+
+export class RepositoryFileError extends Error {
+  readonly code: string
+
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'RepositoryFileError'
+    this.code = code
+  }
+}
+
 export class RepositoryStatusService {
   readonly #runtime: RepositoryRuntime
   readonly #cacheTtlMs: number
@@ -290,6 +311,27 @@ export class RepositoryStatusService {
       : next
     this.#lastReady.set(cwd, stable)
     return stable
+  }
+
+  /** Lines [from, to] of a working-tree file, used to expand unmodified context around diff hunks. */
+  async fileLines(cwd: string, relativePath: string, from: number, to: number): Promise<RepositoryFileLines> {
+    if (relativePath.length === 0 || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.split(/[\\/]/u).includes('..')) {
+      throw new RepositoryFileError('invalid-request', 'The file path must be relative to the repository.')
+    }
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 1 || to < from || to - from >= MAX_FILE_LINES_PER_REQUEST) {
+      throw new RepositoryFileError('invalid-request', 'The requested line range is invalid.')
+    }
+    const git = await this.#git()
+    const top = await run(this.#runtime, git, ['rev-parse', '--path-format=absolute', '--show-toplevel'], cwd, GIT_TIMEOUT_MS)
+    if (top.exitCode !== 0) throw new RepositoryFileError('not-repository', 'The directory is not inside a git repository.')
+    const root = resolve(top.stdout.trim())
+    const target = resolve(root, relativePath)
+    if (target !== root && !target.startsWith(root + sep)) throw new RepositoryFileError('invalid-request', 'The file path escapes the repository.')
+    const content = await readFile(target, 'utf8')
+    if (content.length > MAX_FILE_BYTES) throw new RepositoryFileError('too-large', 'The file is too large to expand.')
+    const all = content.split(/\r?\n/u)
+    if (all.at(-1) === '') all.pop()
+    return { lines: all.slice(from - 1, to), total: all.length }
   }
 
   async #git(): Promise<string> {

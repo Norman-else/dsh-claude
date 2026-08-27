@@ -53,6 +53,7 @@ export function registerReviewCommentRoute(
           const comment = store.add(sessionId, {
             path: input.path,
             line: input.line,
+            startLine: input.startLine,
             side: input.side,
             text: input.text,
           })

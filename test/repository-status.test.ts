@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import {
@@ -286,5 +289,17 @@ describe('repository status service', () => {
     await expect(new RepositoryStatusService(fake).inspect('/repo')).resolves.toMatchObject({
       status: 'ready', branch: 'main', worktree: false, dirty: false, remote: 'owner/repo',
     })
+  })
+})
+
+describe('repository file lines', () => {
+  it('slices working-tree files inside the repository and refuses escapes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-claude-file-'))
+    await writeFile(join(root, 'a.txt'), 'l1\nl2\nl3\nl4\n')
+    const service = new RepositoryStatusService(runtime([{ stdout: `${root}\n` }, { stdout: `${root}\n` }]))
+    await expect(service.fileLines(root, 'a.txt', 2, 3)).resolves.toEqual({ lines: ['l2', 'l3'], total: 4 })
+    await expect(service.fileLines(root, 'a.txt', 4, 10)).resolves.toEqual({ lines: ['l4'], total: 4 })
+    await expect(service.fileLines(root, '../a.txt', 1, 2)).rejects.toMatchObject({ code: 'invalid-request' })
+    await expect(service.fileLines(root, 'a.txt', 3, 2)).rejects.toMatchObject({ code: 'invalid-request' })
   })
 })

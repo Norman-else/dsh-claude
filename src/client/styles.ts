@@ -2488,7 +2488,8 @@ export const diffFileHeader: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-1)',
   color: 'var(--dsw-alias-label-primary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 13,
+  lineHeight: '20px',
   textAlign: 'left',
   cursor: 'pointer',
 }
@@ -2496,8 +2497,25 @@ export const diffFileHeader: CSSProperties = {
 export const diffFilePath: CSSProperties = {
   minWidth: 0,
   flex: 1,
+  display: 'flex',
+  alignItems: 'baseline',
+  overflow: 'hidden',
+}
+
+/** Directory part: truncated from the left so the nearest folders stay visible. */
+export const diffFileDir: CSSProperties = {
+  minWidth: 0,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  direction: 'rtl',
+  textAlign: 'left',
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const diffFileName: CSSProperties = {
+  flex: 'none',
+  fontWeight: 650,
   whiteSpace: 'nowrap',
 }
 
@@ -2505,7 +2523,7 @@ export const diffFileStats: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',
   gap: 4,
-  fontSize: 12,
+  fontSize: 13,
   fontWeight: 650,
 }
 
@@ -2561,6 +2579,44 @@ export const diffLineHunk: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-1)',
   color: 'var(--dsw-alias-label-tertiary)',
   fontStyle: 'italic',
+}
+
+export const diffLineSelected: CSSProperties = {
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 14%, transparent)',
+  boxShadow: 'inset 2px 0 0 var(--dsw-static-blue-450)',
+}
+
+/** Sits where the comment button, line number and marker would be so the label aligns with code. */
+export const diffGapControls: CSSProperties = {
+  width: 84,
+  flex: 'none',
+  boxSizing: 'border-box',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 2,
+  paddingRight: 6,
+}
+
+export const diffGapButton: CSSProperties = {
+  width: 20,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: 'none',
+  borderRadius: 4,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  font: 'inherit',
+  cursor: 'pointer',
+}
+
+export const diffCommentRange: CSSProperties = {
+  marginBottom: 6,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  fontWeight: 600,
 }
 
 export const diffLineContext: CSSProperties = {

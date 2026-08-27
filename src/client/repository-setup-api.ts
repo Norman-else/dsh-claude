@@ -1,4 +1,4 @@
-import { CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
+import { CLAUDE_REPOSITORY_FILE_PATH, CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
 import type { RepositoryBranchList, RepositoryCleanupResult, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 
@@ -128,6 +128,19 @@ export async function cleanupMergedRepository(path: string, baseBranch: string):
     throw new Error('Invalid repository cleanup response.')
   }
   return body as unknown as RepositoryCleanupResult
+}
+
+/** Lines [from, to] of a working-tree file plus its total line count, for expanding unmodified diff context. */
+export async function loadRepositoryFileLines(cwd: string, path: string, from: number, to: number, signal?: AbortSignal): Promise<{ lines: readonly string[]; total: number }> {
+  const query = `cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path)}&from=${from}&to=${to}`
+  const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_FILE_PATH}?${query}`, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+    ...(signal === undefined ? {} : { signal }),
+  }))
+  if (!Array.isArray(body.lines) || typeof body.total !== 'number') throw new Error('Invalid repository file response.')
+  return { lines: body.lines.map(String), total: body.total }
 }
 
 export async function loadRepositoryStatusFor(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {

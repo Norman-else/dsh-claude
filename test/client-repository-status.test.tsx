@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudeDiffPanel, actionLabel, numberDiffLines, parseUnifiedDiff, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
+import { ClaudeDiffPanel, actionLabel, expandDiffRows, numberDiffLines, parseUnifiedDiff, rangeCommentAnchor, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, rateLimitBlocked, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
@@ -285,18 +285,39 @@ describe('Claude repository status UI', () => {
   })
 
   it('parses and renders a file-grouped themed diff panel', () => {
-    expect(numberDiffLines([
+    const rows = numberDiffLines([
       '@@ -10,2 +10,2 @@', ' old', '-removed', '+added',
       '@@ -20,1 +20,1 @@', ' later',
-    ])).toEqual([
+    ])
+    expect(rows).toEqual([
+      { line: '', kind: 'collapsed', gap: { oldStart: 1, newStart: 1, count: 9, position: 'top' } },
       { line: '@@ -10,2 +10,2 @@', kind: 'hunk' },
       { line: ' old', kind: 'context', oldLine: 10, newLine: 10 },
       { line: '-removed', kind: 'delete', oldLine: 11 },
       { line: '+added', kind: 'add', newLine: 11 },
-      { line: '8 unmodified lines', kind: 'collapsed' },
+      { line: '', kind: 'collapsed', gap: { oldStart: 12, newStart: 12, count: 8, position: 'middle' } },
       { line: '@@ -20,1 +20,1 @@', kind: 'hunk' },
       { line: ' later', kind: 'context', oldLine: 20, newLine: 20 },
+      { line: '', kind: 'collapsed', gap: { oldStart: 21, newStart: 21, position: 'bottom' } },
     ])
+    // New files have nothing unmodified to expand.
+    expect(numberDiffLines(['@@ -0,0 +1,2 @@', '+a', '+b']).filter(row => row.kind === 'collapsed')).toEqual([])
+    // Revealed lines grow the gap edges; the tail gap closes once the file length is known.
+    const revealed = new Map([[12, 'x'], [13, 'y'], [19, 'z'], [21, 'tail']])
+    const expanded = expandDiffRows(rows, revealed, 21)
+    expect(expanded.slice(5, 9)).toEqual([
+      { line: ' x', kind: 'context', oldLine: 12, newLine: 12 },
+      { line: ' y', kind: 'context', oldLine: 13, newLine: 13 },
+      { line: '', kind: 'collapsed', gap: { oldStart: 14, newStart: 14, count: 5, position: 'middle' } },
+      { line: ' z', kind: 'context', oldLine: 19, newLine: 19 },
+    ])
+    expect(expanded.at(-1)).toEqual({ line: ' tail', kind: 'context', oldLine: 21, newLine: 21 })
+    expect(expanded.filter(row => row.gap?.position === 'bottom')).toEqual([])
+    // Dragging across mixed rows keeps only the side the drag started on.
+    const anchors = [{ line: 10, side: 'new' as const }, { line: 11, side: 'old' as const }, { line: 11, side: 'new' as const }, undefined]
+    expect(rangeCommentAnchor(anchors, 2, 0)).toEqual({ line: 11, side: 'new', startLine: 10 })
+    expect(rangeCommentAnchor(anchors, 1, 1)).toEqual({ line: 11, side: 'old' })
+    expect(rangeCommentAnchor(anchors, 3, 0)).toBeUndefined()
     expect(parseUnifiedDiff(repository.diff.patch)).toEqual([{
       path: 'src/file.ts',
       additions: 2,

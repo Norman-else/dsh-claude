@@ -16,6 +16,8 @@ import type { ClaudeClientProjection } from './projection.ts'
 import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPreview } from './repository-action-api.ts'
 import { composeCommentsPrompt, loadPullRequestComments, type PullRequestReviewComment } from './pr-feedback-api.ts'
 import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
+import { loadRepositoryFileLines } from './repository-setup-api.ts'
+import { commentLineLabel } from './ClaudeReviewComments.tsx'
 import * as styles from './styles.ts'
 
 export interface ClaudeDiffPanelInjected {
@@ -70,28 +72,50 @@ export function parseUnifiedDiff(patch: string): readonly DiffFile[] {
   return files
 }
 
-interface NumberedDiffLine {
+/** A run of unmodified lines the unified diff left out; `count` is unknown for the tail of the file. */
+export interface DiffGap {
+  readonly oldStart: number
+  readonly newStart: number
+  readonly count?: number
+  readonly position: 'top' | 'middle' | 'bottom'
+}
+
+export interface NumberedDiffLine {
   readonly line: string
   readonly kind: 'add' | 'delete' | 'hunk' | 'context' | 'collapsed'
   readonly oldLine?: number
   readonly newLine?: number
+  readonly gap?: DiffGap
 }
+
+/** How many unmodified lines one click on an expander reveals. */
+export const DIFF_EXPAND_STEP = 20
 
 export function numberDiffLines(lines: readonly string[]): readonly NumberedDiffLine[] {
   const numbered: NumberedDiffLine[] = []
   let oldLine = 0
   let newLine = 0
   let previousOldEnd: number | undefined
+  let previousNewEnd = 0
+  // New and deleted files have no unmodified lines around their single hunk.
+  let expandable = false
   for (const line of lines) {
     const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u.exec(line)
     if (hunk !== null) {
       const nextOld = Number(hunk[1])
-      if (previousOldEnd !== undefined && nextOld > previousOldEnd) {
-        numbered.push({ line: `${nextOld - previousOldEnd} unmodified lines`, kind: 'collapsed' })
+      const nextNew = Number(hunk[3])
+      const oldCount = Number(hunk[2] ?? 1)
+      const newCount = Number(hunk[4] ?? 1)
+      if (previousOldEnd === undefined) {
+        expandable = oldCount > 0 && newCount > 0
+        if (expandable && nextOld > 1) numbered.push({ line: '', kind: 'collapsed', gap: { oldStart: 1, newStart: 1, count: nextOld - 1, position: 'top' } })
+      } else if (nextOld > previousOldEnd) {
+        numbered.push({ line: '', kind: 'collapsed', gap: { oldStart: previousOldEnd, newStart: previousNewEnd, count: nextOld - previousOldEnd, position: 'middle' } })
       }
       oldLine = nextOld
-      newLine = Number(hunk[3])
-      previousOldEnd = nextOld + Number(hunk[2] ?? 1)
+      newLine = nextNew
+      previousOldEnd = nextOld + oldCount
+      previousNewEnd = nextNew + newCount
       numbered.push({ line, kind: 'hunk' })
       continue
     }
@@ -107,12 +131,68 @@ export function numberDiffLines(lines: readonly string[]): readonly NumberedDiff
       newLine += 1
     }
   }
+  if (expandable && previousOldEnd !== undefined) {
+    numbered.push({ line: '', kind: 'collapsed', gap: { oldStart: previousOldEnd, newStart: previousNewEnd, position: 'bottom' } })
+  }
   return numbered
 }
 
+/**
+ * Splice revealed working-tree lines (keyed by new-side line number) into the
+ * collapsed gaps. Expansion only ever grows a gap's edges, so each gap is a
+ * top run + remaining gap + bottom run; `total` (file line count) turns the
+ * open-ended tail gap into a bounded one.
+ */
+export function expandDiffRows(rows: readonly NumberedDiffLine[], revealed: ReadonlyMap<number, string>, total?: number): readonly NumberedDiffLine[] {
+  const out: NumberedDiffLine[] = []
+  for (const row of rows) {
+    const gap = row.gap
+    if (row.kind !== 'collapsed' || gap === undefined) {
+      out.push(row)
+      continue
+    }
+    const count = gap.count ?? (total === undefined ? undefined : Math.max(0, total - gap.newStart + 1))
+    const context = (offset: number): NumberedDiffLine => ({
+      line: ` ${revealed.get(gap.newStart + offset) ?? ''}`,
+      kind: 'context',
+      oldLine: gap.oldStart + offset,
+      newLine: gap.newStart + offset,
+    })
+    let top = 0
+    while ((count === undefined || top < count) && revealed.has(gap.newStart + top)) top += 1
+    let bottom = 0
+    if (count !== undefined) while (bottom < count - top && revealed.has(gap.newStart + count - 1 - bottom)) bottom += 1
+    for (let offset = 0; offset < top; offset += 1) out.push(context(offset))
+    const remaining = count === undefined ? undefined : count - top - bottom
+    if (remaining === undefined || remaining > 0) {
+      out.push({ ...row, gap: { ...gap, oldStart: gap.oldStart + top, newStart: gap.newStart + top, ...(remaining === undefined ? {} : { count: remaining }) } })
+    }
+    if (count !== undefined) for (let offset = count - bottom; offset < count; offset += 1) out.push(context(offset))
+  }
+  return out
+}
+
 export interface ReviewCommentAnchor {
+  /** Last (anchor) line; the editor and saved comment attach here. */
   readonly line: number
   readonly side: ReviewCommentSide
+  /** First line of a multi-line selection. */
+  readonly startLine?: number
+}
+
+/**
+ * Anchor for a drag from row `from` to row `to`: every commentable row in
+ * between on the same side as the first row, collapsed to its first/last line.
+ */
+export function rangeCommentAnchor(anchors: readonly (ReviewCommentAnchor | undefined)[], from: number, to: number): ReviewCommentAnchor | undefined {
+  const side = anchors[from]?.side
+  if (side === undefined) return undefined
+  const lines = anchors
+    .slice(Math.min(from, to), Math.max(from, to) + 1)
+    .flatMap(anchor => (anchor?.side === side ? [anchor.line] : []))
+  const line = Math.max(...lines)
+  const startLine = Math.min(...lines)
+  return startLine < line ? { line, side, startLine } : { line, side }
 }
 
 /** Which working-tree line a comment on this rendered diff row refers to. */
@@ -126,18 +206,71 @@ export function commentAnchorForLine(entry: NumberedDiffLine): ReviewCommentAnch
   return undefined
 }
 
-function DiffLine({ entry, addLabel, onComment }: { entry: NumberedDiffLine; addLabel: string; onComment?: (() => void) | undefined }) {
+function DiffLine({ entry, addLabel, selected, onComment, onDragStart, onDragEnter }: {
+  entry: NumberedDiffLine
+  addLabel: string
+  selected: boolean
+  onComment?: (() => void) | undefined
+  onDragStart?: (() => void) | undefined
+  onDragEnter?: (() => void) | undefined
+}) {
   const style = entry.kind === 'add'
     ? styles.diffLineAdd
-    : entry.kind === 'delete' ? styles.diffLineDelete : entry.kind === 'hunk' || entry.kind === 'collapsed' ? styles.diffLineHunk : styles.diffLineContext
+    : entry.kind === 'delete' ? styles.diffLineDelete : entry.kind === 'hunk' ? styles.diffLineHunk : styles.diffLineContext
   const lineNumber = entry.oldLine === undefined && entry.newLine === undefined
     ? ''
     : entry.oldLine === undefined ? String(entry.newLine) : entry.newLine === undefined ? String(entry.oldLine) : String(entry.newLine)
-  return <div className={styles.diffLineRowClass} style={{ ...styles.diffLine, ...style }}><button type="button" className={styles.diffCommentButtonClass} disabled={onComment === undefined} aria-label={addLabel} onClick={onComment}>+</button><span style={styles.diffLineNumber}>{lineNumber}</span><span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : entry.kind === 'collapsed' ? '⌄' : ' '}</span><span style={styles.diffLineText}>{entry.kind === 'collapsed' ? entry.line : entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span></div>
+  return (
+    <div className={styles.diffLineRowClass} style={{ ...styles.diffLine, ...style, ...(selected ? styles.diffLineSelected : {}) }} onPointerEnter={onDragEnter}>
+      <button
+        type="button"
+        className={styles.diffCommentButtonClass}
+        disabled={onComment === undefined}
+        aria-label={addLabel}
+        onPointerDown={event => {
+          if (event.button !== 0 || onDragStart === undefined) return
+          // Keep the pointer free to enter the rows below/above while dragging, and stop text selection.
+          event.preventDefault()
+          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+          onDragStart()
+        }}
+        onClick={event => { if (event.detail === 0) onComment?.() }}
+      >+</button>
+      <span style={styles.diffLineNumber}>{lineNumber}</span>
+      <span style={styles.diffLineMarker}>{entry.kind === 'add' ? '+' : entry.kind === 'delete' ? '−' : ' '}</span>
+      <span style={styles.diffLineText}>{entry.line.slice(entry.kind === 'hunk' ? 0 : 1)}</span>
+    </div>
+  )
+}
+
+function ChevronGlyph({ direction }: { direction: 'up' | 'down' }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={direction === 'up' ? 'M3 8.5l4-4 4 4' : 'M3 5.5l4 4 4-4'} />
+    </svg>
+  )
+}
+
+/** "N unmodified lines" separator with GitHub-style expanders: ↑ above the first hunk, ↑↓ between hunks, ↓ after the last. */
+function DiffGapRow({ gap, t, busy, onExpand }: { gap: DiffGap; t: ClaudeDiffPanelInjected['t']; busy: boolean; onExpand?: ((gap: DiffGap, direction: 'up' | 'down') => void) | undefined }) {
+  const button = (direction: 'up' | 'down'): ReactNode => (
+    <button type="button" style={styles.diffGapButton} disabled={busy || onExpand === undefined} aria-label={t(direction === 'up' ? 'diffExpandUp' : 'diffExpandDown')} title={t(direction === 'up' ? 'diffExpandUp' : 'diffExpandDown')} onClick={() => onExpand?.(gap, direction)}><ChevronGlyph direction={direction} /></button>
+  )
+  return (
+    <div style={{ ...styles.diffLine, ...styles.diffLineHunk }}>
+      <span style={styles.diffGapControls}>
+        {gap.position === 'bottom' ? null : button('up')}
+        {gap.position === 'top' ? null : button('down')}
+      </span>
+      <span style={styles.diffLineText}>{gap.count === undefined ? t('diffUnmodifiedTail') : t('diffUnmodifiedLines', { count: gap.count })}</span>
+    </div>
+  )
 }
 
 interface DiffFileSectionProps {
   readonly file: DiffFile
+  /** Repository root the working tree lives in; without it unmodified lines cannot be expanded. */
+  readonly root: string | undefined
   readonly initiallyOpen: boolean
   readonly t: ClaudeDiffPanelInjected['t']
   readonly comments: readonly ReviewComment[]
@@ -148,27 +281,84 @@ interface DiffFileSectionProps {
   readonly onRemoveComment: (id: string) => void
 }
 
-function DiffFileSection({ file, initiallyOpen, t, comments, ghComments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
+function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
   const [open, setOpen] = useState(initiallyOpen)
+  const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
+  const [total, setTotal] = useState<number>()
+  const [expanding, setExpanding] = useState(false)
+  const [drag, setDrag] = useState<{ start: number; end: number }>()
+  const rows = useMemo(() => expandDiffRows(numberDiffLines(file.lines), revealed, total), [file.lines, revealed, total])
+  const anchors = useMemo(() => rows.map(commentAnchorForLine), [rows])
+  const slash = file.path.lastIndexOf('/')
+  const directory = slash < 0 ? '' : file.path.slice(0, slash + 1)
+  const name = file.path.slice(slash + 1)
+  const expand = (gap: DiffGap, direction: 'up' | 'down'): void => {
+    if (root === undefined || expanding) return
+    const span = gap.count ?? DIFF_EXPAND_STEP
+    const size = Math.min(DIFF_EXPAND_STEP, span)
+    const from = direction === 'down' ? gap.newStart : gap.newStart + span - size
+    setExpanding(true)
+    void loadRepositoryFileLines(root, file.path, from, from + size - 1).then(result => {
+      setRevealed(previous => {
+        const next = new Map(previous)
+        result.lines.forEach((text, offset) => next.set(from + offset, text))
+        return next
+      })
+      setTotal(result.total)
+    }, () => undefined).finally(() => setExpanding(false))
+  }
+  useEffect(() => {
+    if (drag === undefined) return
+    const finish = (): void => {
+      setDrag(undefined)
+      const anchor = rangeCommentAnchor(anchors, drag.start, drag.end)
+      if (anchor !== undefined) onOpenEditor(anchor)
+    }
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+    return () => {
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
+  }, [anchors, drag, onOpenEditor])
+  const dragLow = drag === undefined ? undefined : Math.min(drag.start, drag.end)
+  const dragHigh = drag === undefined ? undefined : Math.max(drag.start, drag.end)
+  const dragSide = drag === undefined ? undefined : anchors[drag.start]?.side
   return (
     <section style={styles.diffFile}>
       <button type="button" style={styles.diffFileHeader} aria-expanded={open} onClick={() => setOpen(value => !value)}>
         <span style={{ ...styles.chevron, ...(open ? styles.chevronOpen : {}) }}>›</span>
-        <span style={styles.diffFilePath}>{file.path}</span>
+        <span style={styles.diffFilePath} title={file.path}>
+          {directory === '' ? null : <span style={styles.diffFileDir}>{`\u202A${directory}\u202C`}</span>}
+          <span style={styles.diffFileName}>{name}</span>
+        </span>
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
-      {open ? <div style={styles.diffCode}>{numberDiffLines(file.lines).map((entry, index) => {
-        const anchor = commentAnchorForLine(entry)
+      {open ? <div style={styles.diffCode}>{rows.map((entry, index) => {
+        if (entry.kind === 'collapsed' && entry.gap !== undefined) {
+          return <DiffGapRow key={`gap:${entry.gap.newStart}`} gap={entry.gap} t={t} busy={expanding} onExpand={root === undefined ? undefined : expand} />
+        }
+        const anchor = anchors[index]
         const lineComments = anchor === undefined ? [] : comments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
         const ghLineComments = anchor === undefined ? [] : ghComments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
         const editorOpen = anchor !== undefined && editorAnchor !== undefined && editorAnchor.line === anchor.line && editorAnchor.side === anchor.side
+        const inDrag = dragLow !== undefined && dragHigh !== undefined && index >= dragLow && index <= dragHigh && anchor?.side === dragSide
+        const inEditorRange = anchor !== undefined && editorAnchor !== undefined && editorAnchor.side === anchor.side
+          && anchor.line <= editorAnchor.line && anchor.line >= (editorAnchor.startLine ?? editorAnchor.line)
         return (
           <Fragment key={`${index}:${entry.line}`}>
-            <DiffLine entry={entry} addLabel={t('reviewCommentAdd')} onComment={anchor === undefined ? undefined : () => onOpenEditor(anchor)} />
+            <DiffLine
+              entry={entry}
+              addLabel={t('reviewCommentAdd')}
+              selected={inDrag || inEditorRange}
+              onComment={anchor === undefined ? undefined : () => onOpenEditor(anchor)}
+              onDragStart={anchor === undefined ? undefined : () => setDrag({ start: index, end: index })}
+              onDragEnter={drag === undefined ? undefined : () => setDrag(current => (current === undefined ? current : { ...current, end: index }))}
+            />
             {lineComments.map(comment => (
               <div key={comment.id} style={styles.diffCommentBlock}>
                 <div style={styles.diffCommentCardMeta}>
-                  <span>{comment.side === 'old' ? t('reviewCommentOldSide', { line: comment.line }) : t('reviewCommentNewSide', { line: comment.line })}</span>
+                  <span>{commentLineLabel(comment, t)}</span>
                   <button type="button" style={styles.reviewCommentChipRemove} aria-label={t('reviewCommentRemove')} onClick={() => onRemoveComment(comment.id)}>×</button>
                 </div>
                 <p style={styles.diffCommentCardText}>{comment.text}</p>
@@ -355,6 +545,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       const created = await addReviewComment(sessionId, {
         path: commentEditor.path,
         line: commentEditor.line,
+        ...(commentEditor.startLine === undefined ? {} : { startLine: commentEditor.startLine }),
         side: commentEditor.side,
         text: commentDraft.trim(),
       })
@@ -413,6 +604,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const completed = dialog?.commit !== undefined && dialog.error === undefined
   const commentEditorNode: ReactNode = commentEditor === undefined ? null : (
     <div style={styles.diffCommentBlock}>
+      <div style={styles.diffCommentRange}>{commentLineLabel(commentEditor, t)}</div>
       <textarea
         className={styles.diffCommentTextareaClass}
         style={styles.diffCommentTextarea}
@@ -465,6 +657,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
             <DiffFileSection
               key={file.path}
               file={file}
+              root={repository.root}
               initiallyOpen={index === 0}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
