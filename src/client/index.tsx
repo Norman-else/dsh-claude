@@ -22,6 +22,7 @@ import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
+import { suppressHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
@@ -78,6 +79,7 @@ export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
+  ctx.effect(() => suppressHostChrome(), 'dsh-claude: hide the Host Session log capsule')
   const projections = new ClaudeProjectionStore()
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
