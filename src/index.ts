@@ -33,6 +33,7 @@ import { registerJiraRoute } from './jira-routes.ts'
 import { AskService } from './ask.ts'
 import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
+import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
@@ -398,6 +399,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
     }
     registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
+    registerClaudeRewindRoute(webCtx, sidecar, {
+      eventsFor: sessionId => {
+        const agent = webCtx.agents.get(sessionId as never)
+        return agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID
+          ? undefined
+          : agent.session.events
+      },
+      busy: sessionId => supervisor.snapshots().some(item => (
+        item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')
+      )),
+      reset: sessionId => supervisor.disposeSession(sessionId),
+    })
     registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
     registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
       const agent = webCtx.agents.get(sessionId as never)

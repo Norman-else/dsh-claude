@@ -20,6 +20,15 @@ import {
   type ClaudeTasksEvent,
 } from './events.ts'
 import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION } from './constants.ts'
+import {
+  EMPTY_REWIND_STATE,
+  MAX_REWIND_ANCHORS,
+  MAX_REWIND_RANGES,
+  recordRewindAnchor,
+  type ClaudeRewindAnchor,
+  type ClaudeRewindRange,
+  type ClaudeRewindState,
+} from './rewind.ts'
 
 const SIDECAR_SCHEMA_VERSION = 1
 const MAX_ACTIVITIES = 10_000
@@ -34,6 +43,7 @@ export interface ClaudeSidecarProjection {
   readonly activities: readonly ClaudeActivityEvent[]
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
+  readonly rewind?: ClaudeRewindState
 }
 
 /** Change notification published to live subscribers after each accepted write. */
@@ -103,6 +113,31 @@ function contextUsage(value: unknown): ClaudeContextUsageEvent | undefined {
   return normalizeContextUsage(input as unknown as ClaudeContextUsageInput)
 }
 
+function rewind(value: unknown): ClaudeRewindState | undefined {
+  const input = record(value)
+  if (input === undefined
+    || !Array.isArray(input.ranges) || input.ranges.length > MAX_REWIND_RANGES
+    || !Array.isArray(input.anchors) || input.anchors.length > MAX_REWIND_ANCHORS) return undefined
+  const ranges: ClaudeRewindRange[] = []
+  for (const item of input.ranges) {
+    const range = record(item)
+    if (range === undefined || !finiteInteger(range.start) || !finiteInteger(range.end) || range.end < range.start) return undefined
+    ranges.push({ start: range.start, end: range.end })
+  }
+  const anchors: ClaudeRewindAnchor[] = []
+  for (const item of input.anchors) {
+    const anchor = record(item)
+    if (anchor === undefined || !finiteInteger(anchor.turn) || !string(anchor.uuid, 128)) return undefined
+    anchors.push({ turn: anchor.turn, uuid: anchor.uuid })
+  }
+  const pending = record(input.pending)
+  if (input.pending !== undefined && pending === undefined) return undefined
+  if (pending === undefined) return { ranges, anchors }
+  if (pending.fresh === true) return { ranges, anchors, pending: { fresh: true } }
+  if (!string(pending.resumeAt, 128)) return undefined
+  return { ranges, anchors, pending: { resumeAt: pending.resumeAt } }
+}
+
 function tasks(value: unknown): ClaudeTasksEvent | undefined {
   const input = record(value)
   if (input === undefined || !Array.isArray(input.tasks)) return undefined
@@ -123,9 +158,11 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
+  const parsedRewind = input.rewind === undefined ? undefined : rewind(input.rewind)
   if ((input.binding !== undefined && parsedBinding === undefined)
     || (input.contextUsage !== undefined && parsedUsage === undefined)
-    || (input.tasks !== undefined && parsedTasks === undefined)) {
+    || (input.tasks !== undefined && parsedTasks === undefined)
+    || (input.rewind !== undefined && parsedRewind === undefined)) {
     throw new Error('dsh-claude: invalid sidecar projection')
   }
   return {
@@ -135,6 +172,7 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     ...(parsedBinding === undefined ? {} : { binding: parsedBinding }),
     ...(parsedUsage === undefined ? {} : { contextUsage: parsedUsage }),
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
+    ...(parsedRewind === undefined ? {} : { rewind: parsedRewind }),
   }
 }
 
@@ -330,6 +368,29 @@ export class ClaudeSidecarRepository {
   writeTasks(sessionId: string, value: readonly ClaudeTaskInfo[]): Promise<ClaudeSidecarProjection> {
     const normalized = normalizeTasksEvent(value)
     return this.#update(sessionId, current => ({ ...current, tasks: normalized }), false, { kind: 'tasks', value: normalized })
+  }
+
+  /** Land one planned rewind: hidden ranges, surviving anchors, and the fork
+   *  target the next Claude spawn consumes. */
+  writeRewind(sessionId: string, value: ClaudeRewindState): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => ({ ...current, rewind: value }), false, { kind: 'sync' })
+  }
+
+  /** Remember where Claude's chain ended for one completed DSH turn. */
+  recordRewindAnchor(sessionId: string, turn: number, uuid: string): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => ({
+      ...current,
+      rewind: recordRewindAnchor(current.rewind ?? EMPTY_REWIND_STATE, { turn, uuid }),
+    }))
+  }
+
+  /** Disarm the fork target once a Claude process has resumed at it, so a
+   *  later respawn continues the rewound session instead of re-truncating it. */
+  clearRewindPending(sessionId: string): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => (current.rewind?.pending === undefined ? current : {
+      ...current,
+      rewind: { ranges: current.rewind.ranges, anchors: current.rewind.anchors },
+    }))
   }
 
   importLegacy(sessionId: string, events: readonly SessionEvent[]): Promise<ClaudeSidecarProjection> {

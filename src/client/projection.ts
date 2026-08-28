@@ -4,6 +4,7 @@ import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
+import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
 
 export interface ClaudeClientProjection {
   readonly schemaVersion: 1
@@ -15,6 +16,8 @@ export interface ClaudeClientProjection {
   readonly tasks?: ClaudeTasksEvent
   readonly repository?: RepositoryStatus
   readonly reviewComments?: readonly ReviewComment[]
+  /** Surface seq spans a rewind dropped; the chat suppresses their rows. */
+  readonly rewind?: { readonly ranges: readonly ClaudeRewindRange[] }
   /** Client-derived per-step activity slices with stable identities for
    *  untouched steps, so streaming re-renders only the active step. */
   readonly byStep?: ReadonlyMap<string, readonly ClaudeActivityEvent[]>
@@ -160,6 +163,16 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
         || (comment.side !== 'old' && comment.side !== 'new')
         || typeof comment.text !== 'string' || comment.text.length > MAX_REVIEW_COMMENT_CHARS) {
         throw new Error('invalid Claude review comment projection')
+      }
+    }
+  }
+  if (input.rewind !== undefined) {
+    const ranges = record(input.rewind)?.ranges
+    if (!Array.isArray(ranges) || ranges.length > MAX_REWIND_RANGES) throw new Error('invalid Claude rewind projection')
+    for (const item of ranges) {
+      const range = record(item)
+      if (range === undefined || !nonNegativeInteger(range.start) || !nonNegativeInteger(range.end)) {
+        throw new Error('invalid Claude rewind projection')
       }
     }
   }

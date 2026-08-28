@@ -178,6 +178,11 @@ interface SupervisorEntry {
   /** Whether the message stream has emitted system/init for session binding. */
   initialized: boolean
   expectedResume: string | undefined
+  /** Newest main-chain entry uuid Claude emitted; the anchor a rewind of the
+   *  next turn forks at. Sidechain (subagent) entries are not chain entries. */
+  lastChainUuid: string | undefined
+  /** Whether this process consumed an armed rewind fork target at spawn. */
+  consumedRewind: boolean
   /** Live Claude task board (subagents and background tasks), keyed by task id. */
   tasks: Map<string, ClaudeTaskInfo>
   /** Last time a task snapshot was persisted (progress throttling). */
@@ -210,6 +215,15 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: s
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
+}
+
+/** The uuid of one main-chain transcript entry, or undefined for anything a
+ *  rewind must not fork at: stream partials, results, and sidechain traffic. */
+function chainEntryUuid(message: SDKMessage): string | undefined {
+  if (message.type !== 'assistant' && message.type !== 'user') return undefined
+  const envelope = message as { uuid?: unknown; parent_tool_use_id?: unknown }
+  if (typeof envelope.parent_tool_use_id === 'string') return undefined
+  return typeof envelope.uuid === 'string' && envelope.uuid.length > 0 ? envelope.uuid : undefined
 }
 
 function sdkUserMessage(prompt: SDKUserMessage['message']['content'], uuid: ReturnType<typeof randomUUID>): SDKUserMessage {
@@ -561,6 +575,13 @@ export class ClaudeSupervisor {
     const lifetime = new AbortController()
     const projection = await this.#sidecar.importLegacy(sessionId, agent.session.events)
     const binding = projection.binding
+    // A rewound session resumes at the kept turn's chain anchor, or drops its
+    // binding entirely when the rewind discarded every turn. The truncating
+    // resume may land in a different Claude session id, so the identity guard
+    // stands down for exactly this spawn and re-binds from system/init.
+    const pendingRewind = projection.rewind?.pending
+    const forkAt = pendingRewind !== undefined && 'resumeAt' in pendingRewind ? pendingRewind.resumeAt : undefined
+    const startFresh = pendingRewind !== undefined && 'fresh' in pendingRewind
     const permissionMode = claudePermissionMode(agent.session.events)
     const entry = {
       sessionId,
@@ -573,8 +594,10 @@ export class ClaudeSupervisor {
       lastUsedAt: Date.now(),
       input,
       lifetime,
-      claudeSessionId: binding?.claudeSessionId,
-      expectedResume: binding?.claudeSessionId,
+      claudeSessionId: startFresh ? undefined : binding?.claudeSessionId,
+      expectedResume: startFresh || forkAt !== undefined ? undefined : binding?.claudeSessionId,
+      lastChainUuid: undefined,
+      consumedRewind: pendingRewind !== undefined,
       initialized: false,
       idleTimer: undefined,
       tasks: new Map<string, ClaudeTaskInfo>(),
@@ -612,7 +635,10 @@ export class ClaudeSupervisor {
       spawnClaudeCodeProcess: createManagedClaudeSpawner(this.#runtime, this.#config.executablePath, process => {
         entry.process = process
       }),
-      ...(binding === undefined ? {} : { resume: binding.claudeSessionId }),
+      ...(binding === undefined || startFresh ? {} : {
+        resume: binding.claudeSessionId,
+        ...(forkAt === undefined ? {} : { resumeSessionAt: forkAt }),
+      }),
       model,
       ...(thinkingMode === undefined
         ? {}
@@ -638,6 +664,8 @@ export class ClaudeSupervisor {
   async #pump(entry: SupervisorEntry): Promise<void> {
     try {
       for await (const sdkMessage of entry.query) {
+        const chainUuid = chainEntryUuid(sdkMessage as SDKMessage)
+        if (chainUuid !== undefined) entry.lastChainUuid = chainUuid
         for (const message of normalizeSdkMessage(sdkMessage as SDKMessage)) {
           await this.#handleMessage(entry, message)
         }
@@ -676,6 +704,12 @@ export class ClaudeSupervisor {
         cliVersion: message.cliVersion,
         cwd: message.cwd,
       })
+      // The fork target is spent the moment Claude resumes at it; leaving it
+      // armed would re-truncate the session on the next respawn.
+      if (entry.consumedRewind) {
+        entry.consumedRewind = false
+        await this.#sidecar.clearRewindPending(entry.sessionId)
+      }
       return
     }
 
@@ -1026,6 +1060,7 @@ export class ClaudeSupervisor {
       entry.active = undefined
       entry.state = 'idle'
       entry.lastUsedAt = Date.now()
+      await this.#recordChainAnchor(entry, active)
       this.#armIdleTimer(entry)
       return
     }
@@ -1101,8 +1136,22 @@ export class ClaudeSupervisor {
     entry.active = undefined
     entry.state = 'idle'
     entry.lastUsedAt = Date.now()
+    await this.#recordChainAnchor(entry, active)
     await this.#learnContextWindow(entry)
     this.#armIdleTimer(entry)
+  }
+
+  /** Pin where Claude's chain ended for the DSH turn that just settled, so a
+   *  later rewind of the following turn can fork exactly here. Best effort:
+   *  a missing anchor only makes a rewind fall back to an earlier turn. */
+  async #recordChainAnchor(entry: SupervisorEntry, active: ActiveTurn): Promise<void> {
+    const uuid = entry.lastChainUuid
+    if (uuid === undefined) return
+    try {
+      await this.#sidecar.recordRewindAnchor(entry.sessionId, active.cursor.turn, uuid)
+    } catch {
+      // The sidecar is advisory; a failed anchor never fails the turn.
+    }
   }
 
   async #upsertTranscriptText(active: ActiveTurn): Promise<void> {

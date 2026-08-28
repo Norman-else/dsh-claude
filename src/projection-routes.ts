@@ -53,6 +53,9 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
     ...(meta.repository === undefined ? {} : { repository: meta.repository }),
     reviewComments: meta.reviewComments,
+    // Ranges only: the chain anchors behind a rewind are Claude transcript
+    // identities and stay on this side of the boundary.
+    ...(projection.rewind === undefined ? {} : { rewind: { ranges: projection.rewind.ranges } }),
   }
 }
 

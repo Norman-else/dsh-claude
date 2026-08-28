@@ -1,0 +1,102 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { EMPTY_REWIND_STATE, isRewound, mergeRewindRanges, planRewind, recordRewindAnchor } from '../src/rewind.ts'
+import { ClaudeSidecarRepository } from '../src/sidecar.ts'
+
+const roots: string[] = []
+
+async function repository(): Promise<ClaudeSidecarRepository> {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-claude-rewind-'))
+  roots.push(root)
+  return new ClaudeSidecarRepository({ root })
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+/** Two turns: user message, turn/start, turn/end, per turn. */
+function log(): SessionEvent[] {
+  return [
+    { type: 'user/message', seq: 1, time: 1, data: {} },
+    { type: 'turn/start', seq: 2, time: 2, data: { turn: 1 } },
+    { type: 'turn/end', seq: 3, time: 3, data: { turn: 1 } },
+    { type: 'user/message', seq: 4, time: 4, data: {} },
+    { type: 'turn/start', seq: 5, time: 5, data: { turn: 2 } },
+    { type: 'turn/end', seq: 6, time: 6, data: { turn: 2 } },
+  ] as unknown as SessionEvent[]
+}
+
+describe('rewind planning', () => {
+  it('hides the message through the log tail and forks at the kept turn', () => {
+    const state = recordRewindAnchor(recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' }), { turn: 2, uuid: 'b' })
+    const planned = planRewind(state, log(), 4)
+    expect(planned?.ranges).toEqual([{ start: 4, end: 6 }])
+    expect(planned?.pending).toEqual({ resumeAt: 'a' })
+    // Turn 2 no longer exists in Claude's chain, so its anchor goes with it.
+    expect(planned?.anchors).toEqual([{ turn: 1, uuid: 'a' }])
+  })
+
+  it('starts a fresh Claude session when every turn is discarded', () => {
+    const state = recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' })
+    const planned = planRewind(state, log(), 1)
+    expect(planned?.ranges).toEqual([{ start: 1, end: 6 }])
+    expect(planned?.pending).toEqual({ fresh: true })
+    expect(planned?.anchors).toEqual([])
+  })
+
+  it('keeps every anchor for a message no turn ever opened', () => {
+    const events = log().slice(0, 3).concat({ type: 'user/message', seq: 4, time: 4, data: {} } as unknown as SessionEvent)
+    const state = recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' })
+    expect(planRewind(state, events, 4)?.pending).toEqual({ resumeAt: 'a' })
+  })
+
+  it('refuses a seq the log does not reach', () => {
+    expect(planRewind(EMPTY_REWIND_STATE, log(), 99)).toBeUndefined()
+    expect(planRewind(EMPTY_REWIND_STATE, [], 1)).toBeUndefined()
+  })
+
+  it('absorbs an earlier rewind into the later hidden block', () => {
+    const merged = mergeRewindRanges([{ start: 10, end: 20 }], { start: 4, end: 25 })
+    expect(merged).toEqual([{ start: 4, end: 25 }])
+    expect(mergeRewindRanges([{ start: 4, end: 6 }], { start: 7, end: 9 })).toEqual([{ start: 4, end: 9 }])
+    expect(mergeRewindRanges([{ start: 4, end: 6 }], { start: 20, end: 22 }))
+      .toEqual([{ start: 4, end: 6 }, { start: 20, end: 22 }])
+  })
+
+  it('reports membership per seq', () => {
+    const ranges = [{ start: 4, end: 6 }]
+    expect(isRewound(ranges, 3)).toBe(false)
+    expect(isRewound(ranges, 4)).toBe(true)
+    expect(isRewound(ranges, 6)).toBe(true)
+    expect(isRewound(ranges, 7)).toBe(false)
+  })
+
+  it('replaces the anchor of a re-run turn', () => {
+    const state = recordRewindAnchor(recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' }), { turn: 1, uuid: 'b' })
+    expect(state.anchors).toEqual([{ turn: 1, uuid: 'b' }])
+  })
+})
+
+describe('rewind persistence', () => {
+  it('round-trips the rewind block and consumes the fork target once', async () => {
+    const store = await repository()
+    await store.recordRewindAnchor('session', 1, 'uuid-1')
+    const planned = planRewind((await store.read('session')).rewind ?? EMPTY_REWIND_STATE, log(), 4)
+    expect(planned).toBeDefined()
+    await store.writeRewind('session', planned as NonNullable<typeof planned>)
+    const stored = new ClaudeSidecarRepository({ root: store.root })
+    expect((await stored.read('session')).rewind).toEqual({
+      ranges: [{ start: 4, end: 6 }],
+      anchors: [{ turn: 1, uuid: 'uuid-1' }],
+      pending: { resumeAt: 'uuid-1' },
+    })
+    await store.clearRewindPending('session')
+    const reread = await new ClaudeSidecarRepository({ root: store.root }).read('session')
+    expect(reread.rewind?.pending).toBeUndefined()
+    expect(reread.rewind?.ranges).toEqual([{ start: 4, end: 6 }])
+  })
+})
