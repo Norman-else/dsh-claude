@@ -4,7 +4,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconSearchOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
-import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals } from './hero-dom-bridge.ts'
+import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal } from './hero-dom-bridge.ts'
 import { loadRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
@@ -333,6 +333,7 @@ export function ClaudeHeroRepositoryControls({
   const cwd = useSessions(state => state.byId[sessionId]?.cwd)
   const workspacePath = useWorkspaces(state => state.items.find(item => item.sessionIds.includes(sessionId))?.path)
   const [portal, setPortal] = useState<HTMLElement>()
+  const hasPortal = portal !== undefined
   const [branches, setBranches] = useState<RepositoryBranchList>()
   const [selected, setSelected] = useState('')
   const [worktree, setWorktree] = useState(false)
@@ -357,15 +358,19 @@ export function ClaudeHeroRepositoryControls({
   useEffect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
     let scheduled = false
+    let current: HTMLElement | undefined
     const reconcile = (): void => {
       scheduled = false
       const target = locateClaudePresetSeat()
       if (target === undefined) {
+        if (retainsClaudeHeroPortal(current)) return
+        current = undefined
         removeClaudeHeroPortals()
         setPortal(undefined)
         return
       }
-      setPortal(ensureClaudeHeroPortal(target.seat))
+      current = ensureClaudeHeroPortal(target.seat)
+      setPortal(current)
     }
     const schedule = (): void => {
       if (scheduled) return
@@ -396,7 +401,9 @@ export function ClaudeHeroRepositoryControls({
     setTicketQuery('')
     setTicketResults(undefined)
     setTicketError(undefined)
-    if (portal === undefined || path === undefined) return
+    // Presence, not identity: a portal the host rebuilt in place addresses the
+    // same seat, so it must not abort the load and reset the capsule.
+    if (!hasPortal || path === undefined) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const load = (remaining: number): void => {
@@ -419,7 +426,7 @@ export function ClaudeHeroRepositoryControls({
       controller.abort()
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [portal, path, sessionId])
+  }, [hasPortal, path, sessionId])
 
   const availableBranches = branches === undefined ? [] : repositoryBranchOptions(branches)
   // A ticket alone routes the submission through prepare: without a worktree it

@@ -1,4 +1,5 @@
 const PORTAL_ATTRIBUTE = 'data-dsh-claude-hero-controls'
+const HERO_SELECTOR = '[data-phase="hero"]'
 
 function normalizedText(element: Element): string {
   return (element.textContent ?? '').replace(/\s+/gu, ' ').trim()
@@ -14,7 +15,7 @@ function directChildContaining(parent: Element, descendant: Element): Element | 
 
 /** Locate rc.8's hero preset seat without relying on hashed CSS module names. */
 export function locateClaudePresetSeat(root: ParentNode = document): { hero: HTMLElement; seat: Element } | undefined {
-  const heroes = Array.from(root.querySelectorAll<HTMLElement>('[data-phase="hero"]'))
+  const heroes = Array.from(root.querySelectorAll<HTMLElement>(HERO_SELECTOR))
   if (heroes.length !== 1) return undefined
   const hero = heroes[0]
   if (hero === undefined) return undefined
@@ -33,6 +34,17 @@ export function locateClaudePresetSeat(root: ParentNode = document): { hero: HTM
     row = row.parentElement
   }
   return undefined
+}
+
+/** Keep a portal the host has not torn down. `locateClaudePresetSeat` also
+ *  misses while a hero re-renders -- a second hero mid session switch, a preset
+ *  label swap -- and dropping the portal there recreates it a beat later with a
+ *  fresh identity, which restarts every effect keyed on it and strands the
+ *  branch picker on "Loading branches". A portal whose hero flipped phase or
+ *  unmounted has left the DOM (or left the hero) and is not retained. */
+export function retainsClaudeHeroPortal(portal: { closest: (selector: string) => unknown } | undefined): boolean {
+  const hero = portal?.closest(HERO_SELECTOR)
+  return hero !== null && hero !== undefined
 }
 
 /** Reuse the row's existing portal even when the host moved a node between it

@@ -17,6 +17,7 @@ import {
   toggleTicketSelection,
   WorktreeProgressCard,
 } from '../src/client/ClaudeHeroRepositoryControls.tsx'
+import { retainsClaudeHeroPortal } from '../src/client/hero-dom-bridge.ts'
 import type { JiraTicket } from '../src/client/jira-api.ts'
 import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 
@@ -164,5 +165,16 @@ describe('Claude hero repository capsule', () => {
       ' PAYMENTS ',
     )).toEqual(['feature/Payments', 'fix/payments-timeout'])
     expect(filterRepositoryBranches(['main'], 'missing')).toEqual([])
+  })
+})
+
+describe('hero portal retention', () => {
+  it('keeps a portal whose hero is still mounted and drops one that left it', () => {
+    // A host re-render hides the seat for a beat; recreating the portal there
+    // restarts the branch load, which is what wedges the "Loading branches" copy.
+    expect(retainsClaudeHeroPortal({ closest: (selector: string) => (selector === '[data-phase="hero"]' ? {} : null) })).toBe(true)
+    // Phase flip or unmount: the portal is no longer inside a hero.
+    expect(retainsClaudeHeroPortal({ closest: () => null })).toBe(false)
+    expect(retainsClaudeHeroPortal(undefined)).toBe(false)
   })
 })
