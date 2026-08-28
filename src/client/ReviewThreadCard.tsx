@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { IconRightUpOutline14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from './pr-feedback-api.ts'
 import { renderCommentBody } from './comment-markdown.ts'
 import { relativeAge } from './relative-age.ts'
@@ -44,7 +45,17 @@ function CommentBody({ comment, t, now, first }: {
           {comment.bot !== true ? null : <span style={styles.diffThreadBadge}>{t('reviewThreadBot')}</span>}
           {age === undefined ? null : <span style={styles.diffGhCommentAge}>{t('reviewThreadAgo', { age })}</span>}
         </span>
-        <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
+        <Tooltip label={t('reviewThreadOpenOnGitHub')} side="bottom" delayMs={250}>
+          <a
+            href={comment.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={styles.diffGhCommentLink}
+            aria-label={t('reviewThreadOpenOnGitHub')}
+          >
+            <IconRightUpOutline14 />
+          </a>
+        </Tooltip>
       </div>
       <div
         style={styles.diffCommentCardText}

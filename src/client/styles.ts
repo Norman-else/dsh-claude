@@ -1790,9 +1790,11 @@ export const diffGhCommentAuthor: CSSProperties = {
 }
 
 export const diffGhCommentLink: CSSProperties = {
-  color: 'var(--dsw-static-blue-450)',
+  display: 'inline-flex',
+  alignItems: 'center',
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
   textDecoration: 'none',
-  fontWeight: 650,
 }
 
 export const diffModalConflicts: CSSProperties = {
@@ -2351,6 +2353,30 @@ export const diffGhCommentAge: CSSProperties = {
   flex: 'none',
   color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 11,
+}
+
+/** Big enough to aim at: the 11px "›" glyph was a hard target. */
+export const diffFileChevron: CSSProperties = {
+  width: 14,
+  height: 14,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flex: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+  transition: 'transform 120ms ease',
+}
+
+export const diffSummaryAction: CSSProperties = {
+  marginLeft: 'auto',
+  padding: '2px 8px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
 }
 
 export const diffCommentNav: CSSProperties = {

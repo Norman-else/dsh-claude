@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconChevronDownOutline14,
+  IconChevronRightOutline14,
   IconChevronUpOutline14,
   IconCloseOutline16,
   IconFullscreenOutline16,
@@ -323,7 +324,7 @@ interface DiffFileSectionProps {
   readonly file: DiffFile
   /** Repository root the working tree lives in; without it unmodified lines cannot be expanded. */
   readonly root: string | undefined
-  readonly initiallyOpen: boolean
+  readonly open: boolean
   readonly t: ClaudeDiffPanelInjected['t']
   readonly comments: readonly ReviewComment[]
   readonly ghThreads: readonly PullRequestReviewThread[]
@@ -334,24 +335,17 @@ interface DiffFileSectionProps {
   readonly onThreadResolvedChange: (thread: PullRequestReviewThread, resolved: boolean) => Promise<void>
   readonly editorAnchor: ReviewCommentAnchor | undefined
   readonly editorNode: ReactNode
-  /** The prev/next walk landed in this file: open it even if the reader had it
-   *  collapsed, in the same render so the anchor exists to scroll to. */
-  readonly revealTarget: boolean
   readonly activeTargetKey: string | undefined
+  readonly onOpenChange: (open: boolean) => void
   readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
   readonly onRemoveComment: (id: string) => void
 }
 
 function DiffFileSection({
-  file, root, initiallyOpen, t, comments, ghThreads, editorAnchor, editorNode, now,
-  revealTarget, activeTargetKey,
-  suggestMention, onOpenEditor, onRemoveComment, onReplyToThread, onThreadResolvedChange,
+  file, root, open, t, comments, ghThreads, editorAnchor, editorNode, now,
+  activeTargetKey,
+  suggestMention, onOpenEditor, onOpenChange, onRemoveComment, onReplyToThread, onThreadResolvedChange,
 }: DiffFileSectionProps) {
-  const [open, setOpen] = useState(initiallyOpen)
-  // Revealing opens the section this render; remembering it keeps the section
-  // open after the walk moves on, the way a manual expand would.
-  useEffect(() => { if (revealTarget) setOpen(true) }, [revealTarget])
-  const shown = open || revealTarget
   const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
   const [total, setTotal] = useState<number>()
   const [expanding, setExpanding] = useState(false)
@@ -395,8 +389,10 @@ function DiffFileSection({
   const dragSide = drag === undefined ? undefined : anchors[drag.start]?.side
   return (
     <section style={styles.diffFile}>
-      <button type="button" style={styles.diffFileHeader} aria-expanded={shown} onClick={() => setOpen(!shown)}>
-        <span style={{ ...styles.chevron, ...(open ? styles.chevronOpen : {}) }}>›</span>
+      <button type="button" style={styles.diffFileHeader} aria-expanded={open} onClick={() => onOpenChange(!open)}>
+        <span data-diff-file-chevron="" style={{ ...styles.diffFileChevron, ...(open ? styles.chevronOpen : {}) }} aria-hidden="true">
+          <IconChevronRightOutline14 size={14} />
+        </span>
         <span style={styles.diffFilePath}>
           <Tooltip label={file.path} side="bottom" delayMs={300} maxWidth={520}>
             <span style={styles.diffFileName} aria-label={file.path}>{name}</span>
@@ -409,7 +405,7 @@ function DiffFileSection({
         )}
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
-      {shown ? <div style={styles.diffCode}>{rows.map((entry, index) => {
+      {open ? <div style={styles.diffCode}>{rows.map((entry, index) => {
         if (entry.kind === 'collapsed' && entry.gap !== undefined) {
           return <DiffGapRow key={`gap:${entry.gap.newStart}`} gap={entry.gap} t={t} busy={expanding} onExpand={root === undefined ? undefined : expand} />
         }
@@ -552,6 +548,13 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const [targetIndex, setTargetIndex] = useState(0)
   const [activeTargetKey, setActiveTargetKey] = useState<string>()
   const [pendingScrollKey, setPendingScrollKey] = useState<string>()
+  // Explicit choices only; a file the reader has not touched follows the
+  // default (the first file opens, the rest stay out of the way).
+  const [openFiles, setOpenFiles] = useState<ReadonlyMap<string, boolean>>(() => new Map())
+  const fileOpen = useCallback((path: string, index: number): boolean => openFiles.get(path) ?? index === 0, [openFiles])
+  const setFileOpen = useCallback((path: string, open: boolean): void => {
+    setOpenFiles(current => new Map(current).set(path, open))
+  }, [])
   const suggestMention = useCallback(async (query: string): Promise<readonly MentionableUser[]> => (
     pullNumber === undefined ? [] : loadMentionableUsers(sessionId, pullNumber, query).catch((): readonly MentionableUser[] => [])
   ), [pullNumber, sessionId])
@@ -718,10 +721,13 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       if (target !== undefined) {
         setActiveTargetKey(target.key)
         setPendingScrollKey(target.key)
+        // Opening in the same commit as the scroll request keeps the anchor in
+        // the DOM by the time the effect below looks for it.
+        setFileOpen(target.path, true)
       }
       return next
     })
-  }, [targets])
+  }, [setFileOpen, targets])
   // The file section opens in the same render as the reveal, so by the time
   // this effect runs the anchor is in the DOM.
   useEffect(() => {
@@ -759,6 +765,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     { id: 'create-pr', label: t('diffCreatePr'), disabled: !availability['create-pr'] },
   ]
   const completed = dialog?.commit !== undefined && dialog.error === undefined
+  const allFilesOpen = files.every((file, index) => fileOpen(file.path, index))
   const commentEditorNode: ReactNode = commentEditor === undefined ? null : (
     <div style={styles.diffCommentBlock}>
       <div style={styles.diffCommentRange}>{commentLineLabel(commentEditor, t)}</div>
@@ -830,6 +837,16 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
           <span>{t('diffFiles', { count: diff.files })}</span>
           <span style={styles.diffAdd}>+{diff.additions}</span>
           <span style={styles.diffDelete}>−{diff.deletions}</span>
+          {files.length === 0 ? null : (
+            <button
+              type="button"
+              style={styles.diffSummaryAction}
+              aria-label={allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
+              onClick={() => { setOpenFiles(new Map(files.map(file => [file.path, !allFilesOpen]))) }}
+            >
+              {allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
+            </button>
+          )}
         </div>
         <div ref={diffBodyRef} style={styles.diffBody}>
           {diff.truncated ? <p style={styles.diffNotice}>{t('diffTruncated')}</p> : null}
@@ -838,13 +855,13 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               key={file.path}
               file={file}
               root={repository.root}
-              initiallyOpen={index === 0}
+              open={fileOpen(file.path, index)}
+              onOpenChange={open => { setFileOpen(file.path, open) }}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
               ghThreads={ghThreads.filter(thread => thread.path === file.path)}
               suggestMention={suggestMention}
               now={threadsLoadedAt}
-              revealTarget={activeTargetKey !== undefined && targets[targetIndex]?.path === file.path}
               activeTargetKey={activeTargetKey}
               onReplyToThread={replyToThread}
               onThreadResolvedChange={changeThreadResolved}

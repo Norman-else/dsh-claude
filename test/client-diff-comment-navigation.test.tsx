@@ -79,6 +79,31 @@ afterEach(() => {
   mounted = undefined
 })
 
+describe('diff panel file sections', () => {
+  it('opens and closes every file at once from the summary row', () => {
+    const container = mount()
+    const sections = (): boolean[] => [...container.querySelectorAll('[aria-expanded]')]
+      .filter(item => item.querySelector('[data-diff-file-chevron]') !== null)
+      .map(item => item.getAttribute('aria-expanded') === 'true')
+    // Only the first file starts open, so the control offers to open the rest.
+    expect(sections()).toEqual([true, false])
+
+    act(() => { button(container, en.diffExpandAll).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(sections()).toEqual([true, true])
+
+    act(() => { button(container, en.diffCollapseAll).dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(sections()).toEqual([false, false])
+  })
+
+  it('gives the expander an icon big enough to hit', () => {
+    const container = mount()
+    const chevron = container.querySelector('[data-diff-file-chevron] svg')
+    expect(chevron).not.toBeNull()
+    // The bare "›" glyph rendered at 11px was the complaint.
+    expect(chevron?.getAttribute('width')).toBe('14')
+  })
+})
+
 describe('diff panel comment navigation', () => {
   it('walks to the next comment, opening the file that holds it', () => {
     const container = mount()

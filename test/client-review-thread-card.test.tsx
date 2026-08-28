@@ -46,6 +46,9 @@ describe('review thread card', () => {
     expect(markup).toContain('https://github.com/x#1')
     expect(markup).toContain('Reply')
     expect(markup).toContain('Resolve')
+    // The link out is an icon with a real name, not a bare "↗" glyph.
+    expect(markup).toContain('Open on GitHub')
+    expect(markup).not.toContain('>↗<')
   })
 
   it('gives every comment the identity row GitHub gives it', () => {
