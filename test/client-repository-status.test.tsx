@@ -330,7 +330,9 @@ describe('Claude repository status UI', () => {
     expect(panelMarkup).toContain('Commit')
     expect(panelMarkup).toContain('aria-label="diffCommitMenu"')
     expect(panelMarkup).toContain('aria-label="diffMaximize"')
-    expect(panelMarkup).toContain('src/file.ts')
+    // The header names the file; its directory rides in the hover tooltip.
+    expect(panelMarkup).toContain('>file.ts<')
+    expect(panelMarkup).toContain('aria-label="src/file.ts"')
     expect(panelMarkup).toContain('+2')
     expect(panelMarkup).toContain('−1')
     expect(panelMarkup).toContain('aria-expanded="true"')

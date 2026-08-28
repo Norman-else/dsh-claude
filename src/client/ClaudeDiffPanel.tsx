@@ -3,8 +3,10 @@ import {
   IconChevronDownOutline14,
   IconCloseOutline16,
   IconFullscreenOutline16,
+  MarkdownText,
   Menu,
   Modal,
+  Tooltip,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -267,6 +269,25 @@ function DiffGapRow({ gap, t, busy, onExpand }: { gap: DiffGap; t: ClaudeDiffPan
   )
 }
 
+/** Review bots address their own machinery through HTML comments — autofix
+ *  markers, checklist ids — which the Markdown renderer would show verbatim
+ *  because raw HTML is disabled. Drop them and the blank runs they leave. */
+export function reviewCommentMarkdown(body: string): string {
+  return body
+    .replace(/<!--[\s\S]*?-->/gu, '')
+    .replace(/[^\S\n]+$/gmu, '')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim()
+}
+
+function CommentGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 9.5a2 2 0 0 1-2 2H6l-3.5 2.5V4a2 2 0 0 1 2-2h7.5a2 2 0 0 1 2 2z" />
+    </svg>
+  )
+}
+
 interface DiffFileSectionProps {
   readonly file: DiffFile
   /** Repository root the working tree lives in; without it unmodified lines cannot be expanded. */
@@ -289,9 +310,9 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
   const [drag, setDrag] = useState<{ start: number; end: number }>()
   const rows = useMemo(() => expandDiffRows(numberDiffLines(file.lines), revealed, total), [file.lines, revealed, total])
   const anchors = useMemo(() => rows.map(commentAnchorForLine), [rows])
-  const slash = file.path.lastIndexOf('/')
-  const directory = slash < 0 ? '' : file.path.slice(0, slash + 1)
-  const name = file.path.slice(slash + 1)
+  const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+  // Collapsed sections hide their comments, so the header carries the count.
+  const commentCount = comments.length + ghComments.length
   const expand = (gap: DiffGap, direction: 'up' | 'down'): void => {
     if (root === undefined || expanding) return
     const span = gap.count ?? DIFF_EXPAND_STEP
@@ -328,10 +349,16 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
     <section style={styles.diffFile}>
       <button type="button" style={styles.diffFileHeader} aria-expanded={open} onClick={() => setOpen(value => !value)}>
         <span style={{ ...styles.chevron, ...(open ? styles.chevronOpen : {}) }}>›</span>
-        <span style={styles.diffFilePath} title={file.path}>
-          {directory === '' ? null : <span style={styles.diffFileDir}>{`\u202A${directory}\u202C`}</span>}
-          <span style={styles.diffFileName}>{name}</span>
+        <span style={styles.diffFilePath}>
+          <Tooltip label={file.path} side="bottom" delayMs={300} maxWidth={520}>
+            <span style={styles.diffFileName} aria-label={file.path}>{name}</span>
+          </Tooltip>
         </span>
+        {commentCount === 0 ? null : (
+          <span style={styles.diffFileComments} aria-label={t('diffFileComments', { count: commentCount })}>
+            <CommentGlyph />{commentCount}
+          </span>
+        )}
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
       {open ? <div style={styles.diffCode}>{rows.map((entry, index) => {
@@ -370,7 +397,9 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
                   <span style={styles.diffGhCommentAuthor}>GitHub · @{comment.author}</span>
                   <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
                 </div>
-                <p style={styles.diffCommentCardText}>{comment.body}</p>
+                <div style={styles.diffCommentCardText} className="dshClaudeDiffCommentBody">
+                  <MarkdownText text={reviewCommentMarkdown(comment.body)} />
+                </div>
               </div>
             ))}
             {editorOpen ? editorNode : null}
@@ -623,7 +652,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   )
   return (
     <>
-      <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}</style>
+      <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}{styles.diffCommentMarkdownCss}</style>
       <div className={styles.detailsCardClass} style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
           <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span style={styles.diffHeaderLabel}>{t('diffWorkingTree')}</span></div>

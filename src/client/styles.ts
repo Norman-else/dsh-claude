@@ -2583,6 +2583,37 @@ export const diffFileName: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
+/** Comment count on a file header: the one hint that survives collapsing. */
+export const diffFileComments: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 3,
+  padding: '0 6px',
+  height: 18,
+  borderRadius: 9,
+  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 18%, transparent)',
+  color: 'var(--dsw-static-blue-450)',
+  fontSize: 11,
+  fontWeight: 650,
+  lineHeight: '18px',
+}
+
+/** Markdown bodies bring their own block spacing; keep the card compact. */
+export const diffCommentMarkdownCss = `
+.dshClaudeDiffCommentBody > :first-child { margin-top: 0 }
+.dshClaudeDiffCommentBody > :last-child { margin-bottom: 0 }
+.dshClaudeDiffCommentBody :is(h1, h2, h3, h4, h5, h6) {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 650;
+}
+.dshClaudeDiffCommentBody :is(p, ul, ol, pre) { margin: 4px 0 }
+.dshClaudeDiffCommentBody :is(ul, ol) { padding-left: 18px }
+.dshClaudeDiffCommentBody pre { max-width: 100%; overflow-x: auto }
+`
+
 export const diffFileStats: CSSProperties = {
   flex: 'none',
   display: 'inline-flex',
