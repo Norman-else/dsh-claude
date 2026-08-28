@@ -413,10 +413,20 @@ export class ClaudeSupervisor {
       this.#entries.set(sessionId, entry)
       await entry.sdkInitialization
     } else {
-      await this.#syncPermissionMode(entry)
-      if (model !== entry.model) {
-        await entry.query.setModel(model)
-        entry.model = model
+      // Both of these are SDK control requests, and this whole admission runs
+      // behind one process-wide gate: a request that never answers would stall
+      // every session's next turn until the Host restarts. A wedged process
+      // gets discarded instead, so the next attempt spawns a fresh one.
+      try {
+        await this.#syncPermissionMode(entry)
+        if (model !== entry.model) {
+          await withTimeout(entry.query.setModel(model), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code model switch')
+          entry.model = model
+        }
+      } catch (error) {
+        if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId)
+        await this.#disposeEntry(entry)
+        throw error
       }
     }
 
@@ -539,7 +549,7 @@ export class ClaudeSupervisor {
   async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
     const mode = claudePermissionMode(entry.ownerAgent.session.events)
     if (mode === entry.permissionMode) return
-    await entry.query.setPermissionMode(mode)
+    await withTimeout(entry.query.setPermissionMode(mode), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code permission mode switch')
     entry.permissionMode = mode
   }
 

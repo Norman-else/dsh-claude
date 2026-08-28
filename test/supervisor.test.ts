@@ -15,6 +15,7 @@ import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import type { ClaudeActivityInput } from '../src/events.ts'
 import {
   CLAUDE_INTERRUPT_TIMEOUT_MS,
+  CLAUDE_METADATA_TIMEOUT_MS,
   ClaudeOutcomeUnknownError,
   ClaudeProcessLimitError,
   ClaudeSupervisor,
@@ -808,6 +809,42 @@ describe('Claude supervisor', () => {
     query.push(result('two'))
     await collect(second)
     await runtime.dispose()
+  })
+
+  it('discards a process whose model switch never answers instead of stalling admission', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = factory()
+      const owner = fakeAgent()
+      const runtime = supervisor(transport.create)
+      const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one', model: 'fable' })
+      const query = transport.queries[0]!
+      query.push(init())
+      query.push(result('one'))
+      await collect(first)
+
+      owner.events.push(
+        { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
+        { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
+      )
+      query.setModel.mockReturnValueOnce(new Promise<undefined>(() => {}))
+      const wedged = runtime.runTurn({ agent: owner.agent, prompt: 'two', model: 'default' })
+      const settled = expect(wedged).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
+      await settled
+      // The wedged process is gone, so the next turn is admitted on a fresh one.
+      expect(runtime.snapshots()).toHaveLength(0)
+      const third = runtime.runTurn({ agent: owner.agent, prompt: 'three', model: 'default' })
+      await vi.advanceTimersByTimeAsync(0)
+      const next = transport.queries[1]
+      expect(next).toBeDefined()
+      next!.push(init())
+      next!.push(result('three'))
+      await collect(await third)
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reuses one streaming query for multiple turns', async () => {
