@@ -319,6 +319,15 @@ export const zh = {
   diffUnmodifiedTail: '文件末尾之前还有未修改的行',
   diffExpandUp: '向上展开',
   diffExpandDown: '向下展开',
+  rewindTooltip: '回退到此处',
+  rewindTitle: '回退到这条消息之前',
+  rewindDescription: '将删除这条消息及其下方的 {count} 条内容，并让 Claude 回到发送它之前的上下文。此操作不可撤销。',
+  rewindHint: '被删除的内容会从这个会话中隐藏，Claude 也会忘记它们；消息原文会放回输入框，方便修改后重新发送。',
+  rewindConfirm: '删除并回退',
+  rewindSubmitting: '回退中…',
+  rewindFailed: '回退失败（{code}）。',
+  rewindBusy: '这个会话正在运行，请等本轮结束后再回退。',
+  rewindStale: '宿主进程里的插件还是旧版本（没有回退接口）。重启 DSH 后再试。',
 } as const
 
 export const en = {
@@ -642,6 +651,15 @@ export const en = {
   diffUnmodifiedTail: 'More unmodified lines below',
   diffExpandUp: 'Expand up',
   diffExpandDown: 'Expand down',
+  rewindTooltip: 'Rewind to here',
+  rewindTitle: 'Rewind to before this message',
+  rewindDescription: 'This removes the message and the {count} entries below it, and returns Claude to the context it had before you sent it. This cannot be undone.',
+  rewindHint: 'The removed entries are hidden from this session and Claude forgets them; the message text goes back to the composer so you can edit and resend it.',
+  rewindConfirm: 'Delete and rewind',
+  rewindSubmitting: 'Rewinding…',
+  rewindFailed: 'The rewind failed ({code}).',
+  rewindBusy: 'This session is running; wait for the turn to finish before rewinding.',
+  rewindStale: 'The Host process is still running the previous plugin build, which has no rewind route. Restart DSH and try again.',
 } as const
 
 export type ClaudeCodeSettingsKey = keyof typeof en

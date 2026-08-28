@@ -103,6 +103,22 @@ describe('Claude client sidecar projection', () => {
     }
   })
 
+  it('carries the rewind ranges from the snapshot line into the published projection', async () => {
+    vi.useFakeTimers()
+    const stream = ndjsonStream()
+    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
+    const source = createClaudeProjectionSource('session/a', fetchProjection, 100)
+    const unsubscribe = source.subscribe(() => {})
+    stream.push({ ...valid, type: 'snapshot', rewind: { ranges: [{ start: 4, end: 9 }] } })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().rewind).toEqual({ ranges: [{ start: 4, end: 9 }] })
+    expect(() => parseClaudeClientProjection({ ...valid, rewind: { ranges: [{ start: -1, end: 2 }] } })).toThrow()
+    unsubscribe()
+    stream.close()
+    source.dispose()
+  })
+
   it('applies the snapshot line and coalesces text appends into one frame', async () => {
     vi.useFakeTimers()
     const stream = ndjsonStream()

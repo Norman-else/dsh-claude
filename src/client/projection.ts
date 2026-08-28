@@ -4,6 +4,7 @@ import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
+import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
 
 export interface ClaudeClientProjection {
   readonly schemaVersion: 1
@@ -15,6 +16,8 @@ export interface ClaudeClientProjection {
   readonly tasks?: ClaudeTasksEvent
   readonly repository?: RepositoryStatus
   readonly reviewComments?: readonly ReviewComment[]
+  /** Surface seq spans a rewind dropped; the chat suppresses their rows. */
+  readonly rewind?: { readonly ranges: readonly ClaudeRewindRange[] }
   /** Client-derived per-step activity slices with stable identities for
    *  untouched steps, so streaming re-renders only the active step. */
   readonly byStep?: ReadonlyMap<string, readonly ClaudeActivityEvent[]>
@@ -163,6 +166,16 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
       }
     }
   }
+  if (input.rewind !== undefined) {
+    const ranges = record(input.rewind)?.ranges
+    if (!Array.isArray(ranges) || ranges.length > MAX_REWIND_RANGES) throw new Error('invalid Claude rewind projection')
+    for (const item of ranges) {
+      const range = record(item)
+      if (range === undefined || !nonNegativeInteger(range.start) || !nonNegativeInteger(range.end)) {
+        throw new Error('invalid Claude rewind projection')
+      }
+    }
+  }
   return input as unknown as ClaudeClientProjection
 }
 
@@ -220,6 +233,7 @@ export function createClaudeProjectionSource(
   let tasks: ClaudeTasksEvent | undefined
   let repository: RepositoryStatus | undefined
   let reviewComments: readonly ReviewComment[] | undefined
+  let rewind: ClaudeClientProjection['rewind']
   const byStep = new Map<string, ClaudeActivityEvent[]>()
   const stepOrder: { turn: number; step: number; key: string }[] = []
   /** Streaming prose still being revealed: full arrived text plus shown chars. */
@@ -303,6 +317,7 @@ export function createClaudeProjectionSource(
       ...(tasks === undefined ? {} : { tasks }),
       ...(repository === undefined ? {} : { repository }),
       ...(reviewComments === undefined ? {} : { reviewComments }),
+      ...(rewind === undefined ? {} : { rewind }),
       byStep: new Map(byStep),
     }
     for (const listener of [...listeners]) listener()
@@ -384,6 +399,7 @@ export function createClaudeProjectionSource(
           tasks = next.tasks
           repository = next.repository
           reviewComments = next.reviewComments
+          rewind = next.rewind
           reset(next.activities)
           break
         }

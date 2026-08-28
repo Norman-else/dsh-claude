@@ -2869,3 +2869,50 @@ export const diffModalSuccess: CSSProperties = {
   fontSize: 14,
   lineHeight: '22px',
 }
+
+/* Rewind control, portalled into the Host's user-message action row. The
+   metrics mirror MessageIconActions' own action button so the added control
+   is indistinguishable from the copy and branch icons beside it. */
+
+export const rewindActionCss = `
+[data-dsh-claude-rewind] > button {
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+[data-dsh-claude-rewind] > button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+[data-dsh-claude-rewind] > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+`
+
+export const rewindDangerButton: CSSProperties = {
+  ...primaryButton,
+  background: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const rewindModalMessage: CSSProperties = {
+  margin: 0,
+  padding: 12,
+  maxHeight: 160,
+  overflowY: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  borderRadius: 9,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 13,
+  lineHeight: '20px',
+}

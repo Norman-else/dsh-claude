@@ -19,6 +19,7 @@ import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
+import { ClaudeRewind, type ClaudeChatSource, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
 import { ClaudeSessionMenu, type ClaudeSessionMenuInjected } from './ClaudeSessionMenu.tsx'
@@ -399,6 +400,33 @@ export function apply(ctx: ClientContext): void {
       },
     })}
   />))
+  // "Rewind to here" beside the copy action of every user message. Root
+  // scoped like the selection toolbar: it resolves the on-screen session
+  // itself and only arms inside sessions this plugin owns.
+  if (sessions !== undefined) {
+    // Stable prop identities: the control subscribes to them, so a re-render
+    // of the seat must not tear down and rebuild every subscription.
+    const rewind: ClaudeRewindInjected = {
+      t,
+      currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
+      subscribeSessions: listener => sessions.list.subscribe(listener),
+      chatOf: sessionId => sessions.binding(sessionId as SessionId)?.session as unknown as ClaudeChatSource | undefined,
+      projectionOf: sessionId => projections.source(sessionId),
+      ...(conversation === undefined ? {} : {
+        setDraft: (sessionId: string, text: string) => {
+          const scope = sessions.scope(sessionId as SessionId)
+          if (scope === undefined) return
+          conversation.input.for(scope).setDraft(text)
+        },
+      }),
+    }
+    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'claude-rewind',
+      locale: namespace,
+    }, () => <ClaudeRewind {...rewind} />))
+  }
+
   if (sessions !== undefined && conversation !== undefined) {
     // Shadow the Host queue strip: list-slot entries sharing an id form one
     // cell and the lowest priority renders, so this replaces it app-wide with
