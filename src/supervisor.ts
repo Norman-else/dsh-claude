@@ -413,20 +413,10 @@ export class ClaudeSupervisor {
       this.#entries.set(sessionId, entry)
       await entry.sdkInitialization
     } else {
-      // Both of these are SDK control requests, and this whole admission runs
-      // behind one process-wide gate: a request that never answers would stall
-      // every session's next turn until the Host restarts. A wedged process
-      // gets discarded instead, so the next attempt spawns a fresh one.
-      try {
-        await this.#syncPermissionMode(entry)
-        if (model !== entry.model) {
-          await withTimeout(entry.query.setModel(model), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code model switch')
-          entry.model = model
-        }
-      } catch (error) {
-        if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId)
-        await this.#disposeEntry(entry)
-        throw error
+      await this.#syncPermissionMode(entry)
+      if (model !== entry.model) {
+        await this.#control(entry, entry.query.setModel(model), 'Claude Code model switch')
+        entry.model = model
       }
     }
 
@@ -507,7 +497,7 @@ export class ClaudeSupervisor {
         // Use the SDK's initialize control request. system/init is emitted only
         // after the first real stdin message and is reserved for session binding.
         await entry.sdkInitialization
-        return await withTimeout(operation(entry.query, entry), CLAUDE_METADATA_TIMEOUT_MS, 'Claude metadata request')
+        return await this.#control(entry, operation(entry.query, entry), 'Claude metadata request')
       } finally {
         entry.lastUsedAt = Date.now()
         if (entry.active === undefined && entry.state === 'idle') this.#armIdleTimer(entry)
@@ -538,27 +528,43 @@ export class ClaudeSupervisor {
       clearTimeout(entry.idleTimer)
       entry.idleTimer = undefined
     }
-    // Metadata shares turn admission's process-wide gate, so an unanswered
-    // control request here stalls every session until the Host restarts. Bound
-    // both and discard the wedged process, exactly as turn admission does.
+    await this.#syncPermissionMode(entry)
+    if (model !== entry.model) {
+      await this.#control(entry, entry.query.setModel(model), 'Claude Code model switch')
+      entry.model = model
+    }
+    return entry
+  }
+
+  /** Run one SDK control request against a live entry, and discard the entry if
+   *  it does not answer.
+   *
+   *  Turn admission and every metadata read share one process-wide gate, so an
+   *  unbounded control request stalls every session until the Host restarts.
+   *  Bounding it is only half the cure: a timeout also proves this query has
+   *  stopped answering, and keeping the entry means the next caller reuses the
+   *  same dead process — timing out again, forever. Discarding it lets the next
+   *  attempt spawn a fresh one. Every control request goes through here so a
+   *  new call site cannot quietly reintroduce either half. */
+  async #control<T>(
+    entry: SupervisorEntry,
+    operation: Promise<T>,
+    label: string,
+    timeoutMs = CLAUDE_METADATA_TIMEOUT_MS,
+  ): Promise<T> {
     try {
-      await this.#syncPermissionMode(entry)
-      if (model !== entry.model) {
-        await withTimeout(entry.query.setModel(model), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code model switch')
-        entry.model = model
-      }
+      return await withTimeout(operation, timeoutMs, label)
     } catch (error) {
-      if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId)
+      if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
       await this.#disposeEntry(entry)
       throw error
     }
-    return entry
   }
 
   async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
     const mode = claudePermissionMode(entry.ownerAgent.session.events)
     if (mode === entry.permissionMode) return
-    await withTimeout(entry.query.setPermissionMode(mode), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code permission mode switch')
+    await this.#control(entry, entry.query.setPermissionMode(mode), 'Claude Code permission mode switch')
     entry.permissionMode = mode
   }
 

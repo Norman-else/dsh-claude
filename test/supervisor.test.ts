@@ -329,6 +329,35 @@ describe('Claude supervisor', () => {
     }
   })
 
+  it('discards a query that stops answering metadata instead of reusing it on the next request', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = factory()
+      const owner = fakeAgent()
+      const runtime = supervisor(transport.create)
+      await runtime.supportedCommands(owner.agent)
+      const query = transport.queries[0]!
+
+      // Bounding the request is only half the cure: keeping the wedged entry
+      // makes every later request on the same model time out on it again.
+      query.getContextUsage.mockReturnValueOnce(new Promise<never>(() => {}))
+      const wedged = runtime.contextUsage(owner.agent)
+      const settled = expect(wedged).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
+      await settled
+
+      expect(runtime.snapshots()).toHaveLength(0)
+      await expect(runtime.supportedCommands(owner.agent)).resolves.toHaveLength(1)
+      expect(transport.queries).toHaveLength(2)
+      // Same model, so nothing would have forced a switch: only the discard
+      // keeps the dead query from serving the next read.
+      expect(query.supportedCommands).toHaveBeenCalledTimes(1)
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reads the Claude command catalog without opening a DSH turn', async () => {
     const transport = factory()
     const owner = fakeAgent()
