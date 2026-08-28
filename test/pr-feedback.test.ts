@@ -11,6 +11,7 @@ import {
   boundedLogTail,
   parseFailingChecks,
   parseReviewComments,
+  githubAvatarUrl,
 } from '../src/pr-feedback.ts'
 
 interface Result { readonly stdout?: string; readonly exitCode?: number }
@@ -51,6 +52,21 @@ describe('pull request feedback parsing', () => {
       { id: 1, path: 'src/a.ts', line: 12, side: 'new', author: 'alice', body: 'Fix this', url: 'https://github.com/x' },
       { id: 2, path: 'src/b.ts', line: 4, side: 'old', author: 'bob', body: 'Old code', url: 'https://github.com/y' },
     ])
+  })
+
+  it('keeps an author avatar only when GitHub itself hosts it', () => {
+    const [comment] = parseReviewComments([{
+      id: 1, path: 'src/a.ts', line: 12, side: 'RIGHT', body: 'Fix this', html_url: 'https://github.com/x',
+      user: { login: 'mercoder-dev[bot]', avatar_url: 'https://avatars.githubusercontent.com/in/42?v=4' },
+    }])
+    expect(comment?.avatarUrl).toBe('https://avatars.githubusercontent.com/in/42?v=4')
+    expect(githubAvatarUrl('https://evil.example/pixel.png')).toBeUndefined()
+    expect(githubAvatarUrl('http://avatars.githubusercontent.com/u/1')).toBeUndefined()
+    expect(githubAvatarUrl(undefined)).toBeUndefined()
+    // A comment without one simply carries no avatar.
+    expect(parseReviewComments([{
+      id: 2, path: 'src/b.ts', side: 'RIGHT', body: 'x', html_url: 'https://github.com/y', user: { login: 'alice' },
+    }])[0]).not.toHaveProperty('avatarUrl')
   })
 
   it('keeps only failing check buckets and extracts Actions job ids', () => {

@@ -1,5 +1,5 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
-import type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
+import { githubAvatarUrl, type FailingCheck, type PullRequestReviewComment } from '../pr-feedback.ts'
 import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 export type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
@@ -31,6 +31,7 @@ export async function loadPullRequestComments(sessionId: string, pullNumber: num
     const input = record(item)
     if (input === undefined || typeof input.id !== 'number' || typeof input.path !== 'string'
       || typeof input.author !== 'string' || typeof input.body !== 'string' || typeof input.url !== 'string'
+      || (input.avatarUrl !== undefined && githubAvatarUrl(input.avatarUrl) === undefined)
       || (input.side !== 'new' && input.side !== 'old')
       || (input.line !== undefined && typeof input.line !== 'number')) continue
     comments.push(input as unknown as PullRequestReviewComment)

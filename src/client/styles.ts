@@ -1719,6 +1719,22 @@ export const diffPrCommentsButton: CSSProperties = {
   cursor: 'pointer',
 }
 
+export const diffGhCommentAvatar: CSSProperties = {
+  flex: 'none',
+  width: 16,
+  height: 16,
+  borderRadius: '50%',
+  background: 'var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent))',
+  objectFit: 'cover',
+}
+
+export const diffGhCommentIdentity: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  minWidth: 0,
+}
+
 export const diffGhCommentAuthor: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
   fontWeight: 600,

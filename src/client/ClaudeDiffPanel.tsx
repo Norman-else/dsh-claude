@@ -383,7 +383,22 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
             {ghLineComments.map(comment => (
               <div key={`gh-${comment.id}`} style={styles.diffCommentBlock}>
                 <div style={styles.diffCommentCardMeta}>
-                  <span style={styles.diffGhCommentAuthor}>GitHub · @{comment.author}</span>
+                  <span style={styles.diffGhCommentIdentity}>
+                    {comment.avatarUrl === undefined ? null : (
+                      <img
+                        src={comment.avatarUrl}
+                        alt=""
+                        width={16}
+                        height={16}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        style={styles.diffGhCommentAvatar}
+                        // A blocked or missing avatar must not leave a broken glyph behind.
+                        onError={event => { event.currentTarget.style.display = 'none' }}
+                      />
+                    )}
+                    <span style={styles.diffGhCommentAuthor}>@{comment.author}</span>
+                  </span>
                   <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
                 </div>
                 <div

@@ -23,6 +23,8 @@ export interface PullRequestReviewComment {
   readonly line?: number
   readonly side: 'new' | 'old'
   readonly author: string
+  /** GitHub-hosted avatar of the comment's author, when the API named one. */
+  readonly avatarUrl?: string
   readonly body: string
   readonly url: string
 }
@@ -54,6 +56,19 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
+/** Only GitHub's own image hosts; the browser loads these directly, so a URL
+ *  the API did not vouch for must never become an outbound request. */
+export function githubAvatarUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 1_024) return undefined
+  try {
+    const url = new URL(value)
+    const allowed = url.hostname === 'github.com' || url.hostname === 'githubusercontent.com' || url.hostname.endsWith('.githubusercontent.com')
+    return url.protocol === 'https:' && allowed ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function parseReviewComments(value: unknown): readonly PullRequestReviewComment[] {
   if (!Array.isArray(value)) return []
   const comments: PullRequestReviewComment[] = []
@@ -64,6 +79,7 @@ export function parseReviewComments(value: unknown): readonly PullRequestReviewC
     const path = typeof input.path === 'string' ? input.path : ''
     const url = typeof input.html_url === 'string' ? input.html_url : ''
     if (body.length === 0 || path.length === 0) continue
+    const avatarUrl = githubAvatarUrl(record(input.user)?.avatar_url)
     const line = Number.isSafeInteger(input.line)
       ? Number(input.line)
       : Number.isSafeInteger(input.original_line) ? Number(input.original_line) : undefined
@@ -73,6 +89,7 @@ export function parseReviewComments(value: unknown): readonly PullRequestReviewC
       ...(line === undefined ? {} : { line }),
       side: input.side === 'LEFT' ? 'old' : 'new',
       author: typeof record(input.user)?.login === 'string' ? String(record(input.user)?.login) : 'unknown',
+      ...(avatarUrl === undefined ? {} : { avatarUrl }),
       body: body.slice(0, MAX_COMMENT_CHARS),
       url,
     })
