@@ -233,6 +233,7 @@ export function createClaudeProjectionSource(
   let tasks: ClaudeTasksEvent | undefined
   let repository: RepositoryStatus | undefined
   let reviewComments: readonly ReviewComment[] | undefined
+  let rewind: ClaudeClientProjection['rewind']
   const byStep = new Map<string, ClaudeActivityEvent[]>()
   const stepOrder: { turn: number; step: number; key: string }[] = []
   /** Streaming prose still being revealed: full arrived text plus shown chars. */
@@ -316,6 +317,7 @@ export function createClaudeProjectionSource(
       ...(tasks === undefined ? {} : { tasks }),
       ...(repository === undefined ? {} : { repository }),
       ...(reviewComments === undefined ? {} : { reviewComments }),
+      ...(rewind === undefined ? {} : { rewind }),
       byStep: new Map(byStep),
     }
     for (const listener of [...listeners]) listener()
@@ -397,6 +399,7 @@ export function createClaudeProjectionSource(
           tasks = next.tasks
           repository = next.repository
           reviewComments = next.reviewComments
+          rewind = next.rewind
           reset(next.activities)
           break
         }
