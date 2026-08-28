@@ -60,8 +60,11 @@ function CommentBody({ comment, t, now, first }: {
  *  the thread, plus the two things a reviewer expects to do with it — answer it
  *  and close it. A resolved thread collapses, because the diff is about what
  *  still needs attention. */
-export function ReviewThreadCard({ thread, t, now, suggest, onReply, onResolvedChange }: {
+export function ReviewThreadCard({ thread, t, now, anchorKey, active = false, suggest, onReply, onResolvedChange }: {
   thread: PullRequestReviewThread
+  /** Anchor the panel's prev/next walk scrolls to. */
+  anchorKey?: string
+  active?: boolean
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   /** Fixed clock for the comment ages; defaults to the wall clock. */
   now?: number
@@ -101,9 +104,15 @@ export function ReviewThreadCard({ thread, t, now, suggest, onReply, onResolvedC
     }).finally(() => { setBusy(false) })
   }
 
+  const frame = {
+    ...(anchorKey === undefined ? {} : { 'data-review-target': anchorKey }),
+    ...(active ? { 'data-review-active': 'true' } : {}),
+    style: { ...styles.diffCommentBlock, ...(active ? styles.diffCommentBlockActive : {}) },
+  }
+
   if (collapsed) {
     return (
-      <div style={styles.diffCommentBlock}>
+      <div {...frame}>
         <button
           type="button"
           aria-expanded={false}
@@ -119,7 +128,7 @@ export function ReviewThreadCard({ thread, t, now, suggest, onReply, onResolvedC
   }
 
   return (
-    <div style={styles.diffCommentBlock}>
+    <div {...frame}>
       {!thread.resolved && !thread.outdated ? null : (
         <div style={styles.diffThreadBadges}>
           {thread.resolved ? <span style={styles.diffThreadBadge}>{t('reviewThreadResolved')}</span> : null}

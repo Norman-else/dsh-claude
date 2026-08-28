@@ -2353,6 +2353,26 @@ export const diffGhCommentAge: CSSProperties = {
   fontSize: 11,
 }
 
+export const diffCommentNav: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+}
+
+export const diffCommentNavCount: CSSProperties = {
+  minWidth: 34,
+  textAlign: 'center',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  fontVariantNumeric: 'tabular-nums',
+}
+
+/** Where the walk stopped, so the eye lands without hunting for it. */
+export const diffCommentBlockActive: CSSProperties = {
+  borderColor: 'var(--dsw-static-blue-450)',
+  boxShadow: '0 0 0 1px var(--dsw-static-blue-450)',
+}
+
 export const diffThreadBadges: CSSProperties = {
   display: 'flex',
   gap: 6,

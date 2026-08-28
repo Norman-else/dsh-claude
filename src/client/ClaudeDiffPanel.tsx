@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconChevronDownOutline14,
+  IconChevronUpOutline14,
   IconCloseOutline16,
   IconFullscreenOutline16,
   Menu,
@@ -27,6 +28,7 @@ import {
 import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
 import { loadRepositoryFileLines } from './repository-setup-api.ts'
 import { ReviewThreadCard } from './ReviewThreadCard.tsx'
+import { menuNavigationIndex } from './menu-navigation.ts'
 import { commentLineLabel } from './ClaudeReviewComments.tsx'
 import * as styles from './styles.ts'
 
@@ -182,6 +184,38 @@ export function expandDiffRows(rows: readonly NumberedDiffLine[], revealed: Read
   return out
 }
 
+/** One stop for the panel's prev/next comment walk. */
+export interface ReviewTarget {
+  readonly key: string
+  readonly path: string
+  readonly line: number
+  readonly side: ReviewCommentSide
+}
+
+/** Everything in this diff still waiting on the reader, in reading order:
+ *  files as the panel lists them, lines as the file reads. Resolved threads are
+ *  collapsed by design, and a comment on a file this diff does not render has
+ *  nowhere to scroll to, so neither is a stop. */
+export function reviewTargets(
+  files: readonly DiffFile[],
+  comments: readonly ReviewComment[],
+  threads: readonly PullRequestReviewThread[],
+): readonly ReviewTarget[] {
+  const targets: ReviewTarget[] = []
+  for (const file of files) {
+    const inFile: ReviewTarget[] = [
+      ...threads
+        .filter(thread => thread.path === file.path && !thread.resolved && thread.line !== undefined)
+        .map(thread => ({ key: `thread:${thread.id}`, path: thread.path, line: thread.line ?? 0, side: thread.side })),
+      ...comments
+        .filter(comment => comment.path === file.path)
+        .map(comment => ({ key: `comment:${comment.id}`, path: comment.path, line: comment.line, side: comment.side })),
+    ]
+    targets.push(...inFile.sort((left, right) => left.line - right.line || left.side.localeCompare(right.side)))
+  }
+  return targets
+}
+
 export interface ReviewCommentAnchor {
   /** Last (anchor) line; the editor and saved comment attach here. */
   readonly line: number
@@ -300,15 +334,24 @@ interface DiffFileSectionProps {
   readonly onThreadResolvedChange: (thread: PullRequestReviewThread, resolved: boolean) => Promise<void>
   readonly editorAnchor: ReviewCommentAnchor | undefined
   readonly editorNode: ReactNode
+  /** The prev/next walk landed in this file: open it even if the reader had it
+   *  collapsed, in the same render so the anchor exists to scroll to. */
+  readonly revealTarget: boolean
+  readonly activeTargetKey: string | undefined
   readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
   readonly onRemoveComment: (id: string) => void
 }
 
 function DiffFileSection({
   file, root, initiallyOpen, t, comments, ghThreads, editorAnchor, editorNode, now,
+  revealTarget, activeTargetKey,
   suggestMention, onOpenEditor, onRemoveComment, onReplyToThread, onThreadResolvedChange,
 }: DiffFileSectionProps) {
   const [open, setOpen] = useState(initiallyOpen)
+  // Revealing opens the section this render; remembering it keeps the section
+  // open after the walk moves on, the way a manual expand would.
+  useEffect(() => { if (revealTarget) setOpen(true) }, [revealTarget])
+  const shown = open || revealTarget
   const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
   const [total, setTotal] = useState<number>()
   const [expanding, setExpanding] = useState(false)
@@ -352,7 +395,7 @@ function DiffFileSection({
   const dragSide = drag === undefined ? undefined : anchors[drag.start]?.side
   return (
     <section style={styles.diffFile}>
-      <button type="button" style={styles.diffFileHeader} aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <button type="button" style={styles.diffFileHeader} aria-expanded={shown} onClick={() => setOpen(!shown)}>
         <span style={{ ...styles.chevron, ...(open ? styles.chevronOpen : {}) }}>›</span>
         <span style={styles.diffFilePath}>
           <Tooltip label={file.path} side="bottom" delayMs={300} maxWidth={520}>
@@ -366,7 +409,7 @@ function DiffFileSection({
         )}
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
-      {open ? <div style={styles.diffCode}>{rows.map((entry, index) => {
+      {shown ? <div style={styles.diffCode}>{rows.map((entry, index) => {
         if (entry.kind === 'collapsed' && entry.gap !== undefined) {
           return <DiffGapRow key={`gap:${entry.gap.newStart}`} gap={entry.gap} t={t} busy={expanding} onExpand={root === undefined ? undefined : expand} />
         }
@@ -388,7 +431,12 @@ function DiffFileSection({
               onDragEnter={drag === undefined ? undefined : () => setDrag(current => (current === undefined ? current : { ...current, end: index }))}
             />
             {lineComments.map(comment => (
-              <div key={comment.id} style={styles.diffCommentBlock}>
+              <div
+                key={comment.id}
+                data-review-target={`comment:${comment.id}`}
+                data-review-active={activeTargetKey === `comment:${comment.id}` ? 'true' : undefined}
+                style={{ ...styles.diffCommentBlock, ...(activeTargetKey === `comment:${comment.id}` ? styles.diffCommentBlockActive : {}) }}
+              >
                 <div style={styles.diffCommentCardMeta}>
                   <span>{commentLineLabel(comment, t)}</span>
                   <button type="button" style={styles.reviewCommentChipRemove} aria-label={t('reviewCommentRemove')} onClick={() => onRemoveComment(comment.id)}>×</button>
@@ -400,6 +448,8 @@ function DiffFileSection({
               <ReviewThreadCard
                 key={thread.id}
                 thread={thread}
+                anchorKey={`thread:${thread.id}`}
+                active={activeTargetKey === `thread:${thread.id}`}
                 t={t}
                 suggest={suggestMention}
                 now={now}
@@ -498,6 +548,10 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   // The count on the "hand the review to Claude" button counts what is still
   // open, matching what that button would actually forward.
   const openThreadCount = ghThreads.filter(thread => !thread.resolved).length
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const [targetIndex, setTargetIndex] = useState(0)
+  const [activeTargetKey, setActiveTargetKey] = useState<string>()
+  const [pendingScrollKey, setPendingScrollKey] = useState<string>()
   const suggestMention = useCallback(async (query: string): Promise<readonly MentionableUser[]> => (
     pullNumber === undefined ? [] : loadMentionableUsers(sessionId, pullNumber, query).catch((): readonly MentionableUser[] => [])
   ), [pullNumber, sessionId])
@@ -523,6 +577,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const diffBodyRef = useCallback((element: HTMLDivElement | null) => {
     diffViewportObserver.current?.disconnect()
     diffViewportObserver.current = undefined
+    bodyRef.current = element
     if (element === null || typeof ResizeObserver === 'undefined') return
     const update = (): void => element.style.setProperty('--dsh-claude-diff-viewport', `${element.clientWidth}px`)
     update()
@@ -649,6 +704,46 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     for (const id of removedCommentIds) merged.delete(id)
     return [...merged.values()]
   }, [localComments, projection.reviewComments, removedCommentIds])
+  const targets = useMemo(() => reviewTargets(files, reviewComments, ghThreads), [files, ghThreads, reviewComments])
+  // Comments come and go while the panel is open; a cursor past the end would
+  // otherwise report "5/3".
+  useEffect(() => {
+    setTargetIndex(index => (index < targets.length ? index : 0))
+  }, [targets.length])
+  const goToComment = useCallback((direction: 'ArrowDown' | 'ArrowUp'): void => {
+    setTargetIndex((current) => {
+      if (targets.length === 0) return current
+      const next = menuNavigationIndex(current, targets.length, direction)
+      const target = targets[next]
+      if (target !== undefined) {
+        setActiveTargetKey(target.key)
+        setPendingScrollKey(target.key)
+      }
+      return next
+    })
+  }, [targets])
+  // The file section opens in the same render as the reveal, so by the time
+  // this effect runs the anchor is in the DOM.
+  useEffect(() => {
+    if (pendingScrollKey === undefined) return
+    bodyRef.current?.querySelector(`[data-review-target="${pendingScrollKey}"]`)?.scrollIntoView({ block: 'center' })
+    setPendingScrollKey(undefined)
+  }, [pendingScrollKey])
+  useEffect(() => {
+    if (targets.length === 0) return
+    const shortcut = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      // A composer owns its letters; only a reader outside one is navigating.
+      const origin = event.target
+      if (origin instanceof HTMLElement
+        && (origin.isContentEditable || origin.tagName === 'INPUT' || origin.tagName === 'TEXTAREA' || origin.tagName === 'SELECT')) return
+      if (event.key !== 'n' && event.key !== 'p') return
+      event.preventDefault()
+      goToComment(event.key === 'n' ? 'ArrowDown' : 'ArrowUp')
+    }
+    document.addEventListener('keydown', shortcut)
+    return () => { document.removeEventListener('keydown', shortcut) }
+  }, [goToComment, targets.length])
   useEffect(() => () => actionController.current?.abort(), [])
   useEffect(() => {
     if (!projection.owned || repository?.status !== 'ready' || diff === undefined) closeDetails()
@@ -696,6 +791,29 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
                 <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutline14 /></button>
               } />
             </div>
+            {targets.length === 0 ? null : (
+              <div style={styles.diffCommentNav}>
+                <button
+                  type="button"
+                  className={styles.panelIconButtonClass}
+                  aria-label={t('diffCommentPrevious')}
+                  title={t('diffCommentPosition', { index: targetIndex + 1, total: targets.length })}
+                  onClick={() => goToComment('ArrowUp')}
+                >
+                  <IconChevronUpOutline14 />
+                </button>
+                <span style={styles.diffCommentNavCount}>{t('diffCommentCounter', { index: targetIndex + 1, total: targets.length })}</span>
+                <button
+                  type="button"
+                  className={styles.panelIconButtonClass}
+                  aria-label={t('diffCommentNext')}
+                  title={t('diffCommentPosition', { index: targetIndex + 1, total: targets.length })}
+                  onClick={() => goToComment('ArrowDown')}
+                >
+                  <IconChevronDownOutline14 />
+                </button>
+              </div>
+            )}
             {openThreadCount > 0 && submitPrompt !== undefined ? (
               <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} aria-label={t('prCommentsButton', { count: openThreadCount })} onClick={() => submitPrompt(composeCommentsPrompt(ghThreads))}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -726,6 +844,8 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               ghThreads={ghThreads.filter(thread => thread.path === file.path)}
               suggestMention={suggestMention}
               now={threadsLoadedAt}
+              revealTarget={activeTargetKey !== undefined && targets[targetIndex]?.path === file.path}
+              activeTargetKey={activeTargetKey}
               onReplyToThread={replyToThread}
               onThreadResolvedChange={changeThreadResolved}
               editorAnchor={commentEditor !== undefined && commentEditor.path === file.path ? commentEditor : undefined}
