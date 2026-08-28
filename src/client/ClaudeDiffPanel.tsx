@@ -3,7 +3,6 @@ import {
   IconChevronDownOutline14,
   IconCloseOutline16,
   IconFullscreenOutline16,
-  MarkdownText,
   Menu,
   Modal,
   Tooltip,
@@ -19,6 +18,7 @@ import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPre
 import { composeCommentsPrompt, loadPullRequestComments, type PullRequestReviewComment } from './pr-feedback-api.ts'
 import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
 import { loadRepositoryFileLines } from './repository-setup-api.ts'
+import { renderCommentBody } from './comment-markdown.ts'
 import { commentLineLabel } from './ClaudeReviewComments.tsx'
 import * as styles from './styles.ts'
 
@@ -269,24 +269,6 @@ function DiffGapRow({ gap, t, busy, onExpand }: { gap: DiffGap; t: ClaudeDiffPan
   )
 }
 
-/** Inline HTML review bots reach for around their own footers and summaries.
- *  The Markdown renderer disables raw HTML, so an unhandled tag arrives as
- *  literal `<sup>` text; unwrapping keeps the words and loses the markup. */
-const UNWRAPPED_HTML = /<\/?(?:sup|sub|b|i|em|strong|kbd|ins|del|small|span|p|div|details|summary|blockquote|a)(?:\s[^<>]*)?>/giu
-
-/** Review bots also address their own machinery through HTML comments —
- *  autofix markers, checklist ids — which would show verbatim for the same
- *  reason. Drop those outright, along with the blank runs they leave. */
-export function reviewCommentMarkdown(body: string): string {
-  return body
-    .replace(/<!--[\s\S]*?-->/gu, '')
-    .replace(/<br\s*\/?>/giu, '\n')
-    .replace(UNWRAPPED_HTML, '')
-    .replace(/[^\S\n]+$/gmu, '')
-    .replace(/\n{3,}/gu, '\n\n')
-    .trim()
-}
-
 function CommentGlyph() {
   return (
     <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -404,9 +386,12 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
                   <span style={styles.diffGhCommentAuthor}>GitHub · @{comment.author}</span>
                   <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
                 </div>
-                <div style={styles.diffCommentCardText} className="dshClaudeDiffCommentBody">
-                  <MarkdownText text={reviewCommentMarkdown(comment.body)} />
-                </div>
+                <div
+                  style={styles.diffCommentCardText}
+                  className="dshClaudeDiffCommentBody"
+                  // Sanitized against this plugin's own allowlist; see comment-markdown.ts.
+                  dangerouslySetInnerHTML={{ __html: renderCommentBody(comment.body) }}
+                />
               </div>
             ))}
             {editorOpen ? editorNode : null}

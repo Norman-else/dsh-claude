@@ -53,6 +53,14 @@ export default defineConfig([
       },
     }],
     sourcemap: true,
-    deps: { neverBundle: [/^@deepseek-ai\//, /^react(?:\/.*)?$/, /^react-dom(?:\/.*)?$/] },
+    // The Host resolves only its own packages and React for this bundle, so
+    // everything else — the review comment renderer's Markdown and sanitizer —
+    // must be inlined rather than left as a bare import the browser cannot
+    // resolve. The module wrapper only rewrites named imports, so a stray
+    // external default import would not even parse.
+    deps: {
+      neverBundle: [/^@deepseek-ai\//, /^react(?:\/.*)?$/, /^react-dom(?:\/.*)?$/],
+      alwaysBundle: [/^marked$/, /^dompurify$/],
+    },
   },
 ])

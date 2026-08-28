@@ -2599,7 +2599,8 @@ export const diffFileComments: CSSProperties = {
   lineHeight: '18px',
 }
 
-/** Markdown bodies bring their own block spacing; keep the card compact. */
+/** GitHub review comments render through this plugin's own Markdown pipeline
+ *  (see comment-markdown.ts), so the card owns their typography too. */
 export const diffCommentMarkdownCss = `
 .dshClaudeDiffCommentBody > :first-child { margin-top: 0 }
 .dshClaudeDiffCommentBody > :last-child { margin-bottom: 0 }
@@ -2609,9 +2610,49 @@ export const diffCommentMarkdownCss = `
   line-height: 18px;
   font-weight: 650;
 }
-.dshClaudeDiffCommentBody :is(p, ul, ol, pre) { margin: 4px 0 }
+.dshClaudeDiffCommentBody :is(p, ul, ol, pre, blockquote, table, details) { margin: 4px 0 }
 .dshClaudeDiffCommentBody :is(ul, ol) { padding-left: 18px }
-.dshClaudeDiffCommentBody pre { max-width: 100%; overflow-x: auto }
+.dshClaudeDiffCommentBody li { margin: 2px 0 }
+.dshClaudeDiffCommentBody li input[type='checkbox'] {
+  margin: 0 6px 0 -14px;
+  vertical-align: middle;
+  accent-color: var(--dsw-static-blue-450);
+}
+.dshClaudeDiffCommentBody li:has(> input[type='checkbox']) { list-style: none }
+.dshClaudeDiffCommentBody code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent));
+  font-family: var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+}
+.dshClaudeDiffCommentBody pre {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 8%, transparent));
+  overflow-x: auto;
+}
+.dshClaudeDiffCommentBody pre code { padding: 0; background: none }
+.dshClaudeDiffCommentBody blockquote {
+  padding-left: 8px;
+  border-left: 2px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent));
+  color: var(--dsw-alias-label-secondary);
+}
+.dshClaudeDiffCommentBody a { color: var(--dsw-static-blue-450) }
+.dshClaudeDiffCommentBody img { max-width: 100%; vertical-align: middle }
+.dshClaudeDiffCommentBody table { border-collapse: collapse }
+.dshClaudeDiffCommentBody :is(th, td) {
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent));
+}
+.dshClaudeDiffCommentBody summary { cursor: pointer; font-weight: 650 }
+.dshClaudeDiffCommentBody :is(sup, sub) { font-size: 9px; line-height: 0 }
+.dshClaudeDiffCommentBody hr {
+  margin: 8px 0;
+  border: none;
+  border-top: 1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent));
+}
 `
 
 export const diffFileStats: CSSProperties = {
