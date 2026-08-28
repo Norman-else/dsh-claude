@@ -15,10 +15,18 @@ import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPreview } from './repository-action-api.ts'
-import { composeCommentsPrompt, loadPullRequestComments, type PullRequestReviewComment } from './pr-feedback-api.ts'
+import {
+  composeCommentsPrompt,
+  loadMentionableUsers,
+  loadPullRequestThreads,
+  replyToReviewThread,
+  setReviewThreadResolved,
+  type MentionableUser,
+  type PullRequestReviewThread,
+} from './pr-feedback-api.ts'
 import { addReviewComment, removeReviewComment } from './review-comment-api.ts'
 import { loadRepositoryFileLines } from './repository-setup-api.ts'
-import { renderCommentBody } from './comment-markdown.ts'
+import { ReviewThreadCard } from './ReviewThreadCard.tsx'
 import { commentLineLabel } from './ClaudeReviewComments.tsx'
 import * as styles from './styles.ts'
 
@@ -284,14 +292,22 @@ interface DiffFileSectionProps {
   readonly initiallyOpen: boolean
   readonly t: ClaudeDiffPanelInjected['t']
   readonly comments: readonly ReviewComment[]
-  readonly ghComments: readonly PullRequestReviewComment[]
+  readonly ghThreads: readonly PullRequestReviewThread[]
+  readonly suggestMention: (query: string) => Promise<readonly MentionableUser[]>
+  /** Clock the comment ages render against, refreshed with the thread load. */
+  readonly now: number
+  readonly onReplyToThread: (thread: PullRequestReviewThread, body: string) => Promise<void>
+  readonly onThreadResolvedChange: (thread: PullRequestReviewThread, resolved: boolean) => Promise<void>
   readonly editorAnchor: ReviewCommentAnchor | undefined
   readonly editorNode: ReactNode
   readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
   readonly onRemoveComment: (id: string) => void
 }
 
-function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, editorAnchor, editorNode, onOpenEditor, onRemoveComment }: DiffFileSectionProps) {
+function DiffFileSection({
+  file, root, initiallyOpen, t, comments, ghThreads, editorAnchor, editorNode, now,
+  suggestMention, onOpenEditor, onRemoveComment, onReplyToThread, onThreadResolvedChange,
+}: DiffFileSectionProps) {
   const [open, setOpen] = useState(initiallyOpen)
   const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
   const [total, setTotal] = useState<number>()
@@ -301,7 +317,7 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
   const anchors = useMemo(() => rows.map(commentAnchorForLine), [rows])
   const name = file.path.slice(file.path.lastIndexOf('/') + 1)
   // Collapsed sections hide their comments, so the header carries the count.
-  const commentCount = comments.length + ghComments.length
+  const commentCount = comments.length + ghThreads.reduce((total, thread) => total + thread.comments.length, 0)
   const expand = (gap: DiffGap, direction: 'up' | 'down'): void => {
     if (root === undefined || expanding) return
     const span = gap.count ?? DIFF_EXPAND_STEP
@@ -356,7 +372,7 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
         }
         const anchor = anchors[index]
         const lineComments = anchor === undefined ? [] : comments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
-        const ghLineComments = anchor === undefined ? [] : ghComments.filter(comment => comment.line === anchor.line && comment.side === anchor.side)
+        const lineThreads = anchor === undefined ? [] : ghThreads.filter(thread => thread.line === anchor.line && thread.side === anchor.side)
         const editorOpen = anchor !== undefined && editorAnchor !== undefined && editorAnchor.line === anchor.line && editorAnchor.side === anchor.side
         const inDrag = dragLow !== undefined && dragHigh !== undefined && index >= dragLow && index <= dragHigh && anchor?.side === dragSide
         const inEditorRange = anchor !== undefined && editorAnchor !== undefined && editorAnchor.side === anchor.side
@@ -380,34 +396,16 @@ function DiffFileSection({ file, root, initiallyOpen, t, comments, ghComments, e
                 <p style={styles.diffCommentCardText}>{comment.text}</p>
               </div>
             ))}
-            {ghLineComments.map(comment => (
-              <div key={`gh-${comment.id}`} style={styles.diffCommentBlock}>
-                <div style={styles.diffCommentCardMeta}>
-                  <span style={styles.diffGhCommentIdentity}>
-                    {comment.avatarUrl === undefined ? null : (
-                      <img
-                        src={comment.avatarUrl}
-                        alt=""
-                        width={16}
-                        height={16}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        style={styles.diffGhCommentAvatar}
-                        // A blocked or missing avatar must not leave a broken glyph behind.
-                        onError={event => { event.currentTarget.style.display = 'none' }}
-                      />
-                    )}
-                    <span style={styles.diffGhCommentAuthor}>@{comment.author}</span>
-                  </span>
-                  <a href={comment.url} target="_blank" rel="noopener noreferrer" style={styles.diffGhCommentLink} aria-label={comment.url}>↗</a>
-                </div>
-                <div
-                  style={styles.diffCommentCardText}
-                  className="dshClaudeDiffCommentBody"
-                  // Sanitized against this plugin's own allowlist; see comment-markdown.ts.
-                  dangerouslySetInnerHTML={{ __html: renderCommentBody(comment.body) }}
-                />
-              </div>
+            {lineThreads.map(thread => (
+              <ReviewThreadCard
+                key={thread.id}
+                thread={thread}
+                t={t}
+                suggest={suggestMention}
+                now={now}
+                onReply={body => onReplyToThread(thread, body)}
+                onResolvedChange={resolved => onThreadResolvedChange(thread, resolved)}
+              />
             ))}
             {editorOpen ? editorNode : null}
           </Fragment>
@@ -482,14 +480,42 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const [localComments, setLocalComments] = useState<readonly ReviewComment[]>([])
   const [removedCommentIds, setRemovedCommentIds] = useState<ReadonlySet<string>>(() => new Set())
   const actionController = useRef<AbortController>()
-  const [ghComments, setGhComments] = useState<readonly PullRequestReviewComment[]>([])
+  const [ghThreads, setGhThreads] = useState<readonly PullRequestReviewThread[]>([])
+  // Comment ages read against the moment the threads arrived, so every card in
+  // one render agrees on "now" instead of drifting per re-render.
+  const [threadsLoadedAt, setThreadsLoadedAt] = useState(() => Date.now())
   const pullNumber = repository?.pullRequest?.state === 'open' ? repository.pullRequest.number : undefined
   useEffect(() => {
-    setGhComments([])
+    setGhThreads([])
     if (pullNumber === undefined) return
     const controller = new AbortController()
-    void loadPullRequestComments(sessionId, pullNumber, controller.signal).then(setGhComments, () => undefined)
+    void loadPullRequestThreads(sessionId, pullNumber, controller.signal).then((threads) => {
+      setGhThreads(threads)
+      setThreadsLoadedAt(Date.now())
+    }, () => undefined)
     return () => { controller.abort() }
+  }, [pullNumber, sessionId])
+  // The count on the "hand the review to Claude" button counts what is still
+  // open, matching what that button would actually forward.
+  const openThreadCount = ghThreads.filter(thread => !thread.resolved).length
+  const suggestMention = useCallback(async (query: string): Promise<readonly MentionableUser[]> => (
+    pullNumber === undefined ? [] : loadMentionableUsers(sessionId, pullNumber, query).catch((): readonly MentionableUser[] => [])
+  ), [pullNumber, sessionId])
+  // GitHub is the record; the local copy just spares the panel a full reload
+  // between one reply and the next.
+  const replyToThread = useCallback(async (thread: PullRequestReviewThread, body: string): Promise<void> => {
+    if (pullNumber === undefined) return
+    const anchor = thread.comments[0]
+    if (anchor === undefined) return
+    const posted = await replyToReviewThread(sessionId, pullNumber, anchor.id, body)
+    setGhThreads(list => list.map(item => (item.id === thread.id
+      ? { ...item, comments: [...item.comments, posted] }
+      : item)))
+  }, [pullNumber, sessionId])
+  const changeThreadResolved = useCallback(async (thread: PullRequestReviewThread, resolved: boolean): Promise<void> => {
+    if (pullNumber === undefined) return
+    const state = await setReviewThreadResolved(sessionId, pullNumber, thread.id, resolved)
+    setGhThreads(list => list.map(item => (item.id === thread.id ? { ...item, resolved: state } : item)))
   }, [pullNumber, sessionId])
   // The code container is max-content wide for horizontal scrolling; comment
   // editors size against the visible width published through this variable.
@@ -670,12 +696,12 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
                 <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutline14 /></button>
               } />
             </div>
-            {ghComments.length > 0 && submitPrompt !== undefined ? (
-              <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} aria-label={t('prCommentsButton', { count: ghComments.length })} onClick={() => submitPrompt(composeCommentsPrompt(ghComments))}>
+            {openThreadCount > 0 && submitPrompt !== undefined ? (
+              <button type="button" style={styles.diffPrCommentsButton} title={t('prCommentsSend')} aria-label={t('prCommentsButton', { count: openThreadCount })} onClick={() => submitPrompt(composeCommentsPrompt(ghThreads))}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M2.75 2.75h10.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H8.2l-3.2 2.9v-2.9H2.75a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z" />
                 </svg>
-                {ghComments.length}
+                {openThreadCount}
               </button>
             ) : null}
             <button type="button" className={styles.panelIconButtonClass} aria-label={maximized ? t('diffRestore') : t('diffMaximize')} onClick={toggleMaximized}>{maximized ? <RestorePanelIcon /> : <IconFullscreenOutline16 />}</button>
@@ -697,7 +723,11 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               initiallyOpen={index === 0}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
-              ghComments={ghComments.filter(comment => comment.path === file.path)}
+              ghThreads={ghThreads.filter(thread => thread.path === file.path)}
+              suggestMention={suggestMention}
+              now={threadsLoadedAt}
+              onReplyToThread={replyToThread}
+              onThreadResolvedChange={changeThreadResolved}
               editorAnchor={commentEditor !== undefined && commentEditor.path === file.path ? commentEditor : undefined}
               editorNode={commentEditorNode}
               onOpenEditor={anchor => openCommentEditor(file.path, anchor)}

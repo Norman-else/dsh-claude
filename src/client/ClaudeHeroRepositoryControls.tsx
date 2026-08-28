@@ -5,6 +5,7 @@ import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, Icon
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal } from './hero-dom-bridge.ts'
+import { menuNavigationIndex as branchMenuNavigationIndex } from './menu-navigation.ts'
 import { loadRepositoryBranches, refreshRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
@@ -91,12 +92,7 @@ export function toggleTicketSelection(tickets: readonly JiraTicket[], ticket: Ji
     : [...tickets, ticket]
 }
 
-export function branchMenuNavigationIndex(current: number, count: number, key: 'ArrowDown' | 'ArrowUp' | 'Home' | 'End'): number {
-  if (count <= 0) return 0
-  if (key === 'Home') return 0
-  if (key === 'End') return count - 1
-  return (current + (key === 'ArrowDown' ? 1 : -1) + count) % count
-}
+export { branchMenuNavigationIndex }
 
 const BRANCH_LOAD_RETRIES = 2
 const BRANCH_LOAD_RETRY_MS = 1_000

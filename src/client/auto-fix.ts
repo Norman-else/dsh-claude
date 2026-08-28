@@ -1,4 +1,4 @@
-import { composeChecksPrompt, composeCommentsPrompt, type FailingCheck, type PullRequestReviewComment } from './pr-feedback-api.ts'
+import { composeChecksPrompt, composeCommentsPrompt, type FailingCheck, type PullRequestReviewThread } from './pr-feedback-api.ts'
 
 export const AUTO_FIX_INTERVAL_MS = 30_000
 export const AUTO_FIX_FOOTER = 'This request was generated automatically by the pull request watcher. After making the changes, commit and push to the pull request branch so the checks re-run.'
@@ -52,14 +52,18 @@ export function checksSignature(checks: readonly FailingCheck[]): string | undef
 
 export function planAutoFix(
   memory: AutoFixMemory,
-  comments: readonly PullRequestReviewComment[],
+  threads: readonly PullRequestReviewThread[],
   checks: readonly FailingCheck[],
 ): { prompt?: string; memory: AutoFixMemory } {
-  const fresh = comments.filter(comment => !memory.handledCommentIds.has(comment.id))
+  // A resolved thread is settled; it neither prompts a round nor gets marked
+  // handled, so reopening it later still reaches Claude.
+  const open = threads.filter(thread => !thread.resolved)
+  const unhandled = open.filter(thread => thread.comments.some(comment => !memory.handledCommentIds.has(comment.id)))
+  const fresh = unhandled.flatMap(thread => thread.comments)
   const signature = checksSignature(checks)
   const checksChanged = signature !== undefined && signature !== memory.handledChecksSignature
   const sections: string[] = []
-  if (fresh.length > 0) sections.push(composeCommentsPrompt(fresh))
+  if (unhandled.length > 0) sections.push(composeCommentsPrompt(unhandled))
   if (checksChanged) sections.push(composeChecksPrompt(checks))
   if (sections.length === 0) return { memory }
   const nextSignature = checksChanged ? signature : memory.handledChecksSignature

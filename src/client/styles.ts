@@ -2333,6 +2333,133 @@ export const diffCommentTextarea: CSSProperties = {
   resize: 'vertical',
 }
 
+export const diffGhComment: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+}
+
+/** Every comment after the first opens with a rule, the way GitHub separates
+ *  the entries of one conversation. */
+export const diffGhCommentNext: CSSProperties = {
+  marginTop: 8,
+  paddingTop: 8,
+  borderTop: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
+}
+
+export const diffGhCommentAge: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+}
+
+export const diffThreadBadges: CSSProperties = {
+  display: 'flex',
+  gap: 6,
+}
+
+export const diffThreadBadge: CSSProperties = {
+  flex: 'none',
+  padding: '0 6px',
+  borderRadius: 999,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '18px',
+}
+
+export const diffThreadSummary: CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  minWidth: 0,
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  fontSize: 12,
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const diffThreadExcerpt: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+/** The composer is a region of its own: without the rule it reads as more of
+ *  the comment it sits under. */
+export const diffThreadComposer: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  marginTop: 10,
+  paddingTop: 10,
+  borderTop: '1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
+}
+
+export const diffThreadComposerCaption: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
+}
+
+export const mentionField: CSSProperties = {
+  position: 'relative',
+  display: 'block',
+}
+
+export const mentionList: CSSProperties = {
+  position: 'absolute',
+  zIndex: 1100,
+  top: '100%',
+  left: 0,
+  width: 240,
+  maxHeight: 176,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  padding: 4,
+  overflowY: 'auto',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 8,
+  background: 'var(--dsw-specific-menu)',
+  boxShadow: 'var(--dsw-shadow-lv3)',
+}
+
+export const mentionItem: CSSProperties = {
+  height: 28,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '0 8px',
+  border: 'none',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  font: 'inherit',
+  fontSize: 13,
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+
+export const mentionItemActive: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2))',
+}
+
+export const mentionAvatar: CSSProperties = {
+  width: 16,
+  height: 16,
+  flex: 'none',
+  borderRadius: '50%',
+}
+
 export const diffCommentActions: CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',

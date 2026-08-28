@@ -5,7 +5,8 @@ import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
 import { cleanupMergedRepository } from './repository-setup-api.ts'
-import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestComments, type FailingCheck, type PullRequestReviewComment } from './pr-feedback-api.ts'
+import { relativeAge } from './relative-age.ts'
+import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestThreads, type FailingCheck, type PullRequestReviewThread } from './pr-feedback-api.ts'
 import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, rememberAutoFix, setAutoFixEnabled } from './auto-fix.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
@@ -110,16 +111,6 @@ function repositoryName(remote: string | undefined): string | undefined {
   return remote?.split('/').at(-1)
 }
 
-function relativeAge(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined
-  const elapsedHours = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 3_600_000))
-  if (!Number.isFinite(elapsedHours)) return undefined
-  if (elapsedHours < 1) return '<1h'
-  if (elapsedHours < 24) return `${elapsedHours}h`
-  const days = Math.floor(elapsedHours / 24)
-  return days < 30 ? `${days}d` : `${Math.floor(days / 30)}mo`
-}
-
 export function PullRequestHoverCard({ repository, t }: { repository: RepositoryStatus; t: ClaudeRepositoryStatusInjected['t'] }) {
   const pullRequest = repository.pullRequest
   if (pullRequest === undefined) return null
@@ -211,7 +202,7 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
     let cancelled = false
     const tick = async (): Promise<void> => {
       const [comments, failing] = await Promise.all([
-        loadPullRequestComments(sessionId, number).catch((): readonly PullRequestReviewComment[] => []),
+        loadPullRequestThreads(sessionId, number).catch((): readonly PullRequestReviewThread[] => []),
         checks === 'failing' ? loadFailingChecks(sessionId, number).catch((): readonly FailingCheck[] => []) : Promise.resolve<readonly FailingCheck[]>([]),
       ])
       if (cancelled) return

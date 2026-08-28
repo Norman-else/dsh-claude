@@ -10,6 +10,9 @@ import {
 } from '../src/client/auto-fix.ts'
 
 const comment = (id: number, body = 'Fix it') => ({ id, path: 'src/a.ts', line: 3, side: 'new' as const, author: 'alice', body, url: `https://github.com/x/${id}` })
+const thread = (id: number, body?: string, resolved = false) => ({
+  id: `T${id}`, path: 'src/a.ts', line: 3, side: 'new' as const, resolved, outdated: false, comments: [comment(id, body)],
+})
 const check = (name: string, run: number) => ({ name, link: `https://github.com/o/r/actions/runs/${run}/job/${run * 10}` })
 
 describe('pull request auto fix planner', () => {
@@ -17,29 +20,37 @@ describe('pull request auto fix planner', () => {
     const empty = { handledCommentIds: new Set<number>() }
     expect(planAutoFix(empty, [], []).prompt).toBeUndefined()
 
-    const first = planAutoFix(empty, [comment(1), comment(2)], [check('build', 9)])
+    const first = planAutoFix(empty, [thread(1), thread(2)], [check('build', 9)])
     expect(first.prompt).toContain('src/a.ts:3 (@alice)')
     expect(first.prompt).toContain('## build')
     expect(first.prompt?.endsWith(AUTO_FIX_FOOTER)).toBe(true)
     expect([...first.memory.handledCommentIds]).toEqual([1, 2])
     expect(first.memory.handledChecksSignature).toBe(checksSignature([check('build', 9)]))
 
-    const repeat = planAutoFix(first.memory, [comment(1), comment(2)], [check('build', 9)])
+    const repeat = planAutoFix(first.memory, [thread(1), thread(2)], [check('build', 9)])
     expect(repeat.prompt).toBeUndefined()
     expect(repeat.memory).toBe(first.memory)
 
-    const newComment = planAutoFix(first.memory, [comment(1), comment(2), comment(3, 'Also this')], [check('build', 9)])
+    const newComment = planAutoFix(first.memory, [thread(1), thread(2), thread(3, 'Also this')], [check('build', 9)])
     expect(newComment.prompt).toContain('Also this')
     expect(newComment.prompt).not.toContain('## build')
     expect([...newComment.memory.handledCommentIds]).toEqual([1, 2, 3])
 
-    const rerun = planAutoFix(newComment.memory, [comment(1), comment(2), comment(3)], [check('build', 10)])
+    const rerun = planAutoFix(newComment.memory, [thread(1), thread(2), thread(3)], [check('build', 10)])
     expect(rerun.prompt).toContain('## build')
     expect(rerun.prompt).not.toContain('Also this')
 
-    const recovered = planAutoFix(rerun.memory, [comment(1), comment(2), comment(3)], [])
+    const recovered = planAutoFix(rerun.memory, [thread(1), thread(2), thread(3)], [])
     expect(recovered.prompt).toBeUndefined()
     expect(recovered.memory.handledChecksSignature).toBe(checksSignature([check('build', 10)]))
+  })
+
+  it('leaves a resolved thread alone even when its comments are new to the watcher', () => {
+    // Reviewers closing a conversation is the signal the work is done; feeding
+    // it to Claude would reopen settled ground on every tick.
+    const plan = planAutoFix({ handledCommentIds: new Set<number>() }, [thread(1, 'Settled', true)], [])
+    expect(plan.prompt).toBeUndefined()
+    expect([...plan.memory.handledCommentIds]).toEqual([])
   })
 
   it('keeps the toggle and memory per session', () => {

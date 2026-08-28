@@ -1,21 +1,19 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
 import { githubAvatarUrl } from '../github-url.ts'
-import type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
-import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
+import type { FailingCheck, MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from '../pr-feedback.ts'
+import { PLUGIN_ACTION_TIMEOUT_MS, PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
-export type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
+export type { FailingCheck, MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from '../pr-feedback.ts'
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function loadJson(path: string, sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const response = await fetch(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}?sessionId=${encodeURIComponent(sessionId)}&number=${pullNumber}`, {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json' },
-    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
-  })
+function feedbackUrl(path: string, sessionId: string, pullNumber: number, extra = ''): string {
+  return `${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}?sessionId=${encodeURIComponent(sessionId)}&number=${pullNumber}${extra}`
+}
+
+async function answer(response: Response): Promise<Record<string, unknown>> {
   const body = record(await response.json() as unknown)
   if (!response.ok) {
     throw new Error(typeof body?.message === 'string' ? body.message : 'Pull request feedback is unavailable.')
@@ -24,20 +22,105 @@ async function loadJson(path: string, sessionId: string, pullNumber: number, sig
   return body
 }
 
-export async function loadPullRequestComments(sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<readonly PullRequestReviewComment[]> {
+async function loadJson(path: string, sessionId: string, pullNumber: number, signal?: AbortSignal, extra = ''): Promise<Record<string, unknown>> {
+  return answer(await fetch(feedbackUrl(path, sessionId, pullNumber, extra), {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
+  }))
+}
+
+/** Writes reach GitHub through `gh`, so they get the action deadline. */
+async function postJson(path: string, sessionId: string, pullNumber: number, input: unknown): Promise<Record<string, unknown>> {
+  return answer(await fetch(feedbackUrl(path, sessionId, pullNumber), {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS),
+    body: JSON.stringify(input),
+  }))
+}
+
+function reviewComment(value: unknown): PullRequestReviewComment | undefined {
+  const input = record(value)
+  if (input === undefined || typeof input.id !== 'number' || typeof input.path !== 'string'
+    || typeof input.author !== 'string' || typeof input.body !== 'string' || typeof input.url !== 'string'
+    || (input.avatarUrl !== undefined && githubAvatarUrl(input.avatarUrl) === undefined)
+    || (input.side !== 'new' && input.side !== 'old')
+    || (input.line !== undefined && typeof input.line !== 'number')
+    || (input.createdAt !== undefined && typeof input.createdAt !== 'string')
+    || (input.bot !== undefined && typeof input.bot !== 'boolean')) return undefined
+  return input as unknown as PullRequestReviewComment
+}
+
+export async function loadPullRequestThreads(sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<readonly PullRequestReviewThread[]> {
   const body = await loadJson('/comments', sessionId, pullNumber, signal)
-  if (!Array.isArray(body.comments)) throw new Error('Invalid pull request comments response.')
-  const comments: PullRequestReviewComment[] = []
-  for (const item of body.comments) {
+  if (!Array.isArray(body.threads)) throw new Error('Invalid pull request comments response.')
+  const threads: PullRequestReviewThread[] = []
+  for (const item of body.threads) {
     const input = record(item)
-    if (input === undefined || typeof input.id !== 'number' || typeof input.path !== 'string'
-      || typeof input.author !== 'string' || typeof input.body !== 'string' || typeof input.url !== 'string'
-      || (input.avatarUrl !== undefined && githubAvatarUrl(input.avatarUrl) === undefined)
+    if (input === undefined || typeof input.id !== 'string' || typeof input.path !== 'string'
       || (input.side !== 'new' && input.side !== 'old')
-      || (input.line !== undefined && typeof input.line !== 'number')) continue
-    comments.push(input as unknown as PullRequestReviewComment)
+      || (input.line !== undefined && typeof input.line !== 'number')
+      || !Array.isArray(input.comments)) continue
+    const comments = input.comments.map(reviewComment).filter((value): value is PullRequestReviewComment => value !== undefined)
+    if (comments.length === 0) continue
+    threads.push({
+      id: input.id,
+      path: input.path,
+      ...(typeof input.line === 'number' ? { line: input.line } : {}),
+      side: input.side,
+      resolved: input.resolved === true,
+      outdated: input.outdated === true,
+      comments,
+    })
   }
-  return comments
+  return threads
+}
+
+/** Post one reply into the thread that `commentId` belongs to. */
+export async function replyToReviewThread(
+  sessionId: string,
+  pullNumber: number,
+  commentId: number,
+  body: string,
+): Promise<PullRequestReviewComment> {
+  const answer = await postJson('/reply', sessionId, pullNumber, { commentId, body })
+  const comment = reviewComment(answer.comment)
+  if (comment === undefined) throw new Error('Invalid pull request reply response.')
+  return comment
+}
+
+/** Resolve or reopen a thread; returns the state GitHub reports afterwards. */
+export async function setReviewThreadResolved(
+  sessionId: string,
+  pullNumber: number,
+  threadId: string,
+  resolved: boolean,
+): Promise<boolean> {
+  const answer = await postJson('/resolve', sessionId, pullNumber, { threadId, resolved })
+  if (typeof answer.resolved !== 'boolean') throw new Error('Invalid pull request resolve response.')
+  return answer.resolved
+}
+
+/** Logins GitHub would notify, for the reply composer's `@` completion. */
+export async function loadMentionableUsers(
+  sessionId: string,
+  pullNumber: number,
+  query: string,
+  signal?: AbortSignal,
+): Promise<readonly MentionableUser[]> {
+  const body = await loadJson('/mentionables', sessionId, pullNumber, signal, `&q=${encodeURIComponent(query)}`)
+  if (!Array.isArray(body.users)) return []
+  const users: MentionableUser[] = []
+  for (const item of body.users) {
+    const input = record(item)
+    if (input === undefined || typeof input.login !== 'string' || input.login.length === 0) continue
+    const avatarUrl = githubAvatarUrl(input.avatarUrl)
+    users.push({ login: input.login, ...(avatarUrl === undefined ? {} : { avatarUrl }) })
+  }
+  return users
 }
 
 export async function loadFailingChecks(sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<readonly FailingCheck[]> {
@@ -55,10 +138,22 @@ export async function loadFailingChecks(sessionId: string, pullNumber: number, s
   return checks
 }
 
-/** Draft handed to Claude when the user forwards GitHub review comments. */
-export function composeCommentsPrompt(comments: readonly PullRequestReviewComment[]): string {
-  const lines = comments.map(comment => `- ${comment.path}${comment.line === undefined ? '' : `:${comment.line}`} (@${comment.author}): ${comment.body.replaceAll('\n', '\n  ')}`)
-  return `Please address the following GitHub pull request review comments. Make the requested changes, or explain briefly when a comment should not be applied.\n\n${lines.join('\n')}`
+/** Draft handed to Claude when the user forwards GitHub review comments. A
+ *  resolved thread is a settled conversation: forwarding it would ask Claude to
+ *  redo work the reviewers already signed off. */
+export function composeCommentsPrompt(threads: readonly PullRequestReviewThread[]): string {
+  const open = threads.filter(thread => !thread.resolved)
+  if (open.length === 0) return ''
+  const blocks = open.map((thread) => {
+    const [first, ...rest] = thread.comments
+    if (first === undefined) return ''
+    const anchor = `${thread.path}${thread.line === undefined ? '' : `:${thread.line}`}`
+    const head = `- ${anchor} (@${first.author}): ${first.body.replaceAll('\n', '\n  ')}`
+    // Later comments are the rest of that conversation, indented under it.
+    const replies = rest.map(reply => `  (@${reply.author}): ${reply.body.replaceAll('\n', '\n  ')}`)
+    return [head, ...replies].join('\n')
+  }).filter(block => block.length > 0)
+  return `Please address the following GitHub pull request review comments. Make the requested changes, or explain briefly when a comment should not be applied.\n\n${blocks.join('\n')}`
 }
 
 /** Draft handed to Claude when the user forwards failing CI checks. */
