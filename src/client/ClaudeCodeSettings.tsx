@@ -296,11 +296,17 @@ export function PlanUsageMeter({ window: usageWindow, t, now }: {
   )
 }
 
+/** Every panel read is a local plugin route, so a request still outstanding
+ *  after this long is a wedged host, not a slow one — and a settings card that
+ *  says so beats one that says "Loading…" forever. */
+const SETTINGS_REQUEST_TIMEOUT_MS = 20_000
+
 /** Fetch the plan usage report; POST forces the backend to re-read it. */
 export async function loadPlanUsage(refresh: boolean): Promise<PlanUsageReport> {
   const response = await fetch(CLAUDE_USAGE_PATH, {
     method: refresh ? 'POST' : 'GET',
     credentials: 'same-origin',
+    signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
     headers: { accept: 'application/json' },
   })
   const payload = await response.json() as unknown
@@ -431,7 +437,11 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
     setError(undefined)
     setReport(undefined)
     try {
-      const response = await fetch(CLAUDE_DOCTOR_PATH, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+      const response = await fetch(CLAUDE_DOCTOR_PATH, {
+        credentials: 'same-origin',
+        signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
+        headers: { accept: 'application/json' },
+      })
       const payload = await response.json() as DoctorReport | { error?: string }
       if (!response.ok) throw new Error('error' in payload ? payload.error : `HTTP ${response.status}`)
       setReport(payload as DoctorReport)
@@ -451,6 +461,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
       const response = await fetch(CLAUDE_GLOBAL_SETTINGS_PATH, {
         method: changes === undefined ? 'GET' : 'PATCH',
         credentials: 'same-origin',
+        signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
         headers: { accept: 'application/json', ...(changes === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(changes === undefined ? {} : { body: JSON.stringify({ changes }) }),
       })

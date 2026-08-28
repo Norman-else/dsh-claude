@@ -450,6 +450,13 @@ export function apply(ctx: ClientContext): void {
     }, ClaudeQueueDock))
   }
   if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined) {
+    /** Attach a prepared worktree to its session without blocking the flow. */
+    const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
+      if (leaseId === undefined) return
+      void bindRepositoryLease(leaseId, targetSessionId).catch((reason: unknown) => {
+        console.warn(`dsh-claude: could not bind the worktree lease: ${reason instanceof Error ? reason.message : String(reason)}`)
+      })
+    }
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
       name: 'conversation.input.dock',
       id: 'claude-hero-repository-controls',
@@ -495,7 +502,11 @@ export function apply(ctx: ClientContext): void {
           onProgress('transferring-draft')
           if (imageIds.length > 0 && !targetInput.addImages(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
           if (draft !== '') targetInput.setDraft(draft)
-          if (prepared.leaseId !== undefined) await bindRepositoryLease(prepared.leaseId, targetSessionId)
+          // Lease bookkeeping only matters at cleanup time, so it rides
+          // alongside the submit the way the ticket assignment does. Awaiting
+          // it here once left the prepared worktree holding the user's typed
+          // message with no way to send it when the route was slow.
+          bindLease(prepared.leaseId, targetSessionId)
           sessions.open(targetSessionId)
           onProgress('submitting')
           targetInput.submit()
@@ -532,7 +543,7 @@ export function apply(ctx: ClientContext): void {
               const targetInput = conversation.input.for(targetScope)
               report('transferring-draft')
               targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
-              if (prepared.leaseId !== undefined) await bindRepositoryLease(prepared.leaseId, targetSessionId)
+              bindLease(prepared.leaseId, targetSessionId)
               report('submitting')
               targetInput.submit()
             } catch (cause) {

@@ -112,10 +112,15 @@ export async function prepareRepository(
   return completed
 }
 
+/** Bookkeeping, not a gate: a wedged host must fail this instead of hanging on
+ *  a connection the rest of the flow is waiting behind. */
+export const LEASE_BIND_TIMEOUT_MS = 10_000
+
 export async function bindRepositoryLease(leaseId: string, sessionId: string): Promise<void> {
   await response(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/bind`, {
     method: 'POST',
     credentials: 'same-origin',
+    signal: AbortSignal.timeout(LEASE_BIND_TIMEOUT_MS),
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ leaseId, sessionId }),
   }))
