@@ -70,6 +70,62 @@ describe('Claude client slot registration', () => {
     expect(repositoryStatus?.order).toBeLessThan(21)
   })
 
+  it('archives a cleaned-up workspace\'s sessions before deleting it', async () => {
+    const calls: string[] = []
+    const registrations: Array<{ readonly id?: string; readonly inject?: (...args: unknown[]) => unknown }> = []
+    const dispose = (): void => {}
+    const workspaces = {
+      list: {
+        getSnapshot: () => ({ items: [{ workspaceId: 'workspace-1', sessionIds: ['session-1', 'session-2'] }] }),
+      },
+      archiveSession: (id: string) => {
+        calls.push(`archive:${id}`)
+        return Promise.resolve()
+      },
+      delete: (id: string) => {
+        calls.push(`delete:${id}`)
+        return Promise.resolve()
+      },
+    }
+    const ctx = {
+      effect(register: () => unknown) {
+        register()
+      },
+      get(name: string) {
+        return name === 'workspaces' ? workspaces : undefined
+      },
+      locale: {
+        register: () => dispose,
+        bind: () => (key: string) => key,
+      },
+      inputTriggers: {
+        registerSource: () => dispose,
+      },
+      conversationEvents: {
+        register: () => dispose,
+      },
+      slots: {
+        onEntryError: () => dispose,
+        inject(_name: string, register: () => unknown) {
+          register()
+        },
+        register(options: { readonly id?: string; readonly inject?: (...args: unknown[]) => unknown }) {
+          registrations.push(options)
+          return dispose
+        },
+      },
+    }
+
+    apply(ctx as never)
+
+    const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
+    const actions = repositoryStatus?.inject?.('session-1') as { deleteWorkspace(): Promise<void> }
+    await actions.deleteWorkspace()
+
+    // Without the archive hop the sessions survive into the unaccounted group.
+    expect(calls).toEqual(['archive:session-1', 'archive:session-2', 'delete:workspace-1'])
+  })
+
   it('registers the maximized diff as an identified shell overlay', () => {
     interface Registration {
       readonly name: string

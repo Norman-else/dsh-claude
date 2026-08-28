@@ -439,7 +439,8 @@ interface CleanupDialogState {
 }
 
 /** After a merge: remove the worktree (or switch a plain checkout back to
- *  base), delete the merged branch, and drop the DSH workspace. */
+ *  base), delete the merged branch, and drop the DSH workspace along with the
+ *  sessions it held. */
 export function CleanupControl({ repository, t, deleteWorkspace }: {
   repository: RepositoryStatus
   t: ClaudeRepositoryStatusInjected['t']

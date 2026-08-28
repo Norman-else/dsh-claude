@@ -373,7 +373,12 @@ export function apply(ctx: ClientContext): void {
         ...(workspaces === undefined ? {} : {
           deleteWorkspace: async () => {
             const workspace = workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sessionId as SessionId))
-            if (workspace !== undefined) await workspaces.delete(workspace.workspaceId)
+            if (workspace === undefined) return
+            // Deleting a workspace drops its sessions into the unaccounted
+            // group, so archive them first -- DSH's "delete session" is an
+            // archive, and the worktree they point at is already gone.
+            for (const id of workspace.sessionIds) await workspaces.archiveSession(id)
+            await workspaces.delete(workspace.workspaceId)
           },
         }),
       }
