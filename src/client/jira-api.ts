@@ -1,5 +1,6 @@
 import { CLAUDE_JIRA_PATH } from '../constants.ts'
 import type { JiraStatus, JiraTicket } from '../jira.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 export type { JiraStatus, JiraTicket } from '../jira.ts'
 
@@ -18,7 +19,11 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 async function call(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(`${CLAUDE_JIRA_PATH}${path}`, { credentials: 'same-origin', ...init })
+  const response = await fetch(`${CLAUDE_JIRA_PATH}${path}`, {
+    credentials: 'same-origin',
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
+    ...init,
+  })
   const body = record(await response.json() as unknown)
   if (!response.ok) {
     throw new JiraClientError(

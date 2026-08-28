@@ -1,7 +1,7 @@
 import { CLAUDE_REPOSITORY_FILE_PATH, CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
 import type { RepositoryBranchList, RepositoryCleanupResult, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
-
+import { PLUGIN_ACTION_TIMEOUT_MS, PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 interface ErrorBody {
   readonly message?: string
@@ -61,12 +61,11 @@ async function response<T>(pending: Promise<Response>): Promise<T> {
 export const BRANCH_LOAD_TIMEOUT_MS = 15_000
 
 export function loadRepositoryBranches(cwd: string, signal?: AbortSignal): Promise<RepositoryBranchList> {
-  const timeout = AbortSignal.timeout(BRANCH_LOAD_TIMEOUT_MS)
   return response(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/branches?cwd=${encodeURIComponent(cwd)}`, {
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
-    signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+    signal: pluginRequestSignal(BRANCH_LOAD_TIMEOUT_MS, signal),
   }))
 }
 
@@ -120,7 +119,7 @@ export async function bindRepositoryLease(leaseId: string, sessionId: string): P
   await response(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/bind`, {
     method: 'POST',
     credentials: 'same-origin',
-    signal: AbortSignal.timeout(LEASE_BIND_TIMEOUT_MS),
+    signal: pluginRequestSignal(LEASE_BIND_TIMEOUT_MS),
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ leaseId, sessionId }),
   }))
@@ -128,6 +127,7 @@ export async function bindRepositoryLease(leaseId: string, sessionId: string): P
 
 export async function cleanupMergedRepository(path: string, baseBranch: string): Promise<RepositoryCleanupResult> {
   const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, {
+    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS),
     method: 'POST',
     credentials: 'same-origin',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -143,6 +143,7 @@ export async function cleanupMergedRepository(path: string, baseBranch: string):
 export async function loadRepositoryFileLines(cwd: string, path: string, from: number, to: number, signal?: AbortSignal): Promise<{ lines: readonly string[]; total: number }> {
   const query = `cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path)}&from=${from}&to=${to}`
   const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_FILE_PATH}?${query}`, {
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
@@ -154,6 +155,7 @@ export async function loadRepositoryFileLines(cwd: string, path: string, from: n
 
 export async function loadRepositoryStatusFor(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
   const body = await response<Record<string, unknown>>(fetch(`${CLAUDE_REPOSITORY_STATUS_PATH}?cwd=${encodeURIComponent(cwd)}`, {
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },

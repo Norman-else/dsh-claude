@@ -1,5 +1,6 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
 import type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 export type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
 
@@ -12,7 +13,7 @@ async function loadJson(path: string, sessionId: string, pullNumber: number, sig
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
-    ...(signal === undefined ? {} : { signal }),
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
   })
   const body = record(await response.json() as unknown)
   if (!response.ok) {

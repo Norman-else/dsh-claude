@@ -1,11 +1,17 @@
 import { CLAUDE_EDITOR_OPEN_PATH } from '../constants.ts'
 import type { EditorId } from '../editor-open.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 /** Launch the session's project in a desktop editor on the host machine. */
 export async function openProjectInEditor(sessionId: string, editor: EditorId): Promise<void> {
   const result = await fetch(
     `${CLAUDE_EDITOR_OPEN_PATH}?sessionId=${encodeURIComponent(sessionId)}&editor=${encodeURIComponent(editor)}`,
-    { method: 'POST', credentials: 'same-origin', headers: { accept: 'application/json' } },
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
+      headers: { accept: 'application/json' },
+    },
   )
   if (result.ok) return
   const body = await result.json().catch(() => undefined) as { message?: string } | undefined

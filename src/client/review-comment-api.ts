@@ -1,5 +1,6 @@
 import { CLAUDE_REVIEW_COMMENT_PATH } from '../constants.ts'
 import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -11,6 +12,7 @@ async function post(path: string, sessionId: string, body: Record<string, unknow
     credentials: 'same-origin',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
   })
   const value = await response.json() as unknown
   if (!response.ok) {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ClaudeRewind, rewindMessageText } from '../src/client/ClaudeRewind.tsx'
 import { rewindHiddenCss, sameClaudeRewindSeats } from '../src/client/rewind-dom.ts'
 import { EMPTY_CLAUDE_PROJECTION } from '../src/client/projection.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from '../src/client/plugin-request.ts'
 
 describe('rewind client', () => {
   it('reads the plain text of a user message the way the copy action does', () => {
@@ -24,6 +25,15 @@ describe('rewind client', () => {
     expect(sameClaudeRewindSeats([{ key: 'a', host }], [{ key: 'a', host }])).toBe(true)
     expect(sameClaudeRewindSeats([{ key: 'a', host }], [{ key: 'a', host: other }])).toBe(false)
     expect(sameClaudeRewindSeats([{ key: 'a', host }], [])).toBe(false)
+  })
+
+  it('bounds a plugin request and still honours the caller cancellation', () => {
+    const caller = new AbortController()
+    const signal = pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, caller.signal)
+    expect(signal.aborted).toBe(false)
+    caller.abort()
+    expect(signal.aborted).toBe(true)
+    expect(pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS).aborted).toBe(false)
   })
 
   it('stays inert in a session this plugin does not own', () => {

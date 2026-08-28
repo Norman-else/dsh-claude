@@ -5,6 +5,7 @@ import type {
   RepositoryActionRequest,
   RepositoryActionResult,
 } from '../repository-actions.ts'
+import { PLUGIN_ACTION_TIMEOUT_MS, PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 interface ErrorBody {
   readonly error?: string
@@ -81,7 +82,7 @@ export async function loadRepositoryActionPreview(sessionId: string, signal?: Ab
     method: 'GET',
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
-    ...(signal === undefined ? {} : { signal }),
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
   })))
 }
 
@@ -91,7 +92,7 @@ export async function generateCommitMessage(sessionId: string, fingerprint: stri
     credentials: 'same-origin',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ fingerprint }),
-    ...(signal === undefined ? {} : { signal }),
+    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS, signal),
   })))
   if (typeof value?.message !== 'string') throw new Error('Invalid generated commit message.')
   return value.message
@@ -106,5 +107,6 @@ export function executeRepositoryAction(
     credentials: 'same-origin',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify(request),
+    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS),
   })).then(result)
 }

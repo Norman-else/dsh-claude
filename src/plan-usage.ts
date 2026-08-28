@@ -128,7 +128,19 @@ export async function probePlanUsage(
   try {
     // Control responses only arrive while the message stream is pumped.
     void (async () => { for await (const _ of query) { /* drain */ } })().catch(() => undefined)
-    return normalizePlanUsage(await readPlanUsageFrom(query), fetchedAt)
+    // Aborting tears the probe process down, but the SDK's pending control
+    // request is not documented to settle with it — and an unsettled one hangs
+    // the route (and the browser connection serving it) for the life of the
+    // Host. The deadline is therefore enforced here too, not only on the
+    // process.
+    const read = await Promise.race([
+      readPlanUsageFrom(query),
+      new Promise<never>((_resolve, reject) => {
+        const deadline = setTimeout(() => reject(new Error('dsh-claude: the plan usage request did not answer in time')), PLAN_USAGE_TIMEOUT_MS)
+        deadline.unref?.()
+      }),
+    ])
+    return normalizePlanUsage(read, fetchedAt)
   } finally {
     clearTimeout(timer)
     lifetime.abort()

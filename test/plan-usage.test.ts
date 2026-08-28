@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { latestPlanUsage, normalizePlanUsage, probePlanUsage, recordPlanUsage, resetPlanUsage } from '../src/plan-usage.ts'
+import { PLAN_USAGE_TIMEOUT_MS, latestPlanUsage, normalizePlanUsage, probePlanUsage, recordPlanUsage, resetPlanUsage } from '../src/plan-usage.ts'
 import { registerPlanUsageRoute } from '../src/plan-usage-routes.ts'
 
 const SDK_RESPONSE = {
@@ -61,6 +61,26 @@ describe('probePlanUsage', () => {
       ...overrides,
     }
   }
+
+  it('gives up on a control request that never answers', async () => {
+    vi.useFakeTimers()
+    try {
+      const query = fakeQuery({
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(() => new Promise<never>(() => {})),
+      })
+      let options!: { abortController?: AbortController }
+      const probe = probePlanUsage('/opt/claude', 1, params => {
+        options = params.options as typeof options
+        return query as never
+      })
+      const settled = expect(probe).rejects.toThrow('did not answer in time')
+      await vi.advanceTimersByTimeAsync(PLAN_USAGE_TIMEOUT_MS)
+      await settled
+      expect(options.abortController?.signal.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('runs a throwaway query and tears the process down afterwards', async () => {
     let options!: { abortController?: AbortController; pathToClaudeCodeExecutable?: string }

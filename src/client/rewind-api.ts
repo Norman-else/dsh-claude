@@ -1,4 +1,5 @@
 import { CLAUDE_REWIND_PATH } from '../constants.ts'
+import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 /** Drop one user message and everything after it: the rows are hidden from
  *  this session's transcript and Claude resumes before that turn. */
@@ -6,6 +7,7 @@ export async function rewindSession(sessionId: string, seq: number): Promise<voi
   const result = await fetch(CLAUDE_REWIND_PATH, {
     method: 'POST',
     credentials: 'same-origin',
+    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({ sessionId, seq }),
   })
