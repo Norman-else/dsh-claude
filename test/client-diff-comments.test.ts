@@ -23,6 +23,15 @@ describe('review comment markdown', () => {
     expect(cleaned).toBe(cleaned.trim())
   })
 
+  it('unwraps the inline HTML the renderer would print verbatim', () => {
+    expect(reviewCommentMarkdown('<sup>Reviewed by Navi for commit `5b68736`.</sup>'))
+      .toBe('Reviewed by Navi for commit `5b68736`.')
+    expect(reviewCommentMarkdown('one<br>two<br />three')).toBe('one\ntwo\nthree')
+    expect(reviewCommentMarkdown('<details><summary>Why</summary>\n\nBecause.\n</details>')).toBe('Why\n\nBecause.')
+    // A Markdown autolink is not a tag and must survive.
+    expect(reviewCommentMarkdown('see <https://example.com/x>')).toBe('see <https://example.com/x>')
+  })
+
   it('leaves an ordinary human comment untouched', () => {
     expect(reviewCommentMarkdown('Please rename this to `total`.')).toBe('Please rename this to `total`.')
   })

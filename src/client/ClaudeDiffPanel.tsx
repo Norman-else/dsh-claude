@@ -269,12 +269,19 @@ function DiffGapRow({ gap, t, busy, onExpand }: { gap: DiffGap; t: ClaudeDiffPan
   )
 }
 
-/** Review bots address their own machinery through HTML comments — autofix
- *  markers, checklist ids — which the Markdown renderer would show verbatim
- *  because raw HTML is disabled. Drop them and the blank runs they leave. */
+/** Inline HTML review bots reach for around their own footers and summaries.
+ *  The Markdown renderer disables raw HTML, so an unhandled tag arrives as
+ *  literal `<sup>` text; unwrapping keeps the words and loses the markup. */
+const UNWRAPPED_HTML = /<\/?(?:sup|sub|b|i|em|strong|kbd|ins|del|small|span|p|div|details|summary|blockquote|a)(?:\s[^<>]*)?>/giu
+
+/** Review bots also address their own machinery through HTML comments —
+ *  autofix markers, checklist ids — which would show verbatim for the same
+ *  reason. Drop those outright, along with the blank runs they leave. */
 export function reviewCommentMarkdown(body: string): string {
   return body
     .replace(/<!--[\s\S]*?-->/gu, '')
+    .replace(/<br\s*\/?>/giu, '\n')
+    .replace(UNWRAPPED_HTML, '')
     .replace(/[^\S\n]+$/gmu, '')
     .replace(/\n{3,}/gu, '\n\n')
     .trim()
