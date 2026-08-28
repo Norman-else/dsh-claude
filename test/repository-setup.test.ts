@@ -73,6 +73,43 @@ describe('repository setup service', () => {
     expect(fake.spawn.mock.calls.every(call => call[0].env !== undefined && Object.keys(call[0].env).length === 0)).toBe(true)
   })
 
+  it('fetches and prunes remote references before listing branches', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '' },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: 'origin/main \norigin/feature/b \n' },
+    ])
+    await expect(new RepositorySetupService(fake, { leasePath, worktreeRoot }).refreshBranches(root)).resolves.toEqual({
+      root,
+      current: 'main',
+      dirty: false,
+      branches: ['main'],
+      remoteBranches: ['origin/feature/b', 'origin/main'],
+    })
+    expect(fake.spawn.mock.calls.map(call => call[0].argv)).toEqual([
+      ['/bin/git', 'rev-parse', '--path-format=absolute', '--show-toplevel'],
+      ['/bin/git', '-c', 'credential.interactive=never', 'fetch', '--all', '--prune'],
+      ['/bin/git', 'status', '--porcelain=v2', '--branch', '--untracked-files=normal'],
+      ['/bin/git', 'for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+      ['/bin/git', 'for-each-ref', '--format=%(refname:short) %(symref)', 'refs/remotes'],
+    ])
+  })
+
+  it('fails a refresh the remote rejected instead of returning stale branches', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '', exitCode: 128, stderr: 'fatal: could not read Username' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const failure = await service.refreshBranches(root).catch((error: unknown) => error)
+    expect(failure).toMatchObject<Partial<RepositorySetupError>>({ code: 'fetch-failed' })
+    expect((failure as Error).message).not.toContain('could not read Username')
+  })
+
   it('rejects dirty checkout and a branch occupied by another worktree', async () => {
     const { root, leasePath, worktreeRoot } = await roots()
     const dirty = new RepositorySetupService(runtime([

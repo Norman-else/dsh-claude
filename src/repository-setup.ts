@@ -175,7 +175,19 @@ export class RepositorySetupService {
 
   async listBranches(cwd: string): Promise<RepositoryBranchList> {
     const git = await this.#git()
+    return this.#listBranches(git, await this.#repositoryRoot(git, safePath(cwd)))
+  }
+
+  /** Refresh remote-tracking refs before listing: a branch pushed after this
+   *  checkout last fetched has no local ref, so the picker cannot offer it. */
+  async refreshBranches(cwd: string): Promise<RepositoryBranchList> {
+    const git = await this.#git()
     const root = await this.#repositoryRoot(git, safePath(cwd))
+    await this.#fetchRemotes(git, root)
+    return this.#listBranches(git, root)
+  }
+
+  async #listBranches(git: string, root: string): Promise<RepositoryBranchList> {
     const [status, refs, remoteRefs] = await Promise.all([
       this.#run(git, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal'], root),
       this.#run(git, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], root),
@@ -359,6 +371,18 @@ export class RepositorySetupService {
     return { mode: 'checkout', root: info.root, path: info.root, branch: localBranch }
   }
 
+  async #fetchRemotes(git: string, root: string): Promise<void> {
+    const fetched = await this.#run(
+      git,
+      ['-c', 'credential.interactive=never', 'fetch', '--all', '--prune'],
+      root,
+      GIT_FETCH_TIMEOUT_MS,
+    )
+    if (fetched.exitCode !== 0 || fetched.lossy) {
+      throw new RepositorySetupError('fetch-failed', 'Git could not refresh remote references.')
+    }
+  }
+
   async #checkout(info: RepositoryBranchList, branch: string): Promise<RepositorySetupResult> {
     if (info.current !== branch) {
       if (info.dirty) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before switching branches.')
@@ -385,15 +409,7 @@ export class RepositorySetupService {
   ): Promise<RepositorySetupResult> {
     const git = await this.#git()
     progress('fetching')
-    const fetched = await this.#run(
-      git,
-      ['-c', 'credential.interactive=never', 'fetch', '--all', '--prune'],
-      root,
-      GIT_FETCH_TIMEOUT_MS,
-    )
-    if (fetched.exitCode !== 0 || fetched.lossy) {
-      throw new RepositorySetupError('fetch-failed', 'Git could not refresh remote references before creating the worktree.')
-    }
+    await this.#fetchRemotes(git, root)
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
     const branch = explicitBranchName ?? `${safeBranch(await this.#branchPrefix())}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`

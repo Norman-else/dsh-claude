@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BRANCH_LOAD_TIMEOUT_MS, loadRepositoryBranches, parseRepositorySetupEvent, prepareRepository } from '../src/client/repository-setup-api.ts'
+import { CLAUDE_REPOSITORY_SETUP_PATH } from '../src/constants.ts'
+import { BRANCH_LOAD_TIMEOUT_MS, loadRepositoryBranches, parseRepositorySetupEvent, prepareRepository, refreshRepositoryBranches } from '../src/client/repository-setup-api.ts'
+import { PLUGIN_ACTION_TIMEOUT_MS } from '../src/client/plugin-request.ts'
 
 const RESULT = { mode: 'worktree' as const, root: '/repo', path: '/worktree', branch: 'claude/main-x', leaseId: 'lease-1' }
 
@@ -71,6 +73,43 @@ describe('repository setup progress API', () => {
     clock.abort()
     await assertion
     expect(timeout).toHaveBeenCalledWith(BRANCH_LOAD_TIMEOUT_MS)
+  })
+
+  it('posts a branch refresh on a deadline that outlasts the host git fetch', async () => {
+    const branches = { root: '/repo', current: 'main', dirty: false, branches: ['main'], remoteBranches: ['origin/psos-5697'] }
+    const request = vi.fn(async () => new Response(JSON.stringify(branches), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', request)
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+
+    await expect(refreshRepositoryBranches('/repo')).resolves.toEqual(branches)
+    const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(`${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh`)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ cwd: '/repo' })
+    // The host caps `git fetch` at 60s; a shorter client deadline would report
+    // a timeout instead of the real reason the remote refused.
+    expect(timeout).toHaveBeenCalledWith(PLUGIN_ACTION_TIMEOUT_MS)
+    expect(PLUGIN_ACTION_TIMEOUT_MS).toBeGreaterThan(60_000)
+  })
+
+  it('names a stale Host instead of reporting the refresh route as missing', async () => {
+    // A Host still running the previously loaded server bundle has no refresh
+    // route, so the click looks dead until the client says to restart.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ error: 'not found' }),
+      { status: 404, headers: { 'content-type': 'application/json' } },
+    )))
+    await expect(refreshRepositoryBranches('/repo')).rejects.toThrow('route-missing')
+  })
+
+  it('surfaces the host reason a refresh failed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ error: 'fetch-failed', message: 'Git could not refresh remote references.' }),
+      { status: 409, headers: { 'content-type': 'application/json' } },
+    )))
+    await expect(refreshRepositoryBranches('/repo')).rejects.toThrow('Git could not refresh remote references.')
   })
 
   it('passes the caller signal through so an effect cleanup still cancels', async () => {

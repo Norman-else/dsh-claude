@@ -88,6 +88,26 @@ describe('repository setup route', () => {
     expect(service.bindLease).toHaveBeenCalledWith('lease-1', 'session-1')
   })
 
+  it('refreshes remote branches through a POST because pruning rewrites local refs', async () => {
+    const ctx = context()
+    const service = {
+      refreshBranches: vi.fn(async () => ({
+        root: '/repo', current: 'main', dirty: false, branches: ['main'], remoteBranches: ['origin/main', 'origin/psos-5697'],
+      })),
+    } as unknown as RepositorySetupService
+    registerRepositorySetupRoute(ctx, service)
+
+    const refreshed = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh`, { cwd: '/repo' }), refreshed)
+    expect(refreshed.statusCode).toBe(200)
+    expect(service.refreshBranches).toHaveBeenCalledWith('/repo')
+    expect(JSON.parse(refreshed.body)).toMatchObject({ remoteBranches: ['origin/main', 'origin/psos-5697'] })
+
+    const read = response()
+    await ctx.handler(request('GET', `${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh?cwd=/repo`), read)
+    expect(read.statusCode).toBe(405)
+  })
+
   it('streams bounded repository setup errors without leaking implementation details', async () => {
     const ctx = context()
     const service = {

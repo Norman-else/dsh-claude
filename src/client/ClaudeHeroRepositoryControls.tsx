@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconSearchOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconRefreshOutline14, IconSearchOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal } from './hero-dom-bridge.ts'
-import { loadRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
+import { loadRepositoryBranches, refreshRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
 import * as styles from './styles.ts'
 
@@ -57,6 +57,20 @@ function shouldInterceptClick(event: MouseEvent): boolean {
 export function repositoryBranchOptions(branches: RepositoryBranchList): readonly string[] {
   const local = new Set(branches.branches)
   return [...branches.branches, ...branches.remoteBranches.filter(branch => !local.has(branch))]
+}
+
+/** What the last refresh did. A fetch that changes nothing is the common case,
+ *  so the menu says so rather than leaving the click looking dead. */
+export interface BranchRefreshNotice {
+  tone: 'busy' | 'done' | 'error'
+  text: string
+}
+
+/** A prune can retire the selected remote branch; fall back rather than leave
+ *  the capsule pointing at a ref the next submission would fail on. */
+export function refreshedBranchSelection(branches: RepositoryBranchList, selected: string): string {
+  const options = repositoryBranchOptions(branches)
+  return options.includes(selected) ? selected : branches.current ?? options[0] ?? ''
 }
 
 export function selectedBranchFirst(branches: readonly string[], selected: string): readonly string[] {
@@ -174,7 +188,8 @@ function TicketIcon() {
 
 export function ClaudeHeroRepositoryCapsule({
   branches, selected, worktree, busy, menuOpen, worktreeLabel, searchPlaceholder, emptySearchLabel,
-  worktreeLocked = false, onMenuOpenChange, onSelect, onWorktreeChange,
+  refreshLabel, refreshing, refreshNotice, worktreeLocked = false,
+  onMenuOpenChange, onRefresh, onSelect, onWorktreeChange,
 }: {
   branches: readonly string[]
   selected: string
@@ -184,9 +199,13 @@ export function ClaudeHeroRepositoryCapsule({
   worktreeLabel: string
   searchPlaceholder: string
   emptySearchLabel: string
+  refreshLabel: string
+  refreshing: boolean
+  refreshNotice?: BranchRefreshNotice
   /** Multi-ticket kickoff always builds worktrees; the toggle locks checked. */
   worktreeLocked?: boolean
   onMenuOpenChange: (open: boolean) => void
+  onRefresh: () => void
   onSelect: (branch: string) => void
   onWorktreeChange: (checked: boolean) => void
 }) {
@@ -195,6 +214,7 @@ export function ClaudeHeroRepositoryCapsule({
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [refreshHovered, setRefreshHovered] = useState(false)
   const [worktreeHovered, setWorktreeHovered] = useState(false)
   const [worktreeFocused, setWorktreeFocused] = useState(false)
   const ordered = useMemo(() => selectedBranchFirst(branches, selected), [branches, selected])
@@ -261,18 +281,48 @@ export function ClaudeHeroRepositoryCapsule({
         </button>
         {menuOpen ? (
           <span role="menu" aria-activedescendant={filtered[activeIndex] === undefined ? undefined : `claude-branch-option-${activeIndex}`} style={styles.heroBranchMenu} onKeyDown={handleMenuKeyDown}>
-            <label style={styles.heroBranchSearch}>
-              <IconSearchOutline16 />
-              <input
-                ref={searchRef}
-                type="search"
-                value={query}
-                placeholder={searchPlaceholder}
-                aria-label={searchPlaceholder}
-                style={styles.heroBranchSearchInput}
-                onChange={event => { setQuery(event.currentTarget.value) }}
-              />
-            </label>
+            <span style={styles.heroBranchSearchRow}>
+              <label style={{ ...styles.heroBranchSearch, ...styles.heroBranchSearchGrow }}>
+                <IconSearchOutline16 />
+                <input
+                  ref={searchRef}
+                  type="search"
+                  value={query}
+                  placeholder={searchPlaceholder}
+                  aria-label={searchPlaceholder}
+                  style={styles.heroBranchSearchInput}
+                  onChange={event => { setQuery(event.currentTarget.value) }}
+                />
+              </label>
+              {/* Branches only ever come from local refs, so a branch pushed
+                  after the last fetch needs this to show up at all. */}
+              <Tooltip label={refreshLabel} side="bottom" delayMs={250}>
+                <button
+                  type="button"
+                  aria-label={refreshLabel}
+                  aria-busy={refreshing}
+                  disabled={refreshing}
+                  style={{
+                    ...styles.heroBranchRefresh,
+                    ...(refreshHovered && !refreshing ? styles.heroBranchRefreshHover : {}),
+                    ...(refreshing ? styles.heroBranchRefreshBusy : {}),
+                  }}
+                  onMouseEnter={() => { setRefreshHovered(true) }}
+                  onMouseLeave={() => { setRefreshHovered(false) }}
+                  onClick={onRefresh}
+                >
+                  <IconRefreshOutline14 />
+                </button>
+              </Tooltip>
+            </span>
+            {refreshNotice === undefined ? null : (
+              <span
+                role={refreshNotice.tone === 'error' ? 'alert' : 'status'}
+                style={{ ...styles.heroBranchNotice, ...(refreshNotice.tone === 'error' ? styles.heroBranchNoticeError : {}) }}
+              >
+                {refreshNotice.text}
+              </span>
+            )}
             <span style={styles.heroBranchList}>
               {filtered.length === 0 ? <span style={styles.heroBranchEmpty}>{emptySearchLabel}</span> : filtered.map((branch, index) => (
                 <button
@@ -338,6 +388,8 @@ export function ClaudeHeroRepositoryControls({
   const [selected, setSelected] = useState('')
   const [worktree, setWorktree] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshNotice, setRefreshNotice] = useState<BranchRefreshNotice>()
   const [busy, setBusy] = useState(false)
   const [progressStage, setProgressStage] = useState<RepositoryPreparationStage>()
   const [progressError, setProgressError] = useState<string>()
@@ -353,6 +405,7 @@ export function ClaudeHeroRepositoryControls({
   const ticketPickerRef = useRef<HTMLSpanElement>(null)
   const ticketSearchRef = useRef<HTMLInputElement>(null)
   const pendingRef = useRef(false)
+  const refreshRef = useRef<AbortController>()
   const path = workspacePath ?? cwd
 
   useEffect(() => {
@@ -391,6 +444,10 @@ export function ClaudeHeroRepositoryControls({
     setSelected('')
     setWorktree(false)
     setMenuOpen(false)
+    // A refresh started against the previous checkout must not land here.
+    refreshRef.current?.abort()
+    setRefreshing(false)
+    setRefreshNotice(undefined)
     setProgressStage(undefined)
     setProgressError(undefined)
     setError(undefined)
@@ -532,6 +589,28 @@ export function ClaudeHeroRepositoryControls({
     setError(undefined)
     setBatchDone(undefined)
   }
+  const refreshBranches = (): void => {
+    if (refreshing || path === undefined) return
+    const controller = new AbortController()
+    refreshRef.current = controller
+    setRefreshing(true)
+    setRefreshNotice({ tone: 'busy', text: t('repositoryBranchRefreshing') })
+    void refreshRepositoryBranches(path, controller.signal).then((value) => {
+      setBranches(value)
+      setSelected(current => refreshedBranchSelection(value, current))
+      // Say it landed: a fetch that finds nothing new leaves the menu identical.
+      setRefreshNotice({ tone: 'done', text: t('repositoryBranchRefreshed', { count: repositoryBranchOptions(value).length }) })
+    }, (reason: unknown) => {
+      if (controller.signal.aborted) return
+      const message = reason instanceof Error ? reason.message : undefined
+      setRefreshNotice({
+        tone: 'error',
+        text: message === 'route-missing' ? t('repositoryBranchRefreshStale') : message ?? t('repositoryBranchRefreshFailed'),
+      })
+    }).finally(() => {
+      if (!controller.signal.aborted) setRefreshing(false)
+    })
+  }
   const clearTickets = (): void => {
     setTickets([])
     setError(undefined)
@@ -552,8 +631,16 @@ export function ClaudeHeroRepositoryControls({
           worktreeLabel={t('repositoryWorktree')}
           searchPlaceholder={t('repositoryBranchSearch')}
           emptySearchLabel={t('repositoryBranchSearchEmpty')}
+          refreshLabel={t('repositoryBranchRefresh')}
+          refreshing={refreshing}
+          {...(refreshNotice === undefined ? {} : { refreshNotice })}
           worktreeLocked={tickets.length > 1}
-          onMenuOpenChange={setMenuOpen}
+          onMenuOpenChange={(open) => {
+            setMenuOpen(open)
+            // The notice describes one visit to the menu, not the session.
+            if (!open) setRefreshNotice(undefined)
+          }}
+          onRefresh={refreshBranches}
           onSelect={(branch) => {
             setSelected(branch)
             setMenuOpen(false)
@@ -563,21 +650,22 @@ export function ClaudeHeroRepositoryControls({
         />
         {!jiraConnected ? null : <span style={styles.heroRepositoryCapsule}>
           <span ref={ticketPickerRef} style={styles.heroBranchPicker}>
-            <button
-              type="button"
-              style={styles.heroBranchTrigger}
-              aria-expanded={ticketMenuOpen}
-              aria-label={t('heroTicketMenu')}
-              title={t('heroTicketMenu')}
-              disabled={busy}
-              onClick={() => { setTicketMenuOpen(!ticketMenuOpen) }}
-            >
-              <TicketIcon />
-              <span style={styles.heroBranchName}>
-                {tickets.length === 0 ? t('heroTicket') : tickets.length === 1 ? tickets[0]?.key : t('heroTicketCount', { count: tickets.length })}
-              </span>
-              <IconChevronDownOutline14 />
-            </button>
+            <Tooltip label={t('heroTicketMenu')} side="bottom" delayMs={250}>
+              <button
+                type="button"
+                style={styles.heroBranchTrigger}
+                aria-expanded={ticketMenuOpen}
+                aria-label={t('heroTicketMenu')}
+                disabled={busy}
+                onClick={() => { setTicketMenuOpen(!ticketMenuOpen) }}
+              >
+                <TicketIcon />
+                <span style={styles.heroBranchName}>
+                  {tickets.length === 0 ? t('heroTicket') : tickets.length === 1 ? tickets[0]?.key : t('heroTicketCount', { count: tickets.length })}
+                </span>
+                <IconChevronDownOutline14 />
+              </button>
+            </Tooltip>
             {ticketMenuOpen ? (
               <span role="menu" style={{ ...styles.heroBranchMenu, ...styles.heroTicketMenu }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTicketMenuOpen(false) } }}>
                 <label style={styles.heroBranchSearch}>

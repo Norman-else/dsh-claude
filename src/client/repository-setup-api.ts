@@ -69,6 +69,23 @@ export function loadRepositoryBranches(cwd: string, signal?: AbortSignal): Promi
   }))
 }
 
+/** Pull remote refs down first, then list: a POST because `--prune` rewrites
+ *  this checkout's remote-tracking refs, and on the action deadline because the
+ *  host's own `git fetch` runs for up to a minute. */
+export async function refreshRepositoryBranches(cwd: string, signal?: AbortSignal): Promise<RepositoryBranchList> {
+  const result = await fetch(`${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS, signal),
+    body: JSON.stringify({ cwd }),
+  })
+  // A Host still running the previously loaded server bundle has no refresh
+  // route at all; that is a stale process, not a repository that refused.
+  if (result.status === 404) throw new Error('route-missing')
+  return response<RepositoryBranchList>(Promise.resolve(result))
+}
+
 export async function prepareRepository(
   cwd: string,
   branch: string,

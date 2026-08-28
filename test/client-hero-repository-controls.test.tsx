@@ -1,17 +1,28 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  IconBranchOutline16: () => <svg data-icon="branch" />,
-  IconCheckOutline14: () => <svg data-icon="check" />,
-  IconChevronDownOutline14: () => <svg data-icon="chevron-down" />,
-  IconSearchOutline16: () => <svg data-icon="search" />,
-}))
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
+  const { cloneElement } = await import('react')
+  return {
+    IconBranchOutline16: () => <svg data-icon="branch" />,
+    IconCheckOutline14: () => <svg data-icon="check" />,
+    IconChevronDownOutline14: () => <svg data-icon="chevron-down" />,
+    IconRefreshOutline14: () => <svg data-icon="refresh" />,
+    IconSearchOutline16: () => <svg data-icon="search" />,
+    // The real primitive clones its anchor; mirror that so the markup shows
+    // which element carries the bubble.
+    Tooltip: ({ label, children }: { label: string; children: React.ReactElement }) =>
+      cloneElement(children, { 'data-tooltip': label } as Record<string, unknown>),
+  }
+})
 
 import {
   branchMenuNavigationIndex,
   ClaudeHeroRepositoryCapsule,
   filterRepositoryBranches,
+  refreshedBranchSelection,
   repositoryBranchOptions,
   selectedBranchFirst,
   toggleTicketSelection,
@@ -32,6 +43,9 @@ describe('Claude hero repository capsule', () => {
       worktreeLabel="Worktree"
       searchPlaceholder="Search branches"
       emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing={false}
+      onRefresh={vi.fn()}
       onMenuOpenChange={vi.fn()}
       onSelect={vi.fn()}
       onWorktreeChange={vi.fn()}
@@ -61,6 +75,9 @@ describe('Claude hero repository capsule', () => {
       worktreeLabel="Worktree"
       searchPlaceholder="Search branches"
       emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing={false}
+      onRefresh={vi.fn()}
       onMenuOpenChange={vi.fn()}
       onSelect={vi.fn()}
       onWorktreeChange={vi.fn()}
@@ -70,6 +87,92 @@ describe('Claude hero repository capsule', () => {
     expect(markup).toContain('aria-label="Search branches"')
     expect(markup).toContain('max-height:170px')
     expect(markup).toContain('overflow-y:auto')
+  })
+
+  it('offers a refresh control that reports failure without dropping the loaded branches', () => {
+    const markup = renderToStaticMarkup(<ClaudeHeroRepositoryCapsule
+      branches={['main', 'origin/feature/a']}
+      selected="main"
+      worktree={false}
+      busy={false}
+      menuOpen
+      worktreeLabel="Worktree"
+      searchPlaceholder="Search branches"
+      emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing={false}
+      refreshNotice={{ tone: 'error', text: 'Git could not refresh remote references.' }}
+      onRefresh={vi.fn()}
+      onMenuOpenChange={vi.fn()}
+      onSelect={vi.fn()}
+      onWorktreeChange={vi.fn()}
+    />)
+
+    expect(markup).toContain('aria-label="Refresh remote branches"')
+    // The design system's bubble, not the browser's unstyled native one.
+    expect(markup).toContain('data-tooltip="Refresh remote branches"')
+    expect(markup).not.toContain('title="Refresh remote branches"')
+    expect(markup).toContain('role="alert"')
+    expect(markup).toContain('Git could not refresh remote references.')
+    // A failed fetch must leave the already-loaded branches selectable.
+    expect(markup).toContain('origin/feature/a')
+    expect(markup).not.toMatch(/aria-label="Refresh remote branches"[^>]*disabled/)
+  })
+
+  it('says a refresh happened even when it changed nothing', () => {
+    const markup = renderToStaticMarkup(<ClaudeHeroRepositoryCapsule
+      branches={['main']}
+      selected="main"
+      worktree={false}
+      busy={false}
+      menuOpen
+      worktreeLabel="Worktree"
+      searchPlaceholder="Search branches"
+      emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing={false}
+      refreshNotice={{ tone: 'done', text: 'Refreshed · 1 branch' }}
+      onRefresh={vi.fn()}
+      onMenuOpenChange={vi.fn()}
+      onSelect={vi.fn()}
+      onWorktreeChange={vi.fn()}
+    />)
+
+    // An unchanged list is the common case; without this the click reads as dead.
+    expect(markup).toContain('role="status"')
+    expect(markup).toContain('Refreshed · 1 branch')
+  })
+
+  it('disables the refresh control while the host is fetching', () => {
+    const markup = renderToStaticMarkup(<ClaudeHeroRepositoryCapsule
+      branches={['main']}
+      selected="main"
+      worktree={false}
+      busy={false}
+      menuOpen
+      worktreeLabel="Worktree"
+      searchPlaceholder="Search branches"
+      emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing
+      refreshNotice={{ tone: 'busy', text: 'Refreshing remote branches…' }}
+      onRefresh={vi.fn()}
+      onMenuOpenChange={vi.fn()}
+      onSelect={vi.fn()}
+      onWorktreeChange={vi.fn()}
+    />)
+
+    expect(markup).toMatch(/aria-label="Refresh remote branches"[^>]*disabled/)
+    expect(markup).toContain('aria-busy="true"')
+    expect(markup).toContain('Refreshing remote branches…')
+  })
+
+  it('keeps the chosen branch across a refresh unless the prune removed it', () => {
+    const list = { root: '/repo', current: 'main', dirty: false, branches: ['main'], remoteBranches: ['origin/psos-5697'] }
+    expect(refreshedBranchSelection(list, 'origin/psos-5697')).toBe('origin/psos-5697')
+    expect(refreshedBranchSelection(list, 'origin/deleted')).toBe('main')
+    // Detached HEAD has no current branch to fall back to.
+    expect(refreshedBranchSelection({ root: '/repo', dirty: false, branches: ['main'], remoteBranches: [] }, 'origin/deleted')).toBe('main')
   })
 
   it('always combines local and remote-tracking branches with local precedence', () => {
@@ -139,6 +242,9 @@ describe('Claude hero repository capsule', () => {
       worktreeLabel="Worktree"
       searchPlaceholder="Search branches"
       emptySearchLabel="No matching branches"
+      refreshLabel="Refresh remote branches"
+      refreshing={false}
+      onRefresh={vi.fn()}
       worktreeLocked
       onMenuOpenChange={vi.fn()}
       onSelect={vi.fn()}
@@ -157,6 +263,12 @@ describe('Claude hero repository capsule', () => {
       onDismiss={vi.fn()}
     />)
     expect(markup).toContain('PSOS-1 · 1/3')
+  })
+
+  it('hangs every hint on the design system bubble, never the browser one', async () => {
+    // A native `title` renders as unstyled OS chrome next to the themed menu.
+    const source = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'ClaudeHeroRepositoryControls.tsx'), 'utf8')
+    expect(source).not.toMatch(/^\s*title=\{/mu)
   })
 
   it('filters branches case-insensitively with trimmed input', () => {

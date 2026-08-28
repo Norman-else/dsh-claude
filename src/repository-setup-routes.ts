@@ -96,6 +96,12 @@ export function registerRepositorySetupRoute(ctx: Context, service: RepositorySe
       if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
       const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
       try {
+        // Not a GET: --prune rewrites this checkout's remote-tracking refs.
+        if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh`) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(req)
+          return json(res, 200, await service.refreshBranches(string(input, 'cwd')))
+        }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/branches`) {
           if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
           const cwd = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cwd')

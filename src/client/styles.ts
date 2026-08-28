@@ -875,6 +875,19 @@ export const heroBranchMenu: CSSProperties = {
   boxShadow: 'var(--dsw-shadow-lv3)',
 }
 
+export const heroBranchSearchRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+}
+
+/** The branch search shares its row with the refresh button; the ticket search
+ *  owns its row and keeps the plain style. */
+export const heroBranchSearchGrow: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+}
+
 export const heroBranchSearch: CSSProperties = {
   height: 32,
   boxSizing: 'border-box',
@@ -898,6 +911,42 @@ export const heroBranchSearchInput: CSSProperties = {
   font: 'inherit',
   fontSize: 13,
   lineHeight: '18px',
+}
+
+export const heroBranchRefresh: CSSProperties = {
+  width: 32,
+  height: 32,
+  boxSizing: 'border-box',
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  padding: 0,
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-bg-layer-1)',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: 'pointer',
+}
+
+export const heroBranchRefreshHover: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2))',
+  color: 'var(--dsw-alias-label-primary)',
+}
+
+export const heroBranchRefreshBusy: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  cursor: 'default',
+}
+
+export const heroBranchNotice: CSSProperties = {
+  padding: '0 8px',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: '16px',
+}
+
+export const heroBranchNoticeError: CSSProperties = {
+  color: 'var(--dsw-alias-state-error-primary)',
 }
 
 export const heroBranchList: CSSProperties = {
