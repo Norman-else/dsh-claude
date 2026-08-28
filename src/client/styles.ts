@@ -2875,6 +2875,9 @@ export const diffModalSuccess: CSSProperties = {
    is indistinguishable from the copy and branch icons beside it. */
 
 export const rewindActionCss = `
+[data-dsh-claude-rewind]:empty {
+  display: none;
+}
 [data-dsh-claude-rewind] > button {
   width: 28px;
   height: 28px;
@@ -2892,9 +2895,13 @@ export const rewindActionCss = `
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
 }
-[data-dsh-claude-rewind] > button:disabled {
+[data-dsh-claude-rewind] > button:is(:disabled, [data-unavailable]) {
   opacity: 0.4;
   cursor: default;
+}
+[data-dsh-claude-rewind] > button[data-unavailable]:hover {
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
 }
 `
 

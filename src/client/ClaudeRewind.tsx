@@ -111,9 +111,12 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
 
   const ranges = projection.rewind?.ranges ?? EMPTY_RANGES
   const owned = projection.owned
-  // A rewind mid-turn would cut the running turn in half; the Host refuses it
-  // and so does the control.
-  const armed = sessionId !== undefined && owned && !snapshot.running
+  // A rewind mid-turn would cut the running turn in half, so the Host refuses
+  // one — but the control stays mounted and goes inert for that turn the way
+  // the Host's own branch action does. Unmounting it instead made every
+  // message's control vanish and return with each turn.
+  const unavailable = snapshot.running
+  const armed = sessionId !== undefined && owned
 
   const { hiddenKeys, targets } = useMemo(() => {
     const hidden: string[] = []
@@ -199,8 +202,14 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
         const entry = targets.get(seat.key)
         if (entry === undefined) return null
         return createPortal((
-          <Tooltip label={t('rewindTooltip')} side="bottom" delayMs={300}>
-            <button type="button" aria-label={t('rewindTooltip')} onClick={() => { setTarget(entry) }}>
+          <Tooltip label={unavailable ? t('rewindBusy') : t('rewindTooltip')} side="bottom" delayMs={300}>
+            <button
+              type="button"
+              aria-label={t('rewindTooltip')}
+              aria-disabled={unavailable || undefined}
+              data-unavailable={unavailable || undefined}
+              {...(unavailable ? {} : { onClick: () => { setTarget(entry) } })}
+            >
               <RewindIcon />
             </button>
           </Tooltip>
