@@ -1,5 +1,6 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
-import { githubAvatarUrl, type FailingCheck, type PullRequestReviewComment } from '../pr-feedback.ts'
+import { githubAvatarUrl } from '../github-url.ts'
+import type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'
 import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
 
 export type { FailingCheck, PullRequestReviewComment } from '../pr-feedback.ts'

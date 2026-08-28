@@ -538,10 +538,19 @@ export class ClaudeSupervisor {
       clearTimeout(entry.idleTimer)
       entry.idleTimer = undefined
     }
-    await this.#syncPermissionMode(entry)
-    if (model !== entry.model) {
-      await entry.query.setModel(model)
-      entry.model = model
+    // Metadata shares turn admission's process-wide gate, so an unanswered
+    // control request here stalls every session until the Host restarts. Bound
+    // both and discard the wedged process, exactly as turn admission does.
+    try {
+      await this.#syncPermissionMode(entry)
+      if (model !== entry.model) {
+        await withTimeout(entry.query.setModel(model), CLAUDE_METADATA_TIMEOUT_MS, 'Claude Code model switch')
+        entry.model = model
+      }
+    } catch (error) {
+      if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId)
+      await this.#disposeEntry(entry)
+      throw error
     }
     return entry
   }

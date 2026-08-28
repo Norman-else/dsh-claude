@@ -302,6 +302,33 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('discards a process whose metadata model switch never answers instead of stalling admission', async () => {
+    vi.useFakeTimers()
+    try {
+      const transport = factory()
+      const owner = fakeAgent()
+      const runtime = supervisor(transport.create)
+      await runtime.supportedCommands(owner.agent)
+      const query = transport.queries[0]!
+
+      query.setModel.mockReturnValueOnce(new Promise<undefined>(() => {}))
+      const wedged = runtime.contextUsage(owner.agent, 'fable')
+      const settled = expect(wedged).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
+      await settled
+      expect(query.getContextUsage).not.toHaveBeenCalled()
+
+      // Metadata shares turn admission's gate, so the wedged process must be
+      // discarded and the gate released: the next request runs on a fresh one.
+      expect(runtime.snapshots()).toHaveLength(0)
+      await expect(runtime.supportedCommands(owner.agent)).resolves.toHaveLength(1)
+      expect(transport.queries).toHaveLength(2)
+      await runtime.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reads the Claude command catalog without opening a DSH turn', async () => {
     const transport = factory()
     const owner = fakeAgent()
