@@ -7,7 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CLAUDE_JIRA_PATH } from '../src/constants.ts'
 import { registerJiraRoute } from '../src/jira-routes.ts'
-import { JiraService, buildJql, normalizeSiteUrl, parseTickets, ticketKeyOf } from '../src/jira.ts'
+import { JiraService, buildJql, keyJql, normalizeSiteUrl, parseTickets, pickerKeys, ticketKeyOf } from '../src/jira.ts'
 
 const roots: string[] = []
 
@@ -35,6 +35,19 @@ describe('Jira query helpers', () => {
     expect(buildJql('')).toBe('statusCategory != Done ORDER BY updated DESC')
     expect(buildJql('PSOS-12')).toBe('key = "PSOS-12"')
     expect(buildJql('say "hi"')).toBe('text ~ "say \\"hi\\"*" ORDER BY updated DESC')
+  })
+
+  it('keeps only picker hits whose key carries the typed number', () => {
+    const body = {
+      sections: [
+        { id: 'hs', issues: [{ key: 'PSOS-5697' }, { key: 'PSOS-15697' }] },
+        { id: 'cs', issues: [{ key: 'psos-5697' }, { key: 'ABC-5697' }, { key: 'oops' }, {}] },
+      ],
+    }
+    // PSOS-15697 ends with "5697" as digits but not as the ticket number.
+    expect(pickerKeys(body, '5697')).toEqual(['PSOS-5697', 'ABC-5697'])
+    expect(pickerKeys({}, '5697')).toEqual([])
+    expect(keyJql(['PSOS-5697', 'ABC-5697'])).toBe('key in ("PSOS-5697", "ABC-5697") ORDER BY updated DESC')
   })
 
   it('parses search results into tickets with browse links', () => {
@@ -85,6 +98,42 @@ describe('Jira service', () => {
     await service.disconnect()
     await expect(service.status()).resolves.toEqual({ connected: false })
     await expect(service.search('x')).rejects.toMatchObject({ code: 'not-connected' })
+  })
+
+  it('resolves a bare ticket number through the issue picker', async () => {
+    const path = await storePath()
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/rest/api/3/myself')) return jsonResponse(200, {})
+      if (url.includes('/rest/api/3/issue/picker?')) {
+        return jsonResponse(200, { sections: [{ id: 'cs', issues: [{ key: 'PSOS-5697' }] }] })
+      }
+      if (url.includes('/rest/api/3/search/jql?')) {
+        return jsonResponse(200, { issues: [{ key: 'PSOS-5697', fields: { summary: 'Receivable' } }] })
+      }
+      return jsonResponse(404, {})
+    })
+    const service = new JiraService({ storePath: path, fetch: fetcher as unknown as typeof fetch })
+    await service.connect({ siteUrl: 'https://team.atlassian.net', email: 'n@example.com', apiToken: 't' })
+
+    await expect(service.search('5697')).resolves.toEqual([
+      { key: 'PSOS-5697', summary: 'Receivable', url: 'https://team.atlassian.net/browse/PSOS-5697' },
+    ])
+    expect(new URL(String(fetcher.mock.calls.at(-1)?.[0])).searchParams.get('jql'))
+      .toBe('key in ("PSOS-5697") ORDER BY updated DESC')
+
+    // A site without the picker keeps answering: the text search still runs.
+    const withoutPicker = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/rest/api/3/myself')) return jsonResponse(200, {})
+      if (url.includes('/rest/api/3/search/jql?')) return jsonResponse(200, { issues: [] })
+      return jsonResponse(404, {})
+    })
+    const legacy = new JiraService({ storePath: await storePath(), fetch: withoutPicker as unknown as typeof fetch })
+    await legacy.connect({ siteUrl: 'https://jira.example.com', email: 'n@example.com', apiToken: 't' })
+    await expect(legacy.search('5697')).resolves.toEqual([])
+    expect(new URL(String(withoutPicker.mock.calls.at(-1)?.[0])).searchParams.get('jql'))
+      .toBe('text ~ "5697*" ORDER BY updated DESC')
   })
 
   it('falls back to the classic search endpoint and surfaces rejected credentials', async () => {

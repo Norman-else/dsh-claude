@@ -71,6 +71,32 @@ export function ticketKeyOf(query: string): string | undefined {
   return match === null ? undefined : `${match[1]!.toUpperCase()}-${match[2]!}`
 }
 
+/** Jira's text index carries summary, description and comments -- never the
+ *  issue key -- so a bare ticket number ("5697") can never reach PSOS-5697
+ *  through `text ~`. The issue picker is the endpoint behind Jira's own quick
+ *  search and does match keys; its hits become the key filter the normal
+ *  search then reads the display fields from. */
+export function pickerKeys(value: unknown, number: string): readonly string[] {
+  const sections = record(value)?.sections
+  if (!Array.isArray(sections)) return []
+  const keys: string[] = []
+  for (const section of sections) {
+    const issues = record(section)?.issues
+    if (!Array.isArray(issues)) continue
+    for (const issue of issues) {
+      const raw = record(issue)?.key
+      const key = ticketKeyOf(typeof raw === 'string' ? raw : '')
+      if (key !== undefined && key.endsWith(`-${number}`) && !keys.includes(key)) keys.push(key)
+    }
+  }
+  return keys
+}
+
+/** Keys arrive validated by `ticketKeyOf`, so they cannot break out of the quotes. */
+export function keyJql(keys: readonly string[]): string {
+  return `key in (${keys.map(key => `"${key}"`).join(', ')}) ORDER BY updated DESC`
+}
+
 export function buildJql(query: string): string {
   const trimmed = query.trim().slice(0, MAX_QUERY_CHARS)
   if (trimmed.length === 0) return 'statusCategory != Done ORDER BY updated DESC'
@@ -169,7 +195,11 @@ export class JiraService {
   async search(query: string): Promise<readonly JiraTicket[]> {
     const store = await this.#read()
     if (store === undefined) throw new JiraError('not-connected', 'Connect Jira in Settings first.')
-    const params = new URLSearchParams({ jql: buildJql(query), maxResults: String(MAX_RESULTS), fields: 'summary,status,issuetype' })
+    const params = new URLSearchParams({
+      jql: await this.#searchJql(store, query.trim().slice(0, MAX_QUERY_CHARS)),
+      maxResults: String(MAX_RESULTS),
+      fields: 'summary,status,issuetype',
+    })
     let body: unknown
     try {
       body = await this.#json(store, `/rest/api/3/search/jql?${params.toString()}`)
@@ -179,6 +209,16 @@ export class JiraService {
       body = await this.#json(store, `/rest/api/3/search?${params.toString()}`)
     }
     return parseTickets(body, store.siteUrl)
+  }
+
+  /** A bare ticket number resolves through the picker; everything else is JQL.
+   *  A site that cannot serve the picker falls back to the text search rather
+   *  than failing the whole lookup. */
+  async #searchJql(store: JiraStore, query: string): Promise<string> {
+    if (!/^\d+$/u.test(query)) return buildJql(query)
+    const keys = await this.#json(store, `/rest/api/3/issue/picker?query=${encodeURIComponent(query)}`)
+      .then(body => pickerKeys(body, query), () => [])
+    return keys.length === 0 ? buildJql(query) : keyJql(keys)
   }
 
   async #json(connection: JiraConnectionInput, path: string, init: { method?: 'GET' | 'PUT'; body?: unknown } = {}): Promise<unknown> {
