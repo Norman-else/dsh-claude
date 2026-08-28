@@ -23,3 +23,4 @@ export const CLAUDE_REPOSITORY_STATUS_PATH = '/plugins/dsh-claude/repository/sta
 export const CLAUDE_REPOSITORY_FILE_PATH = '/plugins/dsh-claude/repository/file'
 export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'
 export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
+export const CLAUDE_EDITOR_OPEN_PATH = '/plugins/dsh-claude/editor/open'

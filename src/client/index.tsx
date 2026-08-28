@@ -21,6 +21,7 @@ import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from '.
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
+import { ClaudeSessionMenu, type ClaudeSessionMenuInjected } from './ClaudeSessionMenu.tsx'
 import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './ClaudeAgentPresetLabel.tsx'
 import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
 import { DiffOpenStore } from './diff-open-store.ts'
@@ -324,6 +325,15 @@ export function apply(ctx: ClientContext): void {
       diffOpen: diffOpen.sourceFor(sessionId),
     }),
   }, ClaudeDiffHeaderAction))
+  // Kebab menu at the far right of the same utility group: session-level
+  // actions that are not worth a header button of their own.
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-session-menu',
+    order: 31,
+    locale: namespace,
+    inject: (): ClaudeSessionMenuInjected => ({ t }),
+  }, ClaudeSessionMenu))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-review-comments',
