@@ -185,8 +185,10 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
       if (target.text !== '') setDraft?.(sessionId, target.text)
     }, (reason: unknown) => {
       setSubmitting(false)
-      const code = reason instanceof Error ? reason.message : ''
-      setError(code === 'session-busy' ? t('rewindBusy') : t('rewindFailed'))
+      const code = reason instanceof Error && reason.message !== '' ? reason.message : 'unknown'
+      setError(code === 'session-busy' ? t('rewindBusy')
+        : code === 'route-missing' ? t('rewindStale')
+        : t('rewindFailed', { code }))
     })
   }
 

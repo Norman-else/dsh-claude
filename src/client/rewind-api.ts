@@ -10,6 +10,9 @@ export async function rewindSession(sessionId: string, seq: number): Promise<voi
     body: JSON.stringify({ sessionId, seq }),
   })
   if (result.ok) return
+  // A Host still running the previously loaded server bundle has no rewind
+  // route at all; that is a stale process, not a failed rewind.
+  if (result.status === 404) throw new Error('route-missing')
   const body = await result.json().catch(() => undefined) as { error?: string } | undefined
-  throw new Error(typeof body?.error === 'string' ? body.error : 'rewind-unavailable')
+  throw new Error(typeof body?.error === 'string' ? body.error : `http-${result.status}`)
 }

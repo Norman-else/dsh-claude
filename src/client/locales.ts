@@ -325,8 +325,9 @@ export const zh = {
   rewindHint: '被删除的内容会从这个会话中隐藏，Claude 也会忘记它们；消息原文会放回输入框，方便修改后重新发送。',
   rewindConfirm: '删除并回退',
   rewindSubmitting: '回退中…',
-  rewindFailed: '回退失败。',
+  rewindFailed: '回退失败（{code}）。',
   rewindBusy: '这个会话正在运行，请等本轮结束后再回退。',
+  rewindStale: '宿主进程里的插件还是旧版本（没有回退接口）。重启 DSH 后再试。',
 } as const
 
 export const en = {
@@ -656,8 +657,9 @@ export const en = {
   rewindHint: 'The removed entries are hidden from this session and Claude forgets them; the message text goes back to the composer so you can edit and resend it.',
   rewindConfirm: 'Delete and rewind',
   rewindSubmitting: 'Rewinding…',
-  rewindFailed: 'The rewind failed.',
+  rewindFailed: 'The rewind failed ({code}).',
   rewindBusy: 'This session is running; wait for the turn to finish before rewinding.',
+  rewindStale: 'The Host process is still running the previous plugin build, which has no rewind route. Restart DSH and try again.',
 } as const
 
 export type ClaudeCodeSettingsKey = keyof typeof en
