@@ -621,10 +621,13 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       }
       setDialog({ action, preview, loading: true, submitting: false })
       const generated = await generateCommitMessage(sessionId, preview.fingerprint, controller.signal)
-      setMessage(generated)
-      setPrTitle(generated)
-      setPrBody(`Summary: ${generated}\n\nChanges:\n- ${generated}`)
-      setDialog({ action, preview, loading: false, submitting: false })
+      // The dialog is usable while the message is being written, so the
+      // generated text only fills fields nobody has typed into, and lands on
+      // whatever state the dialog reached in the meantime.
+      setMessage(current => (current.trim() === '' ? generated : current))
+      setPrTitle(current => (current.trim() === '' ? generated : current))
+      setPrBody(current => (current.trim() === '' ? `Summary: ${generated}\n\nChanges:\n- ${generated}` : current))
+      setDialog(current => (current === undefined ? current : { ...current, loading: false }))
     }).catch(error => {
       if (!controller.signal.aborted) setDialog({ action, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
     })
@@ -876,7 +879,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={dialog === undefined ? t('diffCommit') : actionLabel(dialog.action, t)} closeLabel={t('diffCancel')} description={t('diffConfirmDescription')} footer={
         <div style={styles.diffModalFooter}>
           <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{completed ? t('diffDone') : t('diffCancel')}</button>
-          {!completed ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.loading === true || dialog?.submitting === true || dialog?.preview === undefined || (dialog.action !== 'push' && message.trim() === '')} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+          {!completed ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.submitting === true || dialog?.preview === undefined || (dialog.action !== 'push' && message.trim() === '')} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
         </div>
       }>
         {dialog?.loading === true ? <p style={styles.diffModalStatus}>{t('diffGeneratingMessage')}</p> : null}

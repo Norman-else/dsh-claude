@@ -3032,12 +3032,12 @@ export const diffModalCss = `
   background: var(--dsw-alias-bg-layer-2);
 }
 .dshClaudeRepositoryActionModalContent h2 {
-  font-size: 18px;
-  line-height: 26px;
+  font-size: 16px;
+  line-height: 24px;
 }
 .dshClaudeRepositoryActionModalContent > p {
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
 }
 .dshClaudeRepositoryActionModal input:is([type='checkbox'], [type='radio']) {
   width: 16px;
@@ -3055,7 +3055,7 @@ export const diffModalCss = `
 export const diffModalBody: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 16,
+  gap: 14,
   width: '100%',
   minWidth: 0,
   boxSizing: 'border-box',
@@ -3067,8 +3067,8 @@ export const diffModalMeta: CSSProperties = {
   gap: 16,
   minWidth: 0,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalMetaText: CSSProperties = {
@@ -3092,11 +3092,11 @@ export const diffModalFile: CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   minWidth: 0,
-  padding: '10px 14px',
+  padding: '8px 12px',
   borderBottom: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 12,
+  lineHeight: '18px',
 }
 
 export const diffModalFilePath: CSSProperties = {
@@ -3113,37 +3113,37 @@ export const diffModalFileState: CSSProperties = {
 export const diffModalField: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: 6,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 12,
+  lineHeight: '18px',
   fontWeight: 550,
 }
 
 export const diffModalTextarea: CSSProperties = {
   ...settingTextInput,
-  minHeight: 140,
-  padding: '10px 14px',
-  fontSize: 14,
-  lineHeight: '22px',
+  minHeight: 120,
+  padding: '9px 12px',
+  fontSize: 13,
+  lineHeight: '20px',
   resize: 'vertical',
 }
 
 export const diffModalTextInput: CSSProperties = {
   ...settingTextInput,
-  minHeight: 44,
-  padding: '9px 14px',
-  fontSize: 14,
-  lineHeight: '22px',
+  minHeight: 36,
+  padding: '7px 12px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalCheckbox: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 10,
+  gap: 8,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalFooter: CSSProperties = {
@@ -3153,31 +3153,31 @@ export const diffModalFooter: CSSProperties = {
 }
 
 export const diffModalButton: CSSProperties = {
-  minHeight: 36,
-  padding: '8px 18px',
-  fontSize: 14,
-  lineHeight: '22px',
+  minHeight: 34,
+  padding: '6px 16px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalStatus: CSSProperties = {
   margin: 0,
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalError: CSSProperties = {
-  margin: '10px 0 0',
+  margin: '8px 0 0',
   color: 'var(--dsw-alias-state-error-primary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 export const diffModalSuccess: CSSProperties = {
   margin: 0,
   color: 'var(--dsw-alias-state-success-primary)',
-  fontSize: 14,
-  lineHeight: '22px',
+  fontSize: 13,
+  lineHeight: '20px',
 }
 
 /* Rewind control, portalled into the Host's user-message action row. The
