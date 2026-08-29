@@ -16,6 +16,7 @@ import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
+import { useActionToast } from './action-toast.tsx'
 import { executeRepositoryAction, generateCommitMessage, loadRepositoryActionPreview } from './repository-action-api.ts'
 import {
   composeCommentsPrompt,
@@ -467,8 +468,9 @@ interface ActionDialogState {
   readonly loading: boolean
   readonly submitting: boolean
   readonly error?: string
+  /** Only set on failure: a commit that survived a failed push keeps its hash
+   *  next to the error so the retry is not blind. */
   readonly commit?: string
-  readonly pullRequestUrl?: string
 }
 
 export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInjected['t']): string {
@@ -512,6 +514,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   const diff = repository?.diff
   const files = useMemo(() => parseUnifiedDiff(diff?.patch ?? ''), [diff?.patch])
   const [menuOpen, setMenuOpen] = useState(false)
+  const { toast, report } = useActionToast()
   const [dialog, setDialog] = useState<ActionDialogState>()
   const [message, setMessage] = useState('')
   const [includeUnstaged, setIncludeUnstaged] = useState(true)
@@ -595,13 +598,6 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     actionController.current = undefined
     setDialog(undefined)
   }, [dialog?.submitting])
-  // Successful commit/push confirmations dismiss themselves after a short
-  // beat; a fresh PR stays open because its link is the point of the dialog.
-  useEffect(() => {
-    if (dialog?.commit === undefined || dialog.error !== undefined || dialog.pullRequestUrl !== undefined) return
-    const timer = setTimeout(closeDialog, 1_200)
-    return () => clearTimeout(timer)
-  }, [closeDialog, dialog?.commit, dialog?.error, dialog?.pullRequestUrl])
   const openAction = useCallback((action: RepositoryActionKind) => {
     actionController.current?.abort()
     setMenuOpen(false)
@@ -644,12 +640,15 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
         includeUnstaged,
         ...(dialog.action === 'create-pr' ? { prTitle, prBody, ...(baseBranch.trim() === '' ? {} : { baseBranch }), draft } : {}),
       })
-      setDialog({ ...dialog, submitting: false, commit: result.commit, ...(result.pullRequestUrl === undefined ? {} : { pullRequestUrl: result.pullRequestUrl }) })
+      report(result.pullRequestUrl === undefined
+        ? t(dialog.action === 'push' ? 'diffPushCompleted' : 'diffCommitCompleted', { commit: result.commit.slice(0, 8) })
+        : t('diffPrCompleted'))
+      setDialog(undefined)
     } catch (error) {
       const completedCommit = typeof error === 'object' && error !== null && 'commit' in error && typeof error.commit === 'string' ? error.commit : undefined
       setDialog({ ...dialog, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed'), ...(completedCommit === undefined ? {} : { commit: completedCommit }) })
     }
-  }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, sessionId, t])
+  }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, report, sessionId, t])
   const openCommentEditor = useCallback((path: string, anchor: ReviewCommentAnchor) => {
     setCommentEditor({ path, ...anchor })
     setCommentDraft('')
@@ -767,7 +766,6 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     { id: 'push', label: t('diffPush'), disabled: !availability['push'] },
     { id: 'create-pr', label: t('diffCreatePr'), disabled: !availability['create-pr'] },
   ]
-  const completed = dialog?.commit !== undefined && dialog.error === undefined
   const allFilesOpen = files.every((file, index) => fileOpen(file.path, index))
   const commentEditorNode: ReactNode = commentEditor === undefined ? null : (
     <div style={styles.diffCommentBlock}>
@@ -790,6 +788,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   )
   return (
     <>
+      {toast}
       <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}{styles.diffCommentMarkdownCss}</style>
       <div className={styles.detailsCardClass} style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
@@ -878,8 +877,8 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       </div>
       <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={dialog === undefined ? t('diffCommit') : actionLabel(dialog.action, t)} closeLabel={t('diffCancel')} description={t('diffConfirmDescription')} footer={
         <div style={styles.diffModalFooter}>
-          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{completed ? t('diffDone') : t('diffCancel')}</button>
-          {!completed ? <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.submitting === true || dialog?.preview === undefined || (dialog.action !== 'push' && message.trim() === '')} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button> : null}
+          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{t('diffCancel')}</button>
+          <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.submitting === true || dialog?.preview === undefined || (dialog.action !== 'push' && message.trim() === '')} onClick={() => void confirm()}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button>
         </div>
       }>
         {dialog?.loading === true ? <p style={styles.diffModalStatus}>{t('diffGeneratingMessage')}</p> : null}
@@ -903,10 +902,6 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
             <label style={styles.diffModalField}>{t('diffPrDescription')}<textarea style={{ ...styles.diffModalTextarea, minHeight: 240 }} value={prBody} maxLength={8192} onChange={event => setPrBody(event.currentTarget.value)} /></label>
             <label style={styles.diffModalCheckbox}><input type="checkbox" checked={draft} onChange={event => setDraft(event.currentTarget.checked)} />{t('diffPrDraft')}</label>
           </> : null}
-          {dialog.commit !== undefined ? <p style={styles.diffModalSuccess}>{dialog.action === 'push'
-            ? t('diffPushCompleted', { commit: dialog.commit.slice(0, 8) })
-            : t('diffCommitCompleted', { commit: dialog.commit.slice(0, 8) })}</p> : null}
-          {dialog.pullRequestUrl !== undefined ? <a href={dialog.pullRequestUrl} target="_blank" rel="noopener noreferrer">{t('diffOpenPr')}</a> : null}
         </div> : null}
         {dialog?.error !== undefined ? <p role="alert" style={styles.diffModalError}>{dialog.error}{dialog.commit === undefined ? '' : ` ${t('diffCommitPreserved', { commit: dialog.commit.slice(0, 8) })}`}</p> : null}
       </Modal>

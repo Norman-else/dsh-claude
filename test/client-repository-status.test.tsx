@@ -3,6 +3,7 @@ import { composeConflictsPrompt } from '../src/client/pr-feedback-api.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeDiffPanel, actionLabel, expandDiffRows, numberDiffLines, parseUnifiedDiff, rangeCommentAnchor, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
+import { nextActionToast } from '../src/client/action-toast.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 import type { ClaudeClientProjection } from '../src/client/projection.ts'
@@ -487,6 +488,15 @@ describe('Claude repository status UI', () => {
       textOverflow: 'ellipsis',
     })
     expect(styles.diffModalFileState).toMatchObject({ flex: 'none' })
+  })
+
+  it('replays the action banner when the same outcome is reported twice', () => {
+    // The id is the Toast's key: reuse it and the second commit of the same
+    // message would report into a banner that is already fading out.
+    const first = nextActionToast(undefined, 'Created commit abc12345')
+    const again = nextActionToast(first, 'Created commit abc12345')
+    expect(again.text).toBe(first.text)
+    expect(again.id).not.toBe(first.id)
   })
 
   it('keeps the repository action modal wide but with compact text and round-input-safe focus styling', () => {
