@@ -82,7 +82,18 @@ describe('repository action service', () => {
     const preview = await service.preview('C:/repo/session')
     await expect(service.generateMessage('C:/repo/session', preview.fingerprint)).resolves.toBe('Update repository actions')
     const command = fake.spawn.mock.calls.at(-1)?.[0]
-    expect(command).toMatchObject({ cwd: 'C:/repo', env: {}, argv: ['C:/bin/claude.exe', '-p', '--tools', '', '--output-format', 'text', expect.any(String)] })
+    // No MCP servers and no user hooks: a commit subject cannot use either, and
+    // both are what makes the cold start of this one-shot run drag.
+    expect(command).toMatchObject({
+      cwd: 'C:/repo',
+      env: {},
+      argv: [
+        'C:/bin/claude.exe', '-p',
+        '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+        '--setting-sources', 'project,local',
+        '--tools', '', '--output-format', 'text', expect.any(String),
+      ],
+    })
     expect(command.argv.at(-1)).not.toContain('WARP.md')
   })
 

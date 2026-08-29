@@ -10,6 +10,18 @@ const MAX_UNPUSHED_COMMITS = 20
 const GIT_TIMEOUT_MS = 15_000
 const REMOTE_TIMEOUT_MS = 60_000
 const GENERATE_TIMEOUT_MS = 60_000
+/** One cold `claude -p` per generation, so everything the subject line cannot
+ *  use is cost: MCP servers (which `ask` already skips for the same reason,
+ *  and which stall for as long as an unreachable one takes to give up) and the
+ *  user's own hooks and settings. Project settings stay: a repository's commit
+ *  conventions belong in the message. `--tools ''` keeps `--output-format`
+ *  between it and the prompt -- both flags are variadic. */
+const GENERATE_ARGUMENTS: readonly string[] = [
+  '-p',
+  '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+  '--setting-sources', 'project,local',
+  '--tools', '', '--output-format', 'text',
+]
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
 export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch'
@@ -188,7 +200,7 @@ export class RepositoryActionService {
       `Diff:\n${preview.patch.slice(0, 24 * 1024)}`,
     ].join('\n')
     try {
-      const result = await this.#run(this.#claudeExecutable, ['-p', '--tools', '', '--output-format', 'text', prompt], preview.root, GENERATE_TIMEOUT_MS)
+      const result = await this.#run(this.#claudeExecutable, GENERATE_ARGUMENTS.concat(prompt), preview.root, GENERATE_TIMEOUT_MS)
       return result.exitCode === 0 && !result.lossy ? normalizedGeneratedMessage(result.stdout, fallback) : fallback
     } catch {
       return fallback
