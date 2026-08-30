@@ -109,7 +109,12 @@ export function apply(ctx: ClientContext): void {
       return true
     }
   }
-  if (sessions !== undefined) {
+  // The service can exist without carrying `provide`: dsh 0.1.2-alpha.1 drops
+  // the per-session hook seam entirely, and an unguarded call there throws
+  // `sessions.provide is not a function` during activation, which fails the
+  // whole loader entry. Probing costs nothing where the seam is present and
+  // degrades to losing only the sidecar projection where it is not.
+  if (sessions !== undefined && typeof sessions.provide === 'function') {
     ctx.effect(() => sessions.provide({
       hooks: ['claudeProjection'],
       resolve: binding => ({ hooks: { claudeProjection: projections.source(binding.sessionId) } }),
