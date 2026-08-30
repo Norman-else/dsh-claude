@@ -103,6 +103,10 @@ describe('published package contract', () => {
 
     expect(client).toContain('createClaudeDiagnosticsReporter()')
     expect(client).toContain('claudeBootCheckFindings(')
+    // The composer properties are scoped to the Host's composer subtree, so a
+    // probe on the document root reports them missing forever.
+    expect(client).toContain('watchClaudeComposerBar(')
+    expect(client).not.toContain('document.documentElement).getPropertyValue')
     // Not just the diff overlay: onEntryError has to report before it recovers.
     expect(client).toMatch(/onEntryError\(\(key, entry, error\)/u)
     expect(client).toContain("diagnostics.report('slot-entry-crashed'")

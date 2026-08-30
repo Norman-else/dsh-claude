@@ -12,6 +12,7 @@ import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, remem
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
+import { CLAUDE_COMPOSER_BAR_ATTRIBUTE } from './boot-check.ts'
 
 export interface ClaudeRepositoryStatusInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -575,7 +576,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
   if (repository.status !== 'ready') {
     return (
-      <div style={styles.repositoryBarFrame}>
+      <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
         <div style={styles.repositoryBar}>
           <span style={styles.repositoryPrIcon}><PullRequestIcon /></span>
           <span style={styles.repositoryPrimary}>{repository.status === 'not-repository' ? t('repositoryNotGit') : t('repositoryUnavailable')}</span>
@@ -584,7 +585,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
     )
   }
   return (
-    <div style={styles.repositoryBarFrame}>
+    <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
       {toast}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
         {openOverview === undefined

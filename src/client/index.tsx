@@ -19,7 +19,8 @@ import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
-import { CLAUDE_REQUIRED_CSS_VARIABLES, claudeBootCheckFindings } from './boot-check.ts'
+import { claudeBootCheckFindings } from './boot-check.ts'
+import { watchClaudeComposerBar } from './composer-style-probe.ts'
 import { createClaudeDiagnosticsReporter } from './client-diagnostics.ts'
 import { ClaudeRewind, EMPTY_CHAT_VIEW, type ClaudeChatSource, type ClaudeChatView, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
@@ -119,11 +120,13 @@ export function apply(ctx: ClientContext): void {
   for (const finding of claudeBootCheckFindings({
     services: inject,
     resolve: name => ctx.get(name),
-    cssVariables: CLAUDE_REQUIRED_CSS_VARIABLES,
-    readCssVariable: name => (typeof document === 'undefined'
-      ? 'skipped'
-      : getComputedStyle(document.documentElement).getPropertyValue(name)),
   })) diagnostics.report('boot-check', finding)
+  // The scoped custom properties cannot be read here: the Host publishes them
+  // onto the composer subtree, and inheritance means only an element inside it
+  // sees one. Probe the plugin's own bar once it mounts instead.
+  ctx.effect(() => watchClaudeComposerBar(finding => {
+    diagnostics.report('boot-check', finding)
+  }), 'dsh-claude: composer style drift probe')
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
