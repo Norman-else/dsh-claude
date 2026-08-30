@@ -106,7 +106,7 @@ An issue always comes first. Pull requests that arrive without one are closed un
 6. **Open a pull request** that declares its type and links its issue (§4.5).
 7. **Address review.** The maintainer reviews and approves; the maintainer merges. Contributors do not merge their own pull requests.
 
-`master` is protected: direct pushes, force pushes, and branch deletion are blocked for everyone except the repository owner, and a pull request needs one approving review before it can merge. Pushing new commits to a pull request dismisses any existing approval, so expect to request review again after changes.
+`master` is protected: direct pushes, force pushes, and branch deletion are blocked, and a pull request needs one approving review before it can merge. Pushing new commits to a pull request dismisses any existing approval, so expect to request review again after changes.
 
 ### 4.3 What the issue must contain
 
