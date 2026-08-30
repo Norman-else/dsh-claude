@@ -1,0 +1,4 @@
+# Every change to this repository needs an approving review from @Norman-else.
+# Paired with the "Protect default branch" ruleset's require_code_owner_review,
+# this makes the owner's approval the only one that satisfies the rule.
+* @Norman-else
