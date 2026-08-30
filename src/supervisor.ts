@@ -1020,7 +1020,7 @@ export class ClaudeSupervisor {
     await this.#sidecar.writeTasks(entry.sessionId, [...entry.tasks.values()]).catch(() => undefined)
   }
 
-  /** What DSH is told about token usage.
+  /** What DSH is told about token usage: newest call's prompt, whole turn's output.
    *
    *  `TokenUsage` is documented as "token accounting for ONE model call", and
    *  DSH's token meter divides `uncachedInput + cacheRead + cacheWrite` by the
@@ -1030,13 +1030,23 @@ export class ClaudeSupervisor {
    *  times, which sums past the window without the conversation ever growing.
    *  The newest single call answers "how big is this conversation now".
    *
-   *  The sidecar activity keeps the turn total instead — that is the audit and
-   *  cost record, and nothing divides it by a window. */
+   *  Output is deliberately excluded from that pressure sum, so the same
+   *  argument never applied to it — and taking it from the newest call reported
+   *  whatever the wrap-up message happened to cost, which is a couple of tokens
+   *  after a turn that wrote thousands. The turn total is the honest figure.
+   *
+   *  The sidecar activity keeps the whole turn total for both — that is the
+   *  audit and cost record, and nothing divides it by a window. */
   #reportedUsage(
     active: ActiveTurn,
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
   ): ClaudeUsage {
-    return active.requestUsage ?? result.usage
+    const prompt = active.requestUsage
+    if (prompt === undefined) return result.usage
+    return {
+      ...prompt,
+      ...(result.usage.outputTokens === undefined ? {} : { outputTokens: result.usage.outputTokens }),
+    }
   }
 
   async #completeProgressSegment(

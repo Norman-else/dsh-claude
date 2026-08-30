@@ -493,11 +493,12 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('reports the newest single call to DSH while the sidecar keeps the turn total', async () => {
-    // DSH divides what it is told by the context window. The result usage sums
+  it('reports the newest call prompt-side and the whole turn output', async () => {
+    // DSH divides the PROMPT side by the context window. The result usage sums
     // every call in the turn — here two calls that each re-read the same
     // prompt from cache — so reporting it would read as a context twice its
-    // real size.
+    // real size. Output is not part of that pressure sum, and the last call is
+    // usually a short wrap-up, so the turn total is the honest number there.
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -531,7 +532,7 @@ describe('Claude supervisor', () => {
     const events = await collect(output)
     expect(events).toContainEqual({
       type: 'usage',
-      usage: { inputTokens: 2, outputTokens: 20, cacheReadTokens: 1_000 },
+      usage: { inputTokens: 2, outputTokens: 30, cacheReadTokens: 1_000 },
     })
     // The audit trail still records what the whole turn actually billed.
     const snapshot = await projection(runtime)
