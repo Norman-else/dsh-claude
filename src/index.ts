@@ -33,6 +33,7 @@ import { registerJiraRoute } from './jira-routes.ts'
 import { AskService } from './ask.ts'
 import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
+import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
@@ -214,9 +215,9 @@ export async function installManagedPresetCompatibility(
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  // DSH rc.6-rc.8 replaces third-party preset roots during profile boot. Keep
-  // the package-contained preset for compatible Hosts, and install this guarded
-  // copy into DSH's always-loaded user preset root for affected Hosts.
+  // DSH Desktop 2.0.4 does not retain third-party preset roots from bundle
+  // patches, so keep a guarded user-root copy. Its bare route specifier resolves
+  // through the profile package factory and does not create a second Loader source.
   await installManagedPresetCompatibility(ctx.logger)
   const defaultLimits = {
     idleTimeoutMs: config.idleTimeoutMs ?? 30 * 60 * 1_000,
@@ -369,6 +370,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => () => supervisor.dispose(), 'dsh-claude: process supervisor')
   ctx.effect(() => () => repositoryStatus.dispose(), 'dsh-claude: repository status cache')
   ctx.inject(['webServer'], webCtx => {
+    registerClaudeClientDiagnosticsRoute(webCtx)
     registerClaudeDoctorRoutes(webCtx, webCtx.subprocess, supervisor, supervisorConfig, resolutionError)
     const desktopActions = webCtx.get('desktopActions') as { requestRestart?: () => void } | undefined
     registerClaudeUpdateRoutes(webCtx, webCtx.subprocess, {
