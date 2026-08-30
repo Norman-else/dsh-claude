@@ -20,6 +20,49 @@ signal said it was fine.
 So: compile-time checking cannot help here. Runtime assertions and the Host's own
 source are the tools.
 
+## 0. If Desktop will not start
+
+Do this before anything else — everything below assumes a running app.
+
+First confirm the plugin is the cause:
+
+```bash
+tail -50 "$APPDATA/DSH Desktop/logs/dsh-$(date +%F).error.log"
+```
+
+`RendererStartupFailure` naming `@norman-else/dsh-claude` means this package.
+Without it, the fault is elsewhere and disabling the plugin will not help.
+
+**Roll the checkout back.** The profile links the plugin as
+`link:K:/PersonalWorkspace/dsh-claude`, so the running plugin *is* the working
+tree — reverting the code reverts the plugin, with no DSH configuration
+touched:
+
+```bash
+git checkout <last-known-good> && pnpm build
+```
+
+Restart Desktop. This is the fastest route and the one to try first.
+
+**If that is not enough, unmount the plugin entirely.** Both edits are plain
+config and fully reversible:
+
+1. In `~/.dsh/profiles/desktop/package.json`, drop `"@norman-else/dsh-claude"`
+   from `dsh.profile.bundles`. That list is what mounts bundles — `cordis.yml`
+   can be empty while the plugin still loads.
+2. Rename `~/.dsh/.agent-presets/claude/` aside. Its `agent.cordis.yml` names
+   `@norman-else/dsh-claude/preset-route`, which stops resolving once the
+   profile no longer carries the package, and could become a fresh startup
+   failure of its own.
+
+Restart, debug with the plugin disabled, then restore both.
+
+Two honesty notes. Whether `RendererStartupFailure` is actually fatal was never
+confirmed — `app.asar` was not unpacked to read the throw path, and during the
+2.0 migration the window still opened while the renderer boot failed. And the
+unmount procedure is derived from the profile layout rather than tested. The
+rollback above is the verified path.
+
 ## 1. Let the plugin report first
 
 Start Desktop, run one turn in a Claude session, then read the Host log:
