@@ -79,4 +79,4 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Diff viewer and review comments** — Provides an expandable or maximized branch diff, including file statistics and line-level review comments that are attached to the next Claude message.
 - **Commit, push, and pull request actions** — Supports Commit, Commit & Push, Push, and draft pull request creation, with repository snapshot validation and optional Claude-generated commit messages.
 - **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, worktree branch prefix, process limits, authentication and handshake status, and safe npm update checks.
-- **Managed preset compatibility** — Installs an idempotent compatibility copy of the Claude preset for supported DSH builds without overwriting user-modified preset content.
+- **Managed preset compatibility** — Installs a guarded Claude preset whose route reuses the active profile package source, preserving discovery on DSH Desktop 2.0.4 without duplicate client-module Loaders or overwriting user changes.

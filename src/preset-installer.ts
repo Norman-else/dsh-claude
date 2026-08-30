@@ -7,11 +7,10 @@ import { CLAUDE_CODE_PRESET_ID } from './constants.ts'
 
 export const MANAGED_PRESET_FILES = ['agent.cordis.yml', 'preset.yml'] as const
 
-/** Package specifier kept in the shipped template. DSH Desktop's resolver hook
- *  only rewrites bare specifiers issued by the root include; preset subtrees
- *  resolve through Node's internal loader with an unrelated base and cannot
- *  find linked packages. The installer therefore substitutes the absolute
- *  built entry path, which the preset tree imports directly as a file URL. */
+/** Package specifier kept in the installed template. DSH Desktop 2.0.4 resolves
+ * it through the active profile package factory, so the preset route and client
+ * module share one Loader source. An absolute built entry would register a
+ * second source and make the Desktop renderer reject the plugin graph. */
 const PRESET_ROUTE_PACKAGE_SPECIFIER = '@norman-else/dsh-claude/preset-route'
 
 export class ManagedPresetConflictError extends Error {
@@ -50,7 +49,6 @@ interface ManagedContent {
 }
 
 async function managedContents(paths: ManagedPresetPaths): Promise<ManagedContent[]> {
-  const routeEntry = join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')
   return await Promise.all(MANAGED_PRESET_FILES.map(async (file): Promise<ManagedContent> => {
     const source = await readFile(join(paths.sourceDir, file), 'utf8')
     const nameRow = `name: '${PRESET_ROUTE_PACKAGE_SPECIFIER}'`
@@ -60,16 +58,14 @@ async function managedContents(paths: ManagedPresetPaths): Promise<ManagedConten
     }
     return {
       file,
-      content: source.replace(nameRow, `name: '${routeEntry}'`),
-      legacy: [source],
-      // Any earlier installer generation wrote this same entry id with the
-      // route reference in either supported form (bare package specifier or
-      // absolute built-module path); treat those as safe to upgrade regardless
-      // of comment or field drift in the template.
+      content: source,
+      legacy: [],
+      // Earlier installers wrote either an unquoted specifier or an absolute
+      // built-module path. Both are installer-owned and safe to converge to the
+      // single profile package source used by Desktop 2.0.4.
       isLegacy: current =>
         current.includes('id: claude-code-route')
-        && (current.includes(nameRow)
-          || current.includes(legacyNameRow)
+        && (current.includes(legacyNameRow)
           || current.includes('lib/preset-route.mjs')),
     }
   }))

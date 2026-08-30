@@ -16,7 +16,7 @@ Stop if Doctor cannot find an authenticated local Claude Code installation. Do n
 
 ## 2. Link the bundle into the current Web profile
 
-The bundle retains its package-contained system preset and installs a protected compatibility copy at `$DSH_HOME/.agent-presets/claude` during Host activation. This works around supported DSH release-candidate builds replacing third-party preset roots. Existing user-modified files are preserved rather than overwritten.
+The bundle keeps a protected compatibility preset at `$DSH_HOME/.agent-presets/claude`, because DSH Desktop 2.0.4 does not retain third-party preset roots from bundle patches. Its route uses the active profile package source to avoid duplicate client-module Loaders. User-modified preset files are preserved.
 
 ```sh
 dsh plugin --profile web add "link:$(pwd)"

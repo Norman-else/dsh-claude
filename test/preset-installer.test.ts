@@ -67,12 +67,12 @@ describe('managed Agent Preset installation', () => {
     await expect(readFile(join(paths.targetDir, 'preset.yml'), 'utf8')).resolves.toBe('name: My Customized Claude\n')
   })
 
-  it('writes the route entry as an absolute built-module path', async () => {
+  it('keeps the route on the active profile package source', async () => {
     const paths = await fixture()
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const installed = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
-    expect(installed).toContain(`name: '${join(paths.sourceDir, '..', 'lib', 'preset-route.mjs')}'`)
-    expect(installed).not.toContain("name: '@norman-else/dsh-claude/preset-route'")
+    expect(installed).toContain("name: '@norman-else/dsh-claude/preset-route'")
+    expect(installed).not.toContain('lib/preset-route.mjs')
   })
 
   it('upgrades legacy bare-specifier content left by older installers', async () => {
@@ -83,9 +83,8 @@ describe('managed Agent Preset installation', () => {
     await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
     await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
     const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
-    expect(upgraded).toContain('lib')
-    expect(upgraded).not.toContain('name: @norman-else/dsh-claude/preset-route')
-    expect(upgraded).toContain("name: '")
+    expect(upgraded).toContain("name: '@norman-else/dsh-claude/preset-route'")
+    expect(upgraded).not.toContain('lib/preset-route.mjs')
     await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
   })
 
