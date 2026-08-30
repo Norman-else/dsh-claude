@@ -1,0 +1,140 @@
+name: Feature
+description: Behavior that does not exist yet
+title: "[feature] "
+labels:
+  - feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read **§4.2 Required flow** and **§4.3 What the issue must contain** in the [README](https://github.com/Norman-else/dsh-claude#4-contributing) before filing.
+
+        A pull request opened without an accepted issue behind it is closed unreviewed. Wait for this issue to be accepted before you start implementing.
+
+        **Never paste Claude credentials, API keys, session tokens, private repository contents, or customer data** into this form, its attachments, or its screenshots.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: This is new behavior, not existing behavior that is wrong. (If something works incorrectly today, file a Fix instead.)
+          required: true
+        - label: I understand that work started before this issue is accepted may not be mergeable.
+          required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What can a DSH user not do today, and why is the current workaround not good enough?
+      placeholder: |
+        Today I have to ...
+        That is not good enough because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: Proposed behavior
+      description: What should happen, described from the user's side rather than as an implementation sketch.
+      placeholder: |
+        When I ..., the plugin should ...
+        The result appears in ... and looks like ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Which part of the DSH UI this belongs to. Select all that apply.
+      multiple: true
+      options:
+        - Composer and message submission
+        - Hero repository controls (branch, worktree, repository status)
+        - Diff viewer and review comments
+        - Commit, push, and pull request actions
+        - Activity timeline
+        - Background task tracking
+        - Settings panel and Doctor
+        - Agent Preset and model selection
+        - Permissions and question forms
+        - Managed preset install and removal
+        - CLI (dsh-claude bin)
+        - Documentation
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: What this explicitly does not cover, so a pull request can be reviewed against a fixed boundary.
+      placeholder: |
+        In scope: ...
+        Out of scope: ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Affected layer
+      description: Select all that apply.
+      multiple: true
+      options:
+        - Plugin server (src/)
+        - Client (src/client/)
+        - Managed preset (preset/)
+        - Docs (README, INSTALL, docs/)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: The DSH Desktop version and DSH package line this targets, and the Claude Code CLI version it relies on. Say so if it depends on a Claude Code capability older CLI versions do not have.
+      placeholder: |
+        DSH Desktop: 2.0.4
+        DSH package line: 0.1.1-rc.2
+        Claude Code CLI: 2.x.x
+        Depends on a newer Claude Code capability: yes / no — which one:
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include "do nothing", and say why each was rejected.
+      placeholder: |
+        Do nothing: ...
+        Alternative A: ... rejected because ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: intent
+    attributes:
+      label: Do you intend to implement this?
+      options:
+        - "Yes, I want to open the pull request"
+        - "No, I am reporting it for someone else to pick up"
+        - "Not sure yet"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I have not included credentials, tokens, private repository contents, or customer data anywhere in this issue, including screenshots.
+          required: true

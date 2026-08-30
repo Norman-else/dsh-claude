@@ -1,0 +1,125 @@
+name: Fix
+description: Existing behavior that is wrong
+title: "[fix] "
+labels:
+  - fix
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read **§4.2 Required flow** and **§4.3 What the issue must contain** in the [README](https://github.com/Norman-else/dsh-claude#4-contributing) before filing.
+
+        A pull request opened without an accepted issue behind it is closed unreviewed. Wait for this issue to be accepted before you start implementing — several things that look like plugin bugs are DSH Host or Claude Code CLI behavior.
+
+        **Never paste Claude credentials, API keys, session tokens, private repository contents, or customer data** into this form, its log excerpts, its attachments, or its screenshots. Redact before you post.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: This is behavior that exists today and is wrong, not behavior that does not exist yet. (If it is missing entirely, file a Feature instead.)
+          required: true
+        - label: I confirmed this is the plugin's behavior and not the Claude Code CLI's own agent loop, tools, or authentication.
+          required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened. One statement, separate from what actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. One statement, separate from what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Numbered, minimal, and starting from a clean state.
+      placeholder: |
+        1. Start DSH Desktop with a fresh profile and add the plugin
+        2. Create a conversation and select the Claude preset
+        3. ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it reproduce?
+      options:
+        - Every time
+        - Intermittently
+        - Happened once and I could not reproduce it
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Fill in every line. The plugin version is the `version` field in `package.json`, or the version DSH shows for the installed package.
+      value: |
+        Plugin version:
+        DSH Desktop version:
+        DSH package line:
+        Claude Code CLI version:
+        Operating system:
+        Node.js version (source installs only):
+        Installed from: npm / source checkout
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        Redacted log lines, activity-timeline excerpt, or screenshot. Boot and slot failures surface in the DSH log as `dsh-claude client [boot-check]` and `[slot-entry-crashed]` — include those lines when the plugin fails to load. Wrap logs in a fenced code block.
+      placeholder: |
+        ```
+        dsh-claude client [boot-check] ...
+        ```
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Affected layer
+      description: Select all that apply. Choose "Not sure" if you cannot tell.
+      multiple: true
+      options:
+        - Plugin server (src/)
+        - Client (src/client/)
+        - Managed preset (preset/)
+        - Docs (README, INSTALL, docs/)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: regression
+    attributes:
+      label: Regression range
+      description: The last plugin or DSH Desktop version where this worked, if you know it. Leave blank if you do not.
+      placeholder: "Worked on plugin 0.1.30 / DSH Desktop 2.0.3, broke on 0.1.31"
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I have not included credentials, tokens, private repository contents, or customer data anywhere in this issue, including log excerpts and screenshots.
+          required: true

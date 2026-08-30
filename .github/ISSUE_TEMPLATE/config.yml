@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Not sure whether it is a feature or a fix
+    url: https://github.com/Norman-else/dsh-claude/issues/new?labels=question&title=%5Bquestion%5D+
+    about: Open a question issue instead and let the maintainer classify it. Do not guess a type just to get past the form.
+  - name: Claude Code CLI behavior
+    url: https://github.com/anthropics/claude-code/issues
+    about: Claude Code owns its own agent loop, tools, settings, and authentication. Report those upstream, not here.
