@@ -62,7 +62,7 @@ export function presetDisplayText(row: AgentPresetRow | undefined, presetId: str
 
 /** The roster read, published as a snapshot source. */
 export interface AgentPresetRosterApi {
-  list(payload: Record<string, never>): Promise<{ result: { ok: true; value: { presets: readonly AgentPresetRow[] } } | { ok: false } }>
+  list(): Promise<{ ok: true; value: { presets: readonly AgentPresetRow[] } } | { ok: false }>
 }
 
 export class AgentPresetRoster {
@@ -82,9 +82,9 @@ export class AgentPresetRoster {
     if (this.#inflight !== undefined) return
     this.#inflight = (async () => {
       try {
-        const response = await this.#api.list({})
-        if (!response.result.ok) return
-        this.#rows = response.result.value.presets
+        const response = await this.#api.list()
+        if (!response.ok) return
+        this.#rows = response.value.presets
         for (const listener of this.#listeners) listener()
       } catch {
         // A roster that never arrives is a naming downgrade, not an error the

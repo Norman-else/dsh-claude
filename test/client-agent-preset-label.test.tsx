@@ -95,7 +95,7 @@ describe('Claude agent preset label', () => {
 
 describe('agent preset roster', () => {
   it('publishes the rows a successful read returned', async () => {
-    const list = vi.fn().mockResolvedValue({ result: { ok: true, value: { presets: [{ id: 'claude', trust: 'system' }] } } })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { presets: [{ id: 'claude', trust: 'system' }] } })
     const roster = new AgentPresetRoster({ list })
     const listener = vi.fn()
     roster.subscribe(listener)
@@ -117,7 +117,7 @@ describe('agent preset roster', () => {
   })
 
   it('shares one in-flight read across concurrent callers', () => {
-    const list = vi.fn().mockResolvedValue({ result: { ok: true, value: { presets: [] } } })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { presets: [] } })
     const roster = new AgentPresetRoster({ list })
 
     roster.load()

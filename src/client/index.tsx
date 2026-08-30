@@ -19,7 +19,9 @@ import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
-import { ClaudeRewind, type ClaudeChatSource, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
+import { CLAUDE_REQUIRED_CSS_VARIABLES, claudeBootCheckFindings } from './boot-check.ts'
+import { createClaudeDiagnosticsReporter } from './client-diagnostics.ts'
+import { ClaudeRewind, EMPTY_CHAT_VIEW, type ClaudeChatSource, type ClaudeChatView, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
 import { ClaudeSessionMenu, type ClaudeSessionMenuInjected } from './ClaudeSessionMenu.tsx'
@@ -47,6 +49,32 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 interface LayoutFace {
   openDetails(): void
   closeDetails(): void
+}
+
+interface UiSessionFace {
+  provide(descriptor: {
+    hooks: string[]
+    resolve(binding: { sessionId: string }): { hooks: { claudeProjection: ClaudeProjectionSource } }
+  }): () => void
+}
+
+interface UiConversationFace {
+  events: {
+    register(definition: unknown): () => void
+  }
+  /** Throws for a session the Controller does not hold, so callers must guard. */
+  binding(sessionId: string): {
+    target(target: string): { subscribe(listener: () => void): () => void; getSnapshot(): unknown }
+  }
+}
+
+interface AgentPresetRemote {
+  list(): Promise<{ ok: true; value: { presets: readonly import('./agent-preset-roster.ts').AgentPresetRow[] } } | { ok: false }>
+  select(sessionId: string, agentPreset: string): Promise<{ ok: true; value: string } | { ok: false; error: { message: string } }>
+}
+
+interface RemoteFace {
+  agentPresets: AgentPresetRemote
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -79,10 +107,23 @@ function MaximizedDiff({
 }
 
 export const name = 'dsh-claude-client'
-export const inject = ['slots', 'locale', 'conversationEvents', 'sessions', 'workspaces', 'inputTriggers', 'conversation', 'connection']
+export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection']
 
 export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
+  const diagnostics = createClaudeDiagnosticsReporter()
+  // Assert the Host still matches this package's assumptions. The Desktop build
+  // ships no type declarations, so tsc validates against whatever @deepseek-ai/*
+  // happens to be installed rather than the Host this runs inside; drift is
+  // invisible until a feature silently stops appearing.
+  for (const finding of claudeBootCheckFindings({
+    services: inject,
+    resolve: name => ctx.get(name),
+    cssVariables: CLAUDE_REQUIRED_CSS_VARIABLES,
+    readCssVariable: name => (typeof document === 'undefined'
+      ? 'skipped'
+      : getComputedStyle(document.documentElement).getPropertyValue(name)),
+  })) diagnostics.report('boot-check', finding)
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
@@ -92,6 +133,7 @@ export function apply(ctx: ClientContext): void {
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   const conversation = ctx.get('conversation') as IConversation | undefined
   const connection = ctx.get('connection') as ConnectionHandle | undefined
+  const remote = ctx.get('remote') as RemoteFace | undefined
   /** Composer submit hook shared by the repository feedback affordances.
    *  'append' keeps any user draft and adds the prompt below it; 'idle'
    *  submits only when the composer is empty and reports false otherwise. */
@@ -109,16 +151,23 @@ export function apply(ctx: ClientContext): void {
       return true
     }
   }
-  if (sessions !== undefined) {
-    ctx.effect(() => sessions.provide({
+  const uiSession = ctx.get('uiSession') as UiSessionFace | undefined
+  if (uiSession !== undefined) {
+    ctx.effect(() => uiSession.provide({
       hooks: ['claudeProjection'],
       resolve: binding => ({ hooks: { claudeProjection: projections.source(binding.sessionId) } }),
     }), 'dsh-claude: sidecar projection provider')
   }
   ctx.effect(() => () => projections.dispose(), 'dsh-claude: sidecar projection lifecycle')
-  ctx.effect(() => ctx.conversationEvents.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
-  ctx.effect(() => ctx.conversationEvents.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
-  ctx.effect(() => ctx.conversationEvents.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
+  // Desktop 2.0 publishes the target-neutral Conversation registry through
+  // uiConversation. Registering against the removed conversationEvents service
+  // never fires, leaving a live sidecar projection with no custom Chat nodes.
+  const uiConversation = ctx.get('uiConversation') as UiConversationFace | undefined
+  if (uiConversation !== undefined) {
+    ctx.effect(() => uiConversation.events.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
+    ctx.effect(() => uiConversation.events.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
+    ctx.effect(() => uiConversation.events.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
+  }
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-activity-step',
@@ -151,9 +200,19 @@ export function apply(ctx: ClientContext): void {
     diffOpen.close()
     layout?.closeDetails()
   }
-  ctx.effect(() => ctx.slots.onEntryError((key, entry) => {
+  // Every Slot entry crash, not just the one this package knows how to recover.
+  // The Host catches these and drops the entry, so an untold crash reads as
+  // "the feature quietly vanished" — which is how each Desktop 2.0 breakage in
+  // this package presented, with a clean Host log and a healthy boot report.
+  ctx.effect(() => ctx.slots.onEntryError((key, entry, error) => {
+    const id = entry.options.id === undefined ? '' : ` id="${String(entry.options.id)}"`
+    const message = error instanceof Error
+      ? `${error.message}
+${error.stack ?? ''}`
+      : String(error)
+    diagnostics.report('slot-entry-crashed', `slot "${key}"${id}: ${message}`)
     if (key === 'shell.overlay' && entry.options.id === 'claude-diff-overlay') restoreDiff()
-  }), 'dsh-claude: diff overlay recovery')
+  }), 'dsh-claude: Slot entry failure reporting')
   const openTasksPanel = (sessionId: string, turn: number): void => {
     closePluginDetails()
     try {
@@ -294,8 +353,8 @@ export function apply(ctx: ClientContext): void {
   // its own mark instead of the generic preset glyph. Everything else is
   // reproduced, because this entry renders in every Session, not only
   // plugin-owned ones.
-  if (connection !== undefined) {
-    const roster = new AgentPresetRoster(connection.api.agentPresets as unknown as AgentPresetRosterApi)
+  if (remote !== undefined) {
+    const roster = new AgentPresetRoster(remote.agentPresets as AgentPresetRosterApi)
     const hostT = ctx.locale.bind('settings.agentPreset')
     ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
       name: 'conversation.session.header.actions',
@@ -405,6 +464,54 @@ export function apply(ctx: ClientContext): void {
       },
     })}
   />))
+  /** Compose the chat view the rewind control reads.
+   *
+   *  Desktop 2.0 split what used to be one Session snapshot: the Controller's
+   *  `binding.session` kept `running`, while the assembled Chat nodes moved to
+   *  the Conversation binding's 'chat' target. Reading the old combined shape
+   *  threw on `snapshot.chat.order` and took the whole overlay entry down. */
+  const chatSourceCache = new Map<string, ClaudeChatSource>()
+  const claudeChatSource = (sessionId: string): ClaudeChatSource | undefined => {
+    const cached = chatSourceCache.get(sessionId)
+    if (cached !== undefined) return cached
+    if (sessions === undefined || uiConversation === undefined) return undefined
+    const session = sessions.binding(sessionId as SessionId)?.session as unknown as {
+      subscribe(listener: () => void): () => void
+      getSnapshot(): { running?: boolean }
+    } | undefined
+    if (session === undefined) return undefined
+    let chatTarget
+    try {
+      chatTarget = uiConversation.binding(sessionId).target('chat')
+    } catch {
+      return undefined
+    }
+    // useSyncExternalStore compares by identity, so the composed view must stay
+    // the same object until one of its two inputs actually moves.
+    let lastChat: unknown
+    let lastRunning: boolean | undefined
+    let view: ClaudeChatView = EMPTY_CHAT_VIEW
+    const source: ClaudeChatSource = {
+      subscribe(listener) {
+        const dropChat = chatTarget.subscribe(listener)
+        const dropSession = session.subscribe(listener)
+        return () => { dropChat(); dropSession() }
+      },
+      getSnapshot() {
+        const chat = chatTarget.getSnapshot()
+        const running = session.getSnapshot().running === true
+        if (chat === lastChat && running === lastRunning) return view
+        lastChat = chat
+        lastRunning = running
+        view = chat === undefined
+          ? EMPTY_CHAT_VIEW
+          : { chat: chat as ClaudeChatView['chat'], running }
+        return view
+      },
+    }
+    chatSourceCache.set(sessionId, source)
+    return source
+  }
   // "Rewind to here" beside the copy action of every user message. Root
   // scoped like the selection toolbar: it resolves the on-screen session
   // itself and only arms inside sessions this plugin owns.
@@ -415,7 +522,7 @@ export function apply(ctx: ClientContext): void {
       t,
       currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
       subscribeSessions: listener => sessions.list.subscribe(listener),
-      chatOf: sessionId => sessions.binding(sessionId as SessionId)?.session as unknown as ClaudeChatSource | undefined,
+      chatOf: sessionId => claudeChatSource(sessionId),
       projectionOf: sessionId => projections.source(sessionId),
       ...(conversation === undefined ? {} : {
         setDraft: (sessionId: string, text: string) => {
@@ -454,7 +561,7 @@ export function apply(ctx: ClientContext): void {
       },
     }, ClaudeQueueDock))
   }
-  if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined) {
+  if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
     /** Attach a prepared worktree to its session without blocking the flow. */
     const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
       if (leaseId === undefined) return
@@ -500,9 +607,9 @@ export function apply(ctx: ClientContext): void {
           const targetSessionId = await workspaces.connectWorkspace(workspace.workspaceId)
           const targetScope = sessions.scope(targetSessionId)
           if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const presetResponse = await connection.api.agentPresets.select({ sessionId: targetSessionId, agentPreset: 'claude' })
-          if (!presetResponse.result.ok) throw new Error(presetResponse.result.error.message)
-          sessions.noteAgentPreset(targetSessionId, presetResponse.result.value.agentPreset)
+          const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+          if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+          sessions.noteAgentPreset(targetSessionId, presetResponse.value)
           const targetInput = conversation.input.for(targetScope)
           onProgress('transferring-draft')
           if (imageIds.length > 0 && !targetInput.addImages(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
@@ -542,9 +649,9 @@ export function apply(ctx: ClientContext): void {
               const targetSessionId = await workspaces.connectWorkspace(workspace.workspaceId)
               const targetScope = sessions.scope(targetSessionId)
               if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-              const presetResponse = await connection.api.agentPresets.select({ sessionId: targetSessionId, agentPreset: 'claude' })
-              if (!presetResponse.result.ok) throw new Error(presetResponse.result.error.message)
-              sessions.noteAgentPreset(targetSessionId, presetResponse.result.value.agentPreset)
+              const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+              if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+              sessions.noteAgentPreset(targetSessionId, presetResponse.value)
               const targetInput = conversation.input.for(targetScope)
               report('transferring-draft')
               targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)

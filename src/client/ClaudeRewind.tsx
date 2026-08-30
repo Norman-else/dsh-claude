@@ -61,9 +61,9 @@ interface RewindTarget {
 }
 
 const EMPTY_RANGES: readonly ClaudeRewindRange[] = []
-const EMPTY_CHAT: ClaudeChatView = { chat: { order: [], nodes: { get: () => undefined } }, running: false }
+export const EMPTY_CHAT_VIEW: ClaudeChatView = { chat: { order: [], nodes: { get: () => undefined } }, running: false }
 const NO_SUBSCRIBE = (): (() => void) => () => {}
-const EMPTY_CHAT_SNAPSHOT = (): ClaudeChatView => EMPTY_CHAT
+const EMPTY_CHAT_SNAPSHOT = (): ClaudeChatView => EMPTY_CHAT_VIEW
 const EMPTY_PROJECTION_SNAPSHOT = (): ClaudeClientProjection => EMPTY_CLAUDE_PROJECTION
 
 /** Plain text of one user message node, matching what the copy action yields. */

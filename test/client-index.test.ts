@@ -26,6 +26,48 @@ describe('Claude client slot registration', () => {
     resizeLifecycle.dispose.mockClear()
   })
 
+  it('mounts the custom Claude definitions through the Desktop conversation service', () => {
+    const definitions: unknown[] = []
+    const dispose = (): void => {}
+    const uiConversation = {
+      events: {
+        register(definition: unknown) {
+          definitions.push(definition)
+          return dispose
+        },
+      },
+    }
+    const ctx = {
+      effect(register: () => unknown) {
+        register()
+      },
+      get(name: string) {
+        return name === 'uiConversation' ? uiConversation : undefined
+      },
+      inject() {
+        throw new Error('legacy conversationEvents injection must not be used')
+      },
+      locale: {
+        register: () => dispose,
+        bind: () => (key: string) => key,
+      },
+      inputTriggers: {
+        registerSource: () => dispose,
+      },
+      slots: {
+        onEntryError: () => dispose,
+        inject(_name: string, register: () => unknown) {
+          register()
+        },
+        register: () => dispose,
+      },
+    }
+
+    apply(ctx as never)
+
+    expect(definitions).toHaveLength(3)
+  })
+
   it('stacks the dock as comments, queue dock, then repository status', () => {
     const registrations: Array<{ readonly name: string; readonly id?: string; readonly order?: number }> = []
     const dispose = (): void => {}
@@ -45,6 +87,9 @@ describe('Claude client slot registration', () => {
       },
       conversationEvents: {
         register: () => dispose,
+      },
+      inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
+        callback(ctx)
       },
       slots: {
         onEntryError: () => dispose,
@@ -104,6 +149,9 @@ describe('Claude client slot registration', () => {
       conversationEvents: {
         register: () => dispose,
       },
+      inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
+        callback(ctx)
+      },
       slots: {
         onEntryError: () => dispose,
         inject(_name: string, register: () => unknown) {
@@ -157,6 +205,9 @@ describe('Claude client slot registration', () => {
       },
       conversationEvents: {
         register: () => dispose,
+      },
+      inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
+        callback(ctx)
       },
       slots: {
         onEntryError(callback: typeof reportEntryError) {

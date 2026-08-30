@@ -47,6 +47,68 @@ describe('published package contract', () => {
     expect(host).toContain('ctx.attachments')
   })
 
+  it('declares every required client service provider in the boot graph', async () => {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+      dsh: { client: { inject: string[] } }
+    }
+    const client = await readFile(join(root, 'src/client/index.tsx'), 'utf8')
+
+    expect(client).toContain("'connection'")
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-client-connection')
+    expect(client).toMatch(/export const inject = \[[^\]]*'uiConversation'/u)
+    expect(client).toContain("ctx.get('uiConversation')")
+    expect(client).not.toContain("['conversationEvents']")
+  })
+
+  it('uses the split Desktop client controllers instead of the removed runtime bundle', async () => {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+      dsh: { client: { inject: string[] } }
+    }
+
+    expect(packageJson.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-runtime')
+    expect(packageJson.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-ui-primitives')
+    expect(packageJson.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-ui-slots')
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-api-session-controller')
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-api-workspace-controller')
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-api-remotes')
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-session')
+  })
+
+  // dsh.client.inject is the client module graph's readiness declaration: every
+  // package owning a service this plugin injects, or a Slot it registers into,
+  // must be listed or the entry can apply before that owner mounts. Desktop's
+  // own client-ui-deliverables — the other 'conversation.chat.turnTail'
+  // occupant — declares exactly this pair alongside the conversation seats.
+  it('declares the owners of the chat Slots and the slots service', async () => {
+    const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+      dsh: { client: { inject: string[] } }
+    }
+    const client = await readFile(join(root, 'src/client/index.tsx'), 'utf8')
+
+    expect(client).toContain("slots.inject('conversation.chat.node'")
+    expect(client).toContain("slots.inject('conversation.chat.turnTail'")
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-chat')
+    expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-renderer')
+  })
+
+  // Renderer failures reach nobody on their own: the Host catches a crashed
+  // Slot entry, drops it, and still reports a healthy boot. Losing this wiring
+  // would return the plugin to failing invisibly, which is what made every
+  // Desktop 2.0 breakage here cost hours to find.
+  it('reports renderer failures and boot drift to the Host log', async () => {
+    const [client, host] = await Promise.all([
+      readFile(join(root, 'src/client/index.tsx'), 'utf8'),
+      readFile(join(root, 'src/index.ts'), 'utf8'),
+    ])
+
+    expect(client).toContain('createClaudeDiagnosticsReporter()')
+    expect(client).toContain('claudeBootCheckFindings(')
+    // Not just the diff overlay: onEntryError has to report before it recovers.
+    expect(client).toMatch(/onEntryError\(\(key, entry, error\)/u)
+    expect(client).toContain("diagnostics.report('slot-entry-crashed'")
+    expect(host).toContain('registerClaudeClientDiagnosticsRoute(webCtx)')
+  })
+
   it('uses the npm package name in the DSH host and browser bundles', async () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { name: string }
     const [patch, buildConfig] = await Promise.all([

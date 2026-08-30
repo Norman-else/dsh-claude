@@ -121,8 +121,21 @@ function OverviewAttention({ source, running, t }: {
 }
 
 export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStatus, sessions, workspaces, projectionFor }: ClaudePullRequestsPanelInjected) {
-  const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot, sessions.getSnapshot)
-  const workspaceStore = workspaces ?? NO_WORKSPACES
+  // Bound through closures: Desktop 2.0 hands both of these over as class
+  // instances whose readers touch `this` (the Workspace list rebuilds its
+  // cache inside getSnapshot), so a detached method reference throws.
+  const sessionStore = useMemo(() => ({
+    subscribe: (listener: () => void) => sessions.subscribe(listener),
+    getSnapshot: () => sessions.getSnapshot(),
+  }), [sessions])
+  const snapshot = useSyncExternalStore(sessionStore.subscribe, sessionStore.getSnapshot, sessionStore.getSnapshot)
+  const workspaceStore = useMemo(() => {
+    const source = workspaces ?? NO_WORKSPACES
+    return {
+      subscribe: (listener: () => void) => source.subscribe(listener),
+      getSnapshot: () => source.getSnapshot(),
+    }
+  }, [workspaces])
   const workspaceState = useSyncExternalStore(workspaceStore.subscribe, workspaceStore.getSnapshot, workspaceStore.getSnapshot)
   const rows = useMemo(() => claudeSessionRows(snapshot, workspaceState.archivedSessionIds ?? []), [snapshot, workspaceState])
   const cwdKey = useMemo(() => [...new Set(rows.map(row => row.cwd ?? ''))].sort().join('\0'), [rows])
