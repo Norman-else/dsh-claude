@@ -4,13 +4,13 @@ import {
   DisclosureRow,
   IconApiOutline14,
   IconThinkOutline14,
-  MarkdownText,
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
+import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
 import { selectStepActivities } from './projection.ts'
 import { formatTokenCount } from './token-format.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -367,11 +367,12 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
     () => transcriptItemsForStep(activities, marker.turn, marker.step, tasks),
     [activities, marker.step, marker.turn, tasks],
   )
+  const markdownLabels = useClaudeMarkdownLabels(t)
   if (items.length === 0) return null
   return (
     <div className="dsh-claude-flow">
       {items.map(item => item.kind === 'text'
-        ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><MarkdownText text={item.text} /></div>
+        ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><ClaudeMarkdown text={item.text} labels={markdownLabels} /></div>
         : item.kind === 'compaction'
         ? <ClaudeCompactionDivider key={`compaction:${item.ordinal}`} compaction={item.compaction} t={t} />
         : item.kind === 'tools'

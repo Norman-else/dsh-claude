@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MarkdownText, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { askAboutSelection, type AskProgress } from './ask-api.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
+import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
 import * as styles from './styles.ts'
 
 export interface ClaudeSelectionAskInjected {
@@ -162,6 +163,7 @@ function CheckIcon() {
 /** Selection toolbar over assistant replies: copy, or ask a follow-up whose
  *  answer streams into a popup rendered with the Host Markdown renderer. */
 export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertIntoChat }: ClaudeSelectionAskInjected) {
+  const markdownLabels = useClaudeMarkdownLabels(t)
   const [selection, setSelection] = useState<SelectionInfo>()
   const [open, setOpen] = useState(false)
   const [question, setQuestion] = useState('')
@@ -362,7 +364,7 @@ export function ClaudeSelectionAsk({ t, currentSessionId, ownsSession, insertInt
             )}
             {blocks.length === 0 && thinking.length === 0 && error === undefined ? <span style={styles.askStatus}>{started ? t('askThinking') : t('askStarting')}</span> : null}
             {blocks.map((block, index) => block.kind === 'text'
-              ? <MarkdownText key={`text-${index}`} text={block.text} streaming={phase === 'answering' && index === blocks.length - 1} />
+              ? <ClaudeMarkdown key={`text-${index}`} text={block.text} labels={markdownLabels} streaming={phase === 'answering' && index === blocks.length - 1} />
               : (
                 <div key={block.id} style={styles.askToolRow}>
                   <span style={{ ...styles.askToolGlyph, ...(block.state === 'error' ? styles.askToolGlyphError : block.state === 'done' ? styles.askToolGlyphDone : {}) }} aria-hidden="true">
