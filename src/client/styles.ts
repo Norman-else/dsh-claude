@@ -1197,9 +1197,14 @@ export const heroRepositoryError: CSSProperties = {
 
 /* Claude repository readout and details panel. */
 
+/* Track the Host composer card, which is now resizable: Desktop 2.0 drives it
+ * with `max-width: var(--dsh-composer-card-max-width)` and republishes that
+ * property as the divider moves. The old --dsh-conversation-composer-max-width
+ * is gone, and because a var() fallback cannot tell "absent" from "narrow",
+ * these bars silently froze at 782px instead of following the drag. */
 export const repositoryBarFrame: CSSProperties = {
   width: 'calc(100% - 64px)',
-  maxWidth: 'var(--dsh-conversation-composer-max-width, 782px)',
+  maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
   minWidth: 0,
   margin: '0 auto',
   boxSizing: 'border-box',
@@ -2540,7 +2545,7 @@ export const diffCommentError: CSSProperties = {
 
 export const reviewCommentBarFrame: CSSProperties = {
   width: 'calc(100% - 64px)',
-  maxWidth: 'var(--dsh-conversation-composer-max-width, 782px)',
+  maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
   margin: '0 auto',
   boxSizing: 'border-box',
 }

@@ -174,7 +174,9 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).toContain('+2')
     expect(statusMarkup).toContain('−1')
     expect(statusMarkup).toContain('width:calc(100% - 64px)')
-    expect(statusMarkup).toContain('max-width:var(--dsh-conversation-composer-max-width, 782px)')
+    // Desktop 2.0 renamed this and made the composer card resizable; the bar
+    // has to read the live property or it freezes at the fallback width.
+    expect(statusMarkup).toContain('max-width:var(--dsh-composer-card-max-width, 782px)')
     expect(statusMarkup).toContain('premier-store-os')
     expect(statusMarkup).not.toContain('Mercaso/premier-store-os</span>')
     expect(statusMarkup).toContain('margin:0 auto')
