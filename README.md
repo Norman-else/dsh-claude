@@ -66,19 +66,44 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 
 ## 3. Features
 
+### 3.1 Conversation
+
 - **Native Claude Code conversations** — Runs Claude Code as the main agent in a normal DSH conversation instead of wrapping it as a tool or secondary chat.
 - **Claude preset and model selection** — Adds a `Claude` Agent Preset and exposes Claude Code's `default`, `opus[1m]`, `fable`, `sonnet`, and `haiku` model choices.
 - **Local Claude environment compatibility** — Preserves the user's existing Claude Code authentication, settings, `CLAUDE.md`, Skills, Hooks, Plugins, tools, and MCP configuration.
 - **Real-time streaming and conversation continuity** — Streams Claude responses and tool activity into DSH while retaining multi-turn context and persisted Claude session resume.
 - **DSH permissions and questions** — Routes Claude tool permission requests through DSH approvals and Claude clarification prompts through DSH's native question forms.
-- **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, and handles Stop, cancellation, restart, and process-tree cleanup.
+- **Claude command bridge** — Publishes Claude Code's own command catalog into the DSH command palette, retrying with backoff while a fresh CLI finishes loading Skills and Plugins.
+- **Message queue and steering** — Accepts further messages while a turn is running, and lets a queued message be edited, removed, or steered into the turn already in flight.
+- **Rewind** — Drops a message and everything after it: Claude resumes from the kept turn's transcript anchor and genuinely forgets the discarded turns, the discarded rows are hidden from the append-only DSH log, and the original text returns to the composer for editing and resending.
+- **Ask about a selection** — Answers a question about any selected text through a read-only side query limited to `Read`, `Grep`, and `Glob`, reusing the session's model and thinking mode, with the answer copyable or sendable into the main conversation.
 - **Redacted activity timeline** — Displays thinking summaries, tool calls and results, permission events, questions, status changes, usage, errors, and subagent activity without persisting credentials.
 - **Background task tracking** — Shows running and completed Claude subagents or background tasks with task status, recent tools, and expandable activity.
+- **Context usage** — Tracks how much of the context window a session has consumed and surfaces it as a percentage in the conversation and on the session board.
+- **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, and handles Stop, cancellation, restart, and process-tree cleanup.
+- **Bilingual interface** — Ships every user-facing string in both English and Chinese.
+
+### 3.2 Repository, worktrees, and pull requests
+
 - **Repository and worktree preparation** — Lets a user choose a branch before submitting, switch an eligible local branch, or create a dedicated Git worktree and DSH workspace while transferring the current draft and attachments, and removes a worktree's directory automatically once its workspace is deleted and the tree is clean.
+- **Jira-driven sessions** — Connects to Jira Cloud and starts work from a ticket: the branch is named after the ticket key, the composer is seeded with the ticket brief, the ticket is assigned to the user once the worktree exists, and several tickets can be kicked off at once, each in its own worktree session.
 - **Repository and pull request status** — Shows the current repository, branch, worktree state, changed-line counts, unpushed commits, GitHub pull request, checks, review state, merge state, and blocking Claude rate limits near the composer.
-- **Diff viewer and review comments** — Provides an expandable or maximized branch diff, including file statistics and line-level review comments that are attached to the next Claude message.
-- **Commit, push, and pull request actions** — Supports Commit, Commit & Push, Push, and draft pull request creation, with repository snapshot validation and optional Claude-generated commit messages.
-- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, worktree branch prefix, process limits, authentication and handshake status, and safe npm update checks.
+- **Session board** — Summarizes every Claude session in one place with its run state, branch, pull request, context usage, auto-fix state, and whether it is waiting on an approval or an answer.
+- **Branch diff viewer** — Provides an expandable or maximized branch diff with file statistics, expand-all and collapse-all, on-demand unmodified context, and comment-to-comment navigation.
+- **Line-level review comments** — Records the user's own line or range comments against the diff and attaches them to the next Claude message.
+- **GitHub review threads** — Reads, replies to, resolves, and unresolves pull request review threads inline, with `@` completion for repository members, bot authors marked as such, and a link back to the thread on GitHub.
+- **Commit, push, merge, and pull request actions** — Supports Commit, Commit & Push, Push, draft pull request creation, and merging a pull request as a merge commit, squash, or rebase, with repository snapshot validation and optional Claude-generated commit messages.
+- **Branch updates** — Updates the current branch from its base by rebase (pushed with `--force-with-lease`) or merge, and hands any resulting conflicts to Claude to resolve.
+- **Pull request feedback handoff** — Expands failing check details and GitHub pull request comments and hands either of them to Claude as a fix request.
+- **Auto fix** — Watches an open pull request for new review comments and failing checks, hands each new batch to Claude to fix, commit, and push, and keeps going until everything passes or the watcher is switched off.
+- **Merged branch cleanup** — Removes the worktree and local branch, archives the workspace's sessions, and deletes the workspace; a plain checkout instead returns to the base branch and deletes the merged branch.
+- **Open in an editor** — Opens the session's working directory in Cursor or IntelliJ IDEA from the session menu, trying each platform's launchers in turn and refusing paths the shell would re-interpret.
+
+### 3.3 Diagnostics, settings, and updates
+
+- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, output style, worktree branch prefix, process limits, and authentication and handshake status.
+- **Plan usage** — Reports the signed-in subscription's utilization windows — five-hour, weekly across all models, and weekly per model — with reset countdowns, degrading to unavailable rather than failing on API-key, Bedrock, and Vertex sessions.
+- **Plugin updates** — Checks npm for new releases and updates in place, only when the installation is uniquely identified; local development links are never replaced.
 - **Managed preset compatibility** — Installs a guarded Claude preset whose route reuses the active profile package source, preserving discovery on DSH Desktop 2.0.4 without duplicate client-module Loaders or overwriting user changes.
 
 ## 4. Contributing
