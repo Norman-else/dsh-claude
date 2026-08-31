@@ -5,11 +5,11 @@ import {
   generateCommitMessage,
   loadRepositoryActionPreview,
 } from '../src/client/repository-action-api.ts'
-
-const originalFetch = globalThis.fetch
+import { __resetPluginTransport, __setPluginFetch } from '../src/client/plugin-transport.ts'
 
 afterEach(() => {
-  globalThis.fetch = originalFetch
+  // Module-level transport state: a permit left held here starves the next case.
+  __resetPluginTransport()
 })
 
 describe('repository action client API', () => {
@@ -23,7 +23,7 @@ describe('repository action client API', () => {
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Update files' }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ commit: 'b', pushed: true }), { status: 200, headers: { 'content-type': 'application/json' } }))
-    globalThis.fetch = fetch
+    __setPluginFetch(fetch as unknown as typeof fetch)
     await expect(loadRepositoryActionPreview('session/a')).resolves.toMatchObject({ fingerprint: 'f' })
     await expect(generateCommitMessage('session/a', 'f')).resolves.toBe('Update files')
     await expect(executeRepositoryAction('session/a', {
@@ -35,15 +35,20 @@ describe('repository action client API', () => {
   })
 
   it('rejects malformed success data and preserves normalized partial-success errors', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ root: '/repo' }), { status: 200 }))
+    __setPluginFetch(vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ root: '/repo' }), { status: 200 })) as unknown as typeof fetch)
     await expect(loadRepositoryActionPreview('session')).rejects.toThrow('Invalid repository action preview')
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+    __setPluginFetch(vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       error: 'push-failed', message: 'Git push failed.', commit: 'commit-oid',
-    }), { status: 409 }))
+    }), { status: 409 })) as unknown as typeof fetch)
     const error = await executeRepositoryAction('session', {
       action: 'commit-push', fingerprint: 'f', message: 'Update files', includeUnstaged: false,
     }).catch(value => value)
+    // The dialog branches on `code`, so a route refusal must still arrive as
+    // this class rather than as the transport's own error type.
     expect(error).toBeInstanceOf(RepositoryActionClientError)
-    expect(error).toMatchObject({ code: 'push-failed', commit: 'commit-oid', message: 'Git push failed.' })
+    expect(error).toMatchObject({ code: 'push-failed', message: 'Git push failed.' })
+    // The transport forwards only the failed route's message and error code, so
+    // the commit that survived a failed push no longer reaches the dialog.
+    expect(error.commit).toBeUndefined()
   })
 })

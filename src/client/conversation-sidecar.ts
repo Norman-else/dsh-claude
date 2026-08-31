@@ -302,7 +302,7 @@ function toolDescription(toolName: string, input: Record<string, unknown> | unde
     case 'WebFetch': {
       const url = inputString(input, 'url') ?? 'a web page'
       completed = `Fetched ${url}`
-      failedAction = `fetch ${url}`
+      failedAction = `load ${url}`
       break
     }
     case 'WebSearch':

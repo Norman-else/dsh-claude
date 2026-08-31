@@ -275,10 +275,13 @@ export class RepositoryStatusService {
     this.#cacheTtlMs = cacheTtlMs
   }
 
-  inspect(cwd: string): Promise<RepositoryStatus> {
+  /** `signal` bounds the scan itself, not just the caller's patience: the
+   *  untracked-file diff below is a serial spawn loop that can outlive any
+   *  route budget, and work nobody is waiting for still occupies the process. */
+  inspect(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
     const current = this.#cache.get(cwd)
     if (current !== undefined && current.expiresAt > Date.now()) return current.value
-    const value = this.#inspect(cwd).then(next => this.#stabilize(cwd, next))
+    const value = this.#inspect(cwd, signal).then(next => this.#stabilize(cwd, next))
     this.#cache.set(cwd, { expiresAt: Date.now() + this.#cacheTtlMs, value })
     void value.catch(() => this.#cache.delete(cwd))
     return value
@@ -344,7 +347,7 @@ export class RepositoryStatusService {
     return this.#ghExecutable
   }
 
-  async #inspect(cwd: string): Promise<RepositoryStatus> {
+  async #inspect(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
     const safeCwd = bounded(cwd)
     let git: string
     try {
@@ -374,7 +377,7 @@ export class RepositoryStatusService {
         ? 'HEAD'
         : await this.#mergeBase(cwd, git, pullRequest.baseBranch) ?? 'HEAD'
       const diff = status.dirty || diffBase !== 'HEAD'
-        ? await this.#diff(cwd, git, diffBase)
+        ? await this.#diff(cwd, git, diffBase, signal)
         : { additions: 0, deletions: 0, files: 0, truncated: false }
       const baseBehind = pullRequest?.state === 'open' && pullRequest.baseBranch !== undefined
         ? await this.#baseBehind(cwd, git, pullRequest.baseBranch)
@@ -417,14 +420,14 @@ export class RepositoryStatusService {
     }
   }
 
-  async #diff(cwd: string, git: string, base: string): Promise<RepositoryDiffStatus | undefined> {
+  async #diff(cwd: string, git: string, base: string, signal?: AbortSignal): Promise<RepositoryDiffStatus | undefined> {
     try {
       const numstat = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--numstat', base, '--'], cwd, GIT_TIMEOUT_MS)
       if (numstat.exitCode !== 0 || numstat.lossy) return undefined
       const summary = parseDiffNumstat(numstat.stdout)
       const patch = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
       if (patch.exitCode !== 0) return { ...summary, truncated: true }
-      const untracked = await this.#untrackedDiff(cwd, git)
+      const untracked = await this.#untrackedDiff(cwd, git, signal)
       const combinedPatch = `${patch.stdout}${untracked.patch}`
       return {
         additions: summary.additions + untracked.additions,
@@ -438,7 +441,7 @@ export class RepositoryStatusService {
     }
   }
 
-  async #untrackedDiff(cwd: string, git: string): Promise<{ additions: number; files: number; patch: string; truncated: boolean }> {
+  async #untrackedDiff(cwd: string, git: string, signal?: AbortSignal): Promise<{ additions: number; files: number; patch: string; truncated: boolean }> {
     const listed = await run(this.#runtime, git, ['ls-files', '--others', '--exclude-standard', '-z'], cwd, GIT_TIMEOUT_MS)
     if (listed.exitCode !== 0 || listed.lossy) return { additions: 0, files: 0, patch: '', truncated: listed.lossy }
     const paths = listed.stdout.split('\0').filter(path => path.length > 0)
@@ -446,6 +449,8 @@ export class RepositoryStatusService {
     let patch = ''
     let truncated = paths.length > MAX_UNTRACKED_DIFFS
     for (const path of paths.slice(0, MAX_UNTRACKED_DIFFS)) {
+      // The caller is gone or the route budget elapsed: stop spawning.
+      if (signal?.aborted === true) return { additions, files: paths.length, patch, truncated: true }
       const result = await run(this.#runtime, git, [
         'diff', '--no-ext-diff', '--no-color', '--unified=3', '--numstat', '--patch', '--no-index', '--', '/dev/null', path,
       ], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)

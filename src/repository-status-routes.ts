@@ -2,29 +2,35 @@ import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REPOSITORY_STATUS_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute } from './http.ts'
 import type { RepositoryStatusService } from './repository-status.ts'
 
 const MAX_PATH_CHARS = 4_096
 
 /** Read-only repository status for an arbitrary directory (the overview panel
- *  aggregates every Claude session's checkout through this). */
+ *  aggregates every Claude session's checkout through this).
+ *
+ *  The route signal is threaded into the service because this is the one read
+ *  the overview polls per distinct checkout every 30 seconds: freeing the
+ *  socket at the budget while the Host kept scanning would just grow a queue
+ *  of work nobody is waiting for any more. */
 export function registerRepositoryStatusRoute(ctx: Context, service: RepositoryStatusService): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'exact',
     path: CLAUDE_REPOSITORY_STATUS_PATH,
-    handler: async (req, res) => {
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-      const cwd = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cwd')
+    methods: ['GET'],
+    budget: 'git',
+    handler: async io => {
+      const cwd = io.url.searchParams.get('cwd')
       if (cwd === null || cwd.length === 0 || cwd.length > MAX_PATH_CHARS || !isAbsolute(cwd) || cwd.includes('\0')) {
-        return json(res, 400, { error: 'invalid-request', message: 'The cwd query parameter is invalid.' })
+        return { status: 400, value: { error: 'invalid-request', message: 'The cwd query parameter is invalid.' } }
       }
       try {
-        return json(res, 200, await service.inspect(cwd))
+        return { status: 200, value: await service.inspect(cwd, io.signal) }
       } catch {
-        return json(res, 500, { error: 'repository-status-unavailable', message: 'Repository status is unavailable.' })
+        return { status: 500, value: { error: 'repository-status-unavailable', message: 'Repository status is unavailable.' } }
       }
     },
-  }), 'dsh-claude: repository status route')
+  })
 }

@@ -2,7 +2,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { ServerResponse } from 'node:http'
 import { CLAUDE_PROJECTION_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginRouteIo } from './http.ts'
+import { MAX_MULTIPLEX_SESSIONS } from './plugin-budget.ts'
 import type { ClaudeSidecarProjection, ClaudeSidecarRepository } from './sidecar.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
 import type { RepositoryStatus } from './repository-status.ts'
@@ -12,24 +13,34 @@ const MAX_SESSION_ID_CHARS = 1_024
 /** Slow-moving metadata refresh and stream heartbeat cadence; deliberately off
  *  the transcript hot path so git/gh latency never delays visible text. */
 const META_REFRESH_MS = 5_000
+/** The multiplexed carrier's path segment. Session ids are `session-<uuid>`,
+ *  so this cannot collide with one. */
+const MULTI_SEGMENT = 'multi'
 
-interface ProjectionTarget {
-  readonly sessionId: string
-  readonly stream: boolean
+type ProjectionTarget =
+  | { readonly kind: 'snapshot'; readonly sessionId: string }
+  | { readonly kind: 'multi'; readonly sessionIds: readonly string[] }
+
+function validSessionId(value: string): boolean {
+  return value.length > 0 && value.length <= MAX_SESSION_ID_CHARS
 }
 
-function targetFromUrl(rawUrl: string | undefined): ProjectionTarget | undefined {
+function targetFromUrl(url: URL): ProjectionTarget | undefined {
+  const prefix = `${CLAUDE_PROJECTION_PATH}/`
+  if (!url.pathname.startsWith(prefix)) return undefined
+  const encoded = url.pathname.slice(prefix.length)
+  if (encoded.length === 0 || encoded.includes('/')) return undefined
+  if (encoded === MULTI_SEGMENT) {
+    const raw = url.searchParams.get('sessions')
+    if (raw === null) return undefined
+    const sessionIds = [...new Set(raw.split(',').filter(id => id.length > 0))]
+    if (sessionIds.length === 0 || sessionIds.length > MAX_MULTIPLEX_SESSIONS) return undefined
+    if (!sessionIds.every(validSessionId)) return undefined
+    return { kind: 'multi', sessionIds }
+  }
   try {
-    const pathname = new URL(rawUrl ?? '/', 'http://localhost').pathname
-    const prefix = `${CLAUDE_PROJECTION_PATH}/`
-    if (!pathname.startsWith(prefix)) return undefined
-    let encoded = pathname.slice(prefix.length)
-    const stream = encoded.endsWith('/stream')
-    if (stream) encoded = encoded.slice(0, -'/stream'.length)
-    if (encoded.length === 0 || encoded.includes('/')) return undefined
     const sessionId = decodeURIComponent(encoded)
-    if (sessionId.length === 0 || sessionId.length > MAX_SESSION_ID_CHARS) return undefined
-    return { sessionId, stream }
+    return validSessionId(sessionId) ? { kind: 'snapshot', sessionId } : undefined
   } catch {
     return undefined
   }
@@ -60,9 +71,16 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
 }
 
 /** Register the browser-readable, credential-free sidecar projection endpoint.
- *  `GET <path>/:sessionId` returns one snapshot; `GET <path>/:sessionId/stream`
- *  returns an NDJSON stream: a full snapshot line followed by incremental
- *  transcript/activity deltas and periodic metadata/heartbeat lines. */
+ *
+ *  `GET <path>/:sessionId` returns one snapshot. `GET <path>/multi?sessions=a,b`
+ *  returns ONE NDJSON stream carrying every listed session, each line stamped
+ *  with its `session`.
+ *
+ *  There is deliberately no per-session stream URL. The browser shares a small
+ *  fixed connection budget between this plugin and the Host, and a stream per
+ *  session spent it in proportion to how many Claude sessions existed — which
+ *  is what left the settings panel unable to get a connection at all. One
+ *  carrier is one connection, whatever the session count. */
 export function registerClaudeProjectionRoute(
   ctx: Context,
   sidecar: ClaudeSidecarRepository,
@@ -86,16 +104,18 @@ export function registerClaudeProjectionRoute(
     }
   }
 
-  const streamProjection = async (res: ServerResponse, sessionId: string): Promise<void> => {
-    info(`dsh-claude: projection stream opened for ${sessionId.slice(0, 64)}`)
-    // Delta-cadence telemetry: reveals upstream text granularity in the log.
+  const streamMulti = async (res: ServerResponse, io: PluginRouteIo, sessionIds: readonly string[]): Promise<void> => {
+    info(`dsh-claude: projection stream opened for ${sessionIds.length} session(s)`)
     let textDeltas = 0
     let textBytes = 0
     let textSince = Date.now()
-    let meta = await assembleMeta(sessionId)
+    // Headers first, before any await. One session whose repository probe is
+    // slow must not delay every other session's first paint — and until the
+    // headers are out the client cannot even tell the carrier is alive.
+    // `no-transform` keeps a compressing proxy from buffering the sole carrier.
     res.writeHead(200, {
       'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-store',
+      'cache-control': 'no-store, no-transform',
       'x-content-type-options': 'nosniff',
     })
     res.flushHeaders?.()
@@ -108,24 +128,28 @@ export function registerClaudeProjectionRoute(
         closed = true
       }
     }
-    const writeSnapshot = async (): Promise<void> => {
-      const projection = await sidecar.read(sessionId)
-      writeLine({ type: 'snapshot', ...envelope(projection, meta) })
+    const metas = new Map<string, ProjectionMeta>()
+    const writeSnapshot = async (sessionId: string): Promise<void> => {
+      const [projection, meta] = await Promise.all([sidecar.read(sessionId), assembleMeta(sessionId)])
+      metas.set(sessionId, meta)
+      writeLine({ type: 'snapshot', session: sessionId, ...envelope(projection, meta) })
     }
-    await writeSnapshot()
-    const unsubscribe = sidecar.subscribe(sessionId, delta => {
+    // Subscribe every lane synchronously, before the first await: a delta that
+    // lands while the snapshots are still assembling belongs to this carrier.
+    const unsubscribes = sessionIds.map(sessionId => sidecar.subscribe(sessionId, delta => {
       switch (delta.kind) {
         case 'text':
           textDeltas += 1
           textBytes += (delta.append ?? delta.text ?? '').length
           if (textDeltas % 25 === 0) {
             const elapsed = Date.now() - textSince
-            info(`dsh-claude: stream ${sessionId.slice(0, 24)} 25 text deltas ${textBytes}B in ${elapsed}ms`)
+            info(`dsh-claude: stream 25 text deltas ${textBytes}B in ${elapsed}ms`)
             textBytes = 0
             textSince = Date.now()
           }
           writeLine({
             type: 'text',
+            session: sessionId,
             turn: delta.turn,
             step: delta.step,
             ordinal: delta.ordinal,
@@ -134,66 +158,94 @@ export function registerClaudeProjectionRoute(
           })
           return
         case 'activity':
-          writeLine({ type: 'activity', activity: delta.activity })
+          writeLine({ type: 'activity', session: sessionId, activity: delta.activity })
           return
         case 'contextUsage':
-          writeLine({ type: 'contextUsage', value: delta.value })
+          writeLine({ type: 'contextUsage', session: sessionId, value: delta.value })
           return
         case 'tasks':
-          writeLine({ type: 'tasks', value: delta.value })
+          writeLine({ type: 'tasks', session: sessionId, value: delta.value })
           return
         case 'sync':
-          void writeSnapshot().catch(() => undefined)
+          void writeSnapshot(sessionId).catch(() => undefined)
       }
-    })
+    }))
+    // Per-session, in parallel: a wedged repository probe costs its own lane
+    // its first paint, not everyone else's.
+    for (const sessionId of sessionIds) {
+      void writeSnapshot(sessionId).catch(() => undefined)
+    }
     const timer = setInterval(() => {
       void (async () => {
-        const next = await assembleMeta(sessionId)
-        if (closed) return
-        if (JSON.stringify(next) === JSON.stringify(meta)) {
-          writeLine({ type: 'ping' })
-          return
+        for (const sessionId of sessionIds) {
+          if (closed) return
+          const next = await assembleMeta(sessionId)
+          if (closed) return
+          if (JSON.stringify(next) === JSON.stringify(metas.get(sessionId))) continue
+          metas.set(sessionId, next)
+          writeLine({
+            type: 'meta',
+            session: sessionId,
+            owned: next.owned,
+            commands: next.commands,
+            ...(next.repository === undefined ? {} : { repository: next.repository }),
+            reviewComments: next.reviewComments,
+          })
         }
-        meta = next
-        writeLine({
-          type: 'meta',
-          owned: meta.owned,
-          commands: meta.commands,
-          ...(meta.repository === undefined ? {} : { repository: meta.repository }),
-          reviewComments: meta.reviewComments,
-        })
+        writeLine({ type: 'ping' })
       })().catch(() => undefined)
     }, META_REFRESH_MS)
     timer.unref?.()
+    // Teardown rides the wrapper's signal, which is armed before any await —
+    // the previous hand-written `res.on('close')` was attached only after the
+    // first metadata probe resolved, so a client that gave up during that
+    // window left the interval and every subscription running for good.
     await new Promise<void>(resolve => {
-      res.on('close', () => {
+      const finish = (): void => {
+        if (closed) return
         closed = true
         clearInterval(timer)
-        unsubscribe()
-        info(`dsh-claude: projection stream closed for ${sessionId.slice(0, 64)} after ${textDeltas} text deltas`)
+        for (const unsubscribe of unsubscribes) unsubscribe()
+        info(`dsh-claude: projection stream closed after ${textDeltas} text deltas`)
         resolve()
-      })
+      }
+      if (io.signal.aborted) finish()
+      else io.signal.addEventListener('abort', finish, { once: true })
     })
   }
 
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'stream',
     kind: 'prefix',
     path: CLAUDE_PROJECTION_PATH,
-    handler: async (req, res) => {
-      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      const target = targetFromUrl(req.url)
-      if (target === undefined) return json(res, 400, { error: 'invalid session id' })
+    methods: ['GET'],
+    // One carrier. A reconnect supersedes the old one rather than stacking.
+    maxConcurrent: 1,
+    streamKey: () => MULTI_SEGMENT,
+    handler: async (res, io) => {
+      const target = targetFromUrl(io.url)
+      if (target === undefined) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.write(JSON.stringify({ error: 'invalid session id' }))
+        return
+      }
+      if (target.kind === 'multi') return await streamMulti(res, io, target.sessionIds)
+      // A steady 2s cadence here means a stale (pre-streaming) client bundle.
+      info(`dsh-claude: projection poll for ${target.sessionId.slice(0, 64)}`)
       try {
-        if (target.stream) return await streamProjection(res, target.sessionId)
-        // A steady 2s cadence here means a stale (pre-streaming) client bundle.
-        info(`dsh-claude: projection poll for ${target.sessionId.slice(0, 64)}`)
         const projection = await sidecar.read(target.sessionId)
-        return json(res, 200, envelope(projection, await assembleMeta(target.sessionId)))
+        const body = envelope(projection, await assembleMeta(target.sessionId))
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        })
+        res.write(JSON.stringify(body))
       } catch {
-        if (!res.headersSent) return json(res, 500, { error: 'projection unavailable' })
-        res.end()
+        if (res.headersSent) return
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.write(JSON.stringify({ error: 'projection unavailable' }))
       }
     },
-  }), 'dsh-claude: sidecar projection route')
+  })
 }

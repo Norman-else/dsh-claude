@@ -1,4 +1,5 @@
 import { CLAUDE_CLIENT_DIAGNOSTICS_PATH } from '../constants.ts'
+import { pluginBeacon } from './plugin-transport.ts'
 
 /** Upper bound on reports per page load.
  *
@@ -16,13 +17,12 @@ export interface ClaudeDiagnosticsReporter {
   report(kind: string, detail: string): void
 }
 
+/** A beacon rather than a request: a finding is dropped when the connection
+ *  budget is spent, because the channel that reports the plugin's own failures
+ *  must never be the traffic that causes them — and must never queue behind
+ *  them either. */
 function postToHost(report: ClaudeDiagnosticsReport): void {
-  void fetch(CLAUDE_CLIENT_DIAGNOSTICS_PATH, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(report),
-  }).catch(() => {})
+  pluginBeacon(CLAUDE_CLIENT_DIAGNOSTICS_PATH, report)
 }
 
 /** Renderer-side findings reach the Host log through here.

@@ -1,8 +1,7 @@
-import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 import { PullRequestFeedbackError, type PullRequestFeedbackService } from './pr-feedback.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
@@ -15,16 +14,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_BODY_BYTES) throw new PullRequestFeedbackError('body-too-large', 'The request body is too large.')
-    chunks.push(buffer)
+async function readJson(io: PluginRouteIo): Promise<Record<string, unknown>> {
+  let parsed: unknown
+  try {
+    parsed = await io.body<unknown>(MAX_BODY_BYTES)
+  } catch (error) {
+    // Malformed JSON keeps its own 400; the cap is the only other refusal the
+    // transport raises, and the panel already knows that code.
+    if (error instanceof SyntaxError) throw error
+    throw new PullRequestFeedbackError('body-too-large', 'The request body is too large.')
   }
-  const value = record(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+  const value = record(parsed)
   if (value === undefined) throw new PullRequestFeedbackError('invalid-request', 'The request body is invalid.')
   return value
 }
@@ -69,57 +69,60 @@ function pullNumber(url: URL): number {
   return value
 }
 
+/** Every arm shells out to `gh`, so the whole prefix carries the network budget. */
 export function registerPullRequestFeedbackRoute(
   ctx: Context,
   service: PullRequestFeedbackService,
   cwdForSession: (sessionId: string) => string | undefined,
 ): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'prefix',
     path: CLAUDE_REPOSITORY_FEEDBACK_PATH,
-    handler: async (req, res) => {
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      const reads = req.method === 'GET'
-      const writes = req.method === 'POST'
+    methods: ['GET', 'POST'],
+    budget: 'remote',
+    handler: async io => {
+      const url = io.url
+      const reads = io.method === 'GET'
+      const writes = io.method === 'POST'
       try {
         const cwd = cwdForSession(sessionId(url))
         if (cwd === undefined) throw new PullRequestFeedbackError('session-unavailable', 'The Claude session is unavailable.')
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/comments`) {
-          if (!reads) return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, { threads: await service.threads(cwd, pullNumber(url)) })
+          if (!reads) return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: { threads: await service.threads(cwd, pullNumber(url)) } }
         }
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/checks`) {
-          if (!reads) return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, { checks: await service.failingChecks(cwd, pullNumber(url)) })
+          if (!reads) return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: { checks: await service.failingChecks(cwd, pullNumber(url), io.signal) } }
         }
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/mentionables`) {
-          if (!reads) return json(res, 405, { error: 'method not allowed' })
+          if (!reads) return { status: 405, value: { error: 'method not allowed' } }
           const query = (url.searchParams.get('q') ?? '').slice(0, MAX_MENTION_QUERY_CHARS)
-          return json(res, 200, { users: await service.mentionables(cwd, query) })
+          return { status: 200, value: { users: await service.mentionables(cwd, query) } }
         }
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/reply`) {
-          if (!writes) return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (!writes) return { status: 405, value: { error: 'method not allowed' } }
+          const input = await readJson(io)
           const comment = await service.reply(cwd, pullNumber(url), commentId(input), replyBody(input))
-          return json(res, 200, { comment })
+          return { status: 200, value: { comment } }
         }
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/resolve`) {
-          if (!writes) return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (!writes) return { status: 405, value: { error: 'method not allowed' } }
+          const input = await readJson(io)
           if (typeof input.resolved !== 'boolean') {
             throw new PullRequestFeedbackError('invalid-request', 'The resolved field is required.')
           }
-          return json(res, 200, { resolved: await service.setResolved(cwd, threadId(input), input.resolved) })
+          return { status: 200, value: { resolved: await service.setResolved(cwd, threadId(input), input.resolved) } }
         }
-        return json(res, 404, { error: 'not found' })
+        return { status: 404, value: { error: 'not found' } }
       } catch (error) {
         if (error instanceof PullRequestFeedbackError) {
-          return json(res, 409, { error: error.code, message: error.message })
+          return { status: 409, value: { error: error.code, message: error.message } }
         }
-        if (error instanceof SyntaxError) return json(res, 400, { error: 'invalid-json' })
-        return json(res, 500, { error: 'pr-feedback-unavailable', message: 'Pull request feedback is unavailable.' })
+        if (error instanceof SyntaxError) return { status: 400, value: { error: 'invalid-json' } }
+        return { status: 500, value: { error: 'pr-feedback-unavailable', message: 'Pull request feedback is unavailable.' } }
       }
     },
-  }), 'dsh-claude: pull request feedback route')
+  })
 }

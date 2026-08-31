@@ -1,7 +1,7 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
 import { githubAvatarUrl } from '../github-url.ts'
 import type { FailingCheck, MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from '../pr-feedback.ts'
-import { PLUGIN_ACTION_TIMEOUT_MS, PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
+import { pluginRead, pluginWrite } from './plugin-transport.ts'
 
 export type { FailingCheck, MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from '../pr-feedback.ts'
 
@@ -9,36 +9,34 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-function feedbackUrl(path: string, sessionId: string, pullNumber: number, extra = ''): string {
-  return `${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}?sessionId=${encodeURIComponent(sessionId)}&number=${pullNumber}${extra}`
+function feedbackQuery(sessionId: string, pullNumber: number, extra?: Readonly<Record<string, string>>): Record<string, string> {
+  return { sessionId, number: String(pullNumber), ...extra }
 }
 
-async function answer(response: Response): Promise<Record<string, unknown>> {
-  const body = record(await response.json() as unknown)
-  if (!response.ok) {
-    throw new Error(typeof body?.message === 'string' ? body.message : 'Pull request feedback is unavailable.')
-  }
+function answer(value: unknown): Record<string, unknown> {
+  const body = record(value)
   if (body === undefined) throw new Error('Invalid pull request feedback response.')
   return body
 }
 
-async function loadJson(path: string, sessionId: string, pullNumber: number, signal?: AbortSignal, extra = ''): Promise<Record<string, unknown>> {
-  return answer(await fetch(feedbackUrl(path, sessionId, pullNumber, extra), {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json' },
-    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
+/** Every arm of this route shells out to `gh`, so reads and writes alike take
+ *  the remote budget. */
+async function loadJson(
+  path: string,
+  sessionId: string,
+  pullNumber: number,
+  signal?: AbortSignal,
+  extra?: Readonly<Record<string, string>>,
+): Promise<Record<string, unknown>> {
+  return answer(await pluginRead<unknown>(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}`, 'remote', signal, {
+    query: feedbackQuery(sessionId, pullNumber, extra),
   }))
 }
 
-/** Writes reach GitHub through `gh`, so they get the action deadline. */
 async function postJson(path: string, sessionId: string, pullNumber: number, input: unknown): Promise<Record<string, unknown>> {
-  return answer(await fetch(feedbackUrl(path, sessionId, pullNumber), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS),
-    body: JSON.stringify(input),
+  return answer(await pluginWrite<unknown>(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}`, 'remote', undefined, {
+    query: feedbackQuery(sessionId, pullNumber),
+    json: input,
   }))
 }
 
@@ -111,7 +109,7 @@ export async function loadMentionableUsers(
   query: string,
   signal?: AbortSignal,
 ): Promise<readonly MentionableUser[]> {
-  const body = await loadJson('/mentionables', sessionId, pullNumber, signal, `&q=${encodeURIComponent(query)}`)
+  const body = await loadJson('/mentionables', sessionId, pullNumber, signal, { q: query })
   if (!Array.isArray(body.users)) return []
   const users: MentionableUser[] = []
   for (const item of body.users) {

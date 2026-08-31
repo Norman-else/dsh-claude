@@ -116,22 +116,38 @@ describe('probePlanUsage', () => {
 })
 
 describe('plan usage route', () => {
+  type Handler = (req: unknown, res: unknown) => Promise<void>
+
   function harness(probe = vi.fn(async (fetchedAt: number) => normalizePlanUsage(SDK_RESPONSE, fetchedAt))) {
-    let handler!: (req: unknown, res: unknown) => Promise<void>
+    let handler!: Handler
     const ctx = {
-      effect: (setup: () => unknown) => { setup() },
-      webServer: { register: (route: { handler: typeof handler }) => { handler = route.handler; return () => {} } },
+      effect: (setup: () => unknown, _label?: string) => { setup() },
+      webServer: { register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } },
     } as unknown as Parameters<typeof registerPlanUsageRoute>[0]
     registerPlanUsageRoute(ctx, probe, () => 4_242)
     return { handler, probe }
   }
 
-  function call(handler: (req: unknown, res: unknown) => Promise<void>, method: string) {
-    let status = 0
-    let body: unknown
-    const res = { writeHead: (code: number) => { status = code }, end: (text: string) => { body = JSON.parse(text) } }
-    const req = { method, socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:1234' } }
-    return handler(req, res).then(() => ({ status, body }))
+  // registerPluginRoute writes through the ServerResponse itself and attaches
+  // disconnect teardown before its first await, so the fake has to carry the
+  // listener and write surface even when a case never disconnects.
+  function response() {
+    return {
+      status: 0,
+      body: undefined as unknown,
+      headersSent: false,
+      writableEnded: false,
+      on() { return this },
+      write() { return true },
+      writeHead(code: number) { this.status = code; this.headersSent = true; return this },
+      end(text?: string) { this.writableEnded = true; if (text !== undefined) this.body = JSON.parse(text) },
+    }
+  }
+
+  function call(handler: Handler, method: string, remoteAddress = '127.0.0.1', host = '127.0.0.1:1234') {
+    const res = response()
+    const req = { method, socket: { remoteAddress }, headers: { host }, on() { return this } }
+    return handler(req, res).then(() => ({ status: res.status, body: res.body }))
   }
 
   it('serves the cached report on GET and probes on POST', async () => {
@@ -156,12 +172,7 @@ describe('plan usage route', () => {
     resetPlanUsage()
     const { handler } = harness()
     expect((await call(handler, 'DELETE')).status).toBe(405)
-    let status = 0
-    await handler(
-      { method: 'GET', socket: { remoteAddress: '10.0.0.4' }, headers: { host: 'example.com' } },
-      { writeHead: (code: number) => { status = code }, end: () => {} },
-    )
-    expect(status).toBe(403)
+    expect((await call(handler, 'GET', '10.0.0.4', 'example.com')).status).toBe(403)
   })
 
   it('reports a probe failure as a 500 and leaves the cache untouched', async () => {

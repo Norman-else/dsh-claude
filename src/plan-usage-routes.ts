@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_USAGE_PATH } from './constants.ts'
 import { redactText } from './events.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute } from './http.ts'
 import { latestPlanUsage, recordPlanUsage, type PlanUsageReport } from './plan-usage.ts'
 
 const EMPTY: PlanUsageReport = { available: false, windows: [], fetchedAt: 0 }
@@ -20,20 +20,22 @@ export function registerPlanUsageRoute(
   probe: (fetchedAt: number) => Promise<PlanUsageReport>,
   now: () => number = Date.now,
 ): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'exact',
     path: CLAUDE_USAGE_PATH,
-    handler: async (req, res) => {
-      if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      if (req.method === 'GET') return json(res, 200, latestPlanUsage() ?? EMPTY)
+    methods: ['GET', 'POST'],
+    // The probe spawns a throwaway CLI; the cached GET answers from memory.
+    budget: 'git',
+    handler: async io => {
+      if (io.method === 'GET') return { status: 200, value: latestPlanUsage() ?? EMPTY }
       try {
         const report = await probe(now())
         recordPlanUsage(report)
-        json(res, 200, report)
+        return { status: 200, value: report }
       } catch (error) {
-        json(res, 500, { error: safeMessage(error) })
+        return { status: 500, value: { error: safeMessage(error) } }
       }
     },
-  }), 'dsh-claude: plan usage route')
+  })
 }

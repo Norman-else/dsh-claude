@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { CLAUDE_UPDATE_CHECK_PATH } from '../src/constants.ts'
 import {
   checkPluginUpdate,
   classifyInstallSpec,
@@ -68,16 +69,29 @@ function routeContext(): Context & { routes: Map<string, (req: IncomingMessage, 
   } as unknown as Context & { routes: Map<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> }
 }
 
-function request(method: string, headers: Record<string, string>): IncomingMessage {
-  return { method, headers, socket: { remoteAddress: '::1' } } as unknown as IncomingMessage
+function request(method: string, headers: Record<string, string>, url = CLAUDE_UPDATE_CHECK_PATH): IncomingMessage {
+  return {
+    method,
+    url,
+    headers,
+    // registerPluginRoute attaches its disconnect teardown before the first
+    // await, so even a request that never disconnects has to accept listeners.
+    on() { return this },
+    socket: { remoteAddress: '::1' },
+  } as unknown as IncomingMessage
 }
 
 function response(): ServerResponse & { statusCode: number; body: string } {
   return {
     statusCode: 0,
     body: '',
-    writeHead(statusCode: number) { this.statusCode = statusCode },
-    end(body: string) { this.body = body },
+    headersSent: false,
+    writableEnded: false,
+    on() { return this },
+    flushHeaders() {},
+    write(chunk: string) { this.body += chunk; return true },
+    writeHead(statusCode: number) { this.statusCode = statusCode; this.headersSent = true; return this },
+    end(body?: string) { this.writableEnded = true; if (body !== undefined) this.body += body },
   } as unknown as ServerResponse & { statusCode: number; body: string }
 }
 
@@ -223,7 +237,7 @@ describe('plugin update Web routes', () => {
       spawn: vi.fn(),
     } as unknown as Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
     registerClaudeUpdateRoutes(ctx, runtime, { dshHome: home, packageDir })
-    const check = ctx.routes.get('/plugins/dsh-claude/update/check')!
+    const check = ctx.routes.get(CLAUDE_UPDATE_CHECK_PATH)!
 
     const wrongMethod = response()
     await check(request('POST', { host: 'localhost:56454' }), wrongMethod)

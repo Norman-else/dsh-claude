@@ -1,8 +1,7 @@
-import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_JIRA_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 import { JiraError, type JiraService } from './jira.ts'
 
 const MAX_BODY_BYTES = 8 * 1024
@@ -11,16 +10,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_BODY_BYTES) throw new JiraError('body-too-large', 'The request body is too large.')
-    chunks.push(buffer)
+/** The wrapper enforces the byte cap; its plain rejection is translated back
+ *  into the JiraError shape the panel already knows how to render. */
+async function readJson(io: PluginRouteIo): Promise<Record<string, unknown>> {
+  let body: unknown
+  try {
+    body = await io.body(MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof SyntaxError) throw error
+    throw new JiraError('body-too-large', 'The request body is too large.')
   }
-  const value = record(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+  const value = record(body)
   if (value === undefined) throw new JiraError('invalid-request', 'The request body is invalid.')
   return value
 }
@@ -32,47 +32,52 @@ function string(input: Record<string, unknown>, key: string): string {
 }
 
 export function registerJiraRoute(ctx: Context, service: JiraService): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'prefix',
     path: CLAUDE_JIRA_PATH,
-    handler: async (req, res) => {
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      const url = new URL(req.url ?? '/', 'http://localhost')
+    methods: ['GET', 'POST'],
+    budget: 'git',
+    handler: async io => {
+      const url = io.url
       try {
         if (url.pathname === `${CLAUDE_JIRA_PATH}/status`) {
-          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, await service.status())
+          if (io.method !== 'GET') return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: await service.status() }
         }
         if (url.pathname === `${CLAUDE_JIRA_PATH}/connect`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
-          return json(res, 200, await service.connect({
-            siteUrl: string(input, 'siteUrl'),
-            email: string(input, 'email'),
-            apiToken: string(input, 'apiToken'),
-          }))
+          if (io.method !== 'POST') return { status: 405, value: { error: 'method not allowed' } }
+          const input = await readJson(io)
+          return {
+            status: 200,
+            value: await service.connect({
+              siteUrl: string(input, 'siteUrl'),
+              email: string(input, 'email'),
+              apiToken: string(input, 'apiToken'),
+            }),
+          }
         }
         if (url.pathname === `${CLAUDE_JIRA_PATH}/disconnect`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (io.method !== 'POST') return { status: 405, value: { error: 'method not allowed' } }
           await service.disconnect()
-          return json(res, 200, { connected: false })
+          return { status: 200, value: { connected: false } }
         }
         if (url.pathname === `${CLAUDE_JIRA_PATH}/assign`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (io.method !== 'POST') return { status: 405, value: { error: 'method not allowed' } }
+          const input = await readJson(io)
           await service.assignToMe(string(input, 'key'))
-          return json(res, 200, { assigned: true })
+          return { status: 200, value: { assigned: true } }
         }
         if (url.pathname === `${CLAUDE_JIRA_PATH}/search`) {
-          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, { tickets: await service.search(url.searchParams.get('query') ?? '') })
+          if (io.method !== 'GET') return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: { tickets: await service.search(url.searchParams.get('query') ?? '') } }
         }
-        return json(res, 404, { error: 'not found' })
+        return { status: 404, value: { error: 'not found' } }
       } catch (error) {
-        if (error instanceof JiraError) return json(res, 409, { error: error.code, message: error.message })
-        if (error instanceof SyntaxError) return json(res, 400, { error: 'invalid-json' })
-        return json(res, 500, { error: 'jira-unavailable', message: 'Jira is unavailable.' })
+        if (error instanceof JiraError) return { status: 409, value: { error: error.code, message: error.message } }
+        if (error instanceof SyntaxError) return { status: 400, value: { error: 'invalid-json' } }
+        return { status: 500, value: { error: 'jira-unavailable', message: 'Jira is unavailable.' } }
       }
     },
-  }), 'dsh-claude: jira route')
+  })
 }

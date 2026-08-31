@@ -1,4 +1,5 @@
 import { CLAUDE_ASK_PATH } from '../constants.ts'
+import { PluginRequestError, pluginNdjson } from './plugin-transport.ts'
 
 export interface AskSelectionRequest {
   readonly selection: string
@@ -49,6 +50,17 @@ export function parseAskEvent(line: string): AskEvent {
   throw new Error('Invalid ask stream event.')
 }
 
+async function openAnswer(sessionId: string, request: AskSelectionRequest, cancel: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  try {
+    return await pluginNdjson(CLAUDE_ASK_PATH, cancel, { method: 'POST', query: { sessionId }, json: request })
+  } catch (error) {
+    // A refused stream is reported by status rather than by body, and the panel
+    // shows whatever sentence arrives here.
+    if (error instanceof PluginRequestError && error.reason === 'http') throw new Error('The question could not be sent.')
+    throw error
+  }
+}
+
 /** Stream an answer about selected reply text; resolves when the answer completes. */
 export async function askAboutSelection(
   sessionId: string,
@@ -56,40 +68,40 @@ export async function askAboutSelection(
   onProgress: (progress: AskProgress) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${CLAUDE_ASK_PATH}?sessionId=${encodeURIComponent(sessionId)}`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { accept: 'application/x-ndjson', 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-    ...(signal === undefined ? {} : { signal }),
-  })
-  if (!response.ok) {
-    const body = record(await response.json().catch(() => undefined))
-    throw new Error(typeof body?.message === 'string' ? body.message : 'The question could not be sent.')
+  // The transport holds this stream's permit until its cancellation fires, so
+  // the answer carries a signal of its own: an answer that ran to completion
+  // has to give the connection back as surely as an abandoned one.
+  const carrier = new AbortController()
+  const stop = (): void => { carrier.abort() }
+  signal?.addEventListener('abort', stop, { once: true })
+  if (signal?.aborted === true) carrier.abort()
+  try {
+    const reader = await openAnswer(sessionId, request, carrier.signal)
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finished = false
+    const handle = (line: string): void => {
+      if (line.trim().length === 0) return
+      const event = parseAskEvent(line)
+      if (event.type === 'delta') onProgress({ type: 'text', text: event.text })
+      else if (event.type === 'thinking') onProgress({ type: 'thinking', text: event.text })
+      else if (event.type === 'status') onProgress({ type: 'status', text: event.text })
+      else if (event.type === 'tool') onProgress(event)
+      else if (event.type === 'done') finished = true
+      else throw new Error(event.message)
+    }
+    while (true) {
+      const chunk = await reader.read()
+      buffer += decoder.decode(chunk.value, { stream: !chunk.done })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) handle(line)
+      if (chunk.done) break
+    }
+    handle(buffer)
+    if (!finished) throw new Error('The answer ended unexpectedly.')
+  } finally {
+    signal?.removeEventListener('abort', stop)
+    carrier.abort()
   }
-  if (response.body === null) throw new Error('The answer stream is unavailable.')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let finished = false
-  const handle = (line: string): void => {
-    if (line.trim().length === 0) return
-    const event = parseAskEvent(line)
-    if (event.type === 'delta') onProgress({ type: 'text', text: event.text })
-    else if (event.type === 'thinking') onProgress({ type: 'thinking', text: event.text })
-    else if (event.type === 'status') onProgress({ type: 'status', text: event.text })
-    else if (event.type === 'tool') onProgress(event)
-    else if (event.type === 'done') finished = true
-    else throw new Error(event.message)
-  }
-  while (true) {
-    const chunk = await reader.read()
-    buffer += decoder.decode(chunk.value, { stream: !chunk.done })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) handle(line)
-    if (chunk.done) break
-  }
-  handle(buffer)
-  if (!finished) throw new Error('The answer ended unexpectedly.')
 }

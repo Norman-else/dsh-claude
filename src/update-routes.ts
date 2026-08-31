@@ -7,11 +7,9 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH } from './constants.ts'
 import { redactText } from './events.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginMethod } from './http.ts'
 
 export const PLUGIN_PACKAGE_NAME = '@norman-else/dsh-claude'
-export const UPDATE_TIMEOUT_MS = 30_000
-const CHECK_TIMEOUT_MS = 10_000
 const MAX_MANIFEST_BYTES = 256 * 1024
 const MAX_UPDATE_OUTPUT_BYTES = 32 * 1024
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
@@ -51,6 +49,11 @@ export interface UpdateDependencies {
   spawn?: SubprocessRuntime['spawn']
   requestRestart?: () => void
 }
+
+/** The route owns the deadline now. A direct caller with nothing to cancel
+ *  against gets a signal that never fires, rather than a second timeout
+ *  competing with the budget the route already declared. */
+const NEVER_ABORTS = new AbortController().signal
 
 function safeMessage(error: unknown): string {
   return redactText(error instanceof Error ? error.message : String(error), 500)
@@ -178,13 +181,13 @@ async function packageContext(deps: UpdateDependencies): Promise<{ version: stri
   return { version: manifest.version, ...(installation === undefined ? {} : { installation }) }
 }
 
-export async function checkPluginUpdate(deps: UpdateDependencies = {}): Promise<PluginUpdateStatus> {
+export async function checkPluginUpdate(deps: UpdateDependencies = {}, signal: AbortSignal = NEVER_ABORTS): Promise<PluginUpdateStatus> {
   try {
     const { version, installation } = await packageContext(deps)
     if (installation === undefined) return { currentVersion: version, source: 'unknown', state: 'unavailable', canUpdate: false, restartRequired: false, message: 'Active DSH profile could not be identified uniquely' }
     if (installation.source === 'link') return { currentVersion: version, source: 'link', state: 'linked', canUpdate: false, restartRequired: false, message: 'Local development link; updates come from the linked checkout' }
     if (installation.source !== 'registry') return { currentVersion: version, source: installation.source, state: 'unsupported', canUpdate: false, restartRequired: false, message: 'This installation source cannot be updated from the npm registry' }
-    const latest = await (deps.fetchLatest ?? registryLatest)(AbortSignal.timeout(CHECK_TIMEOUT_MS))
+    const latest = await (deps.fetchLatest ?? registryLatest)(signal)
     const comparison = compareVersions(version, latest)
     return {
       currentVersion: version,
@@ -215,15 +218,14 @@ async function verifyInstalledVersion(installation: Installation, expectedVersio
   }
 }
 
-export async function updatePlugin(deps: UpdateDependencies = {}): Promise<PluginUpdateStatus> {
+export async function updatePlugin(deps: UpdateDependencies = {}, signal: AbortSignal = NEVER_ABORTS): Promise<PluginUpdateStatus> {
   const { version, installation } = await packageContext(deps)
   if (installation === undefined || installation.source !== 'registry') throw new Error('Plugin update is unavailable for this installation')
-  const latest = await (deps.fetchLatest ?? registryLatest)(AbortSignal.timeout(CHECK_TIMEOUT_MS))
+  const latest = await (deps.fetchLatest ?? registryLatest)(signal)
   if (compareVersions(version, latest) >= 0) return { currentVersion: version, latestVersion: latest, source: 'registry', state: 'current', canUpdate: false, restartRequired: false }
   const resolveExecutable = deps.resolveExecutable
   const spawn = deps.spawn
   if (resolveExecutable === undefined || spawn === undefined) throw new Error('DSH update runtime is unavailable')
-  const signal = AbortSignal.timeout(UPDATE_TIMEOUT_MS)
   const executable = await resolveExecutable('dsh', {}, signal)
   const handle = spawn({
     argv: [executable, 'plugin', '--profile', installation.profile, 'add', `${PLUGIN_PACKAGE_NAME}@${latest}`],
@@ -255,22 +257,25 @@ export async function updatePlugin(deps: UpdateDependencies = {}): Promise<Plugi
 
 export function registerClaudeUpdateRoutes(ctx: Context, runtime: Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>, deps: UpdateDependencies = {}): void {
   const shared: UpdateDependencies = { ...deps, resolveExecutable: runtime.resolveExecutable.bind(runtime), spawn: runtime.spawn.bind(runtime) }
-  for (const route of [
-    { path: CLAUDE_UPDATE_CHECK_PATH, method: 'GET', run: () => checkPluginUpdate(shared) },
-    { path: CLAUDE_UPDATE_PATH, method: 'POST', run: () => updatePlugin(shared) },
-  ]) {
-    ctx.effect(() => ctx.webServer.register({
+  const routes: readonly { path: string; method: PluginMethod; run: (signal: AbortSignal) => Promise<PluginUpdateStatus> }[] = [
+    { path: CLAUDE_UPDATE_CHECK_PATH, method: 'GET', run: signal => checkPluginUpdate(shared, signal) },
+    { path: CLAUDE_UPDATE_PATH, method: 'POST', run: signal => updatePlugin(shared, signal) },
+  ]
+  for (const route of routes) {
+    registerPluginRoute(ctx, {
+      mode: 'unary',
       kind: 'exact',
       path: route.path,
-      handler: async (req, res) => {
-        if (req.method !== route.method) return json(res, 405, { error: 'method not allowed' })
-        if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+      methods: [route.method],
+      // The npm registry, then `dsh plugin add`, then a manifest re-read.
+      budget: 'remote',
+      handler: async io => {
         try {
-          json(res, 200, await route.run())
+          return { status: 200, value: await route.run(io.signal) }
         } catch (error) {
-          json(res, 500, { error: safeMessage(error) })
+          return { status: 500, value: { error: safeMessage(error) } }
         }
       },
-    }), `dsh-claude: ${route.method} ${route.path}`)
+    })
   }
 }

@@ -1,8 +1,7 @@
-import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REPOSITORY_ACTION_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 import {
   RepositoryActionError,
   type RepositoryActionKind,
@@ -19,16 +18,17 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_BODY_BYTES) throw new RepositoryActionError('body-too-large', 'The request body is too large.')
-    chunks.push(buffer)
+async function readJson(io: PluginRouteIo): Promise<Record<string, unknown>> {
+  let parsed: unknown
+  try {
+    parsed = await io.body<unknown>(MAX_BODY_BYTES)
+  } catch (error) {
+    // Malformed JSON keeps its own 400; the cap is the only other refusal the
+    // transport raises, and the panel already knows that code.
+    if (error instanceof SyntaxError) throw error
+    throw new RepositoryActionError('body-too-large', 'The request body is too large.')
   }
-  const value = record(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+  const value = record(parsed)
   if (value === undefined) throw new RepositoryActionError('invalid-request', 'The request body is invalid.')
   return value
 }
@@ -77,46 +77,55 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
   }
 }
 
+/** One prefix serves the local-Git preview and the POST arms that push, open
+ *  and merge pull requests, so the registration takes the wider of the two
+ *  budgets: a `remote` arm cut short at the `git` deadline would abandon work
+ *  that had already reached GitHub. */
 export function registerRepositoryActionRoute(
   ctx: Context,
   service: RepositoryActionService,
   cwdForSession: (sessionId: string) => string | undefined,
 ): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'prefix',
     path: CLAUDE_REPOSITORY_ACTION_PATH,
-    handler: async (req, res) => {
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      const url = new URL(req.url ?? '/', 'http://localhost')
+    methods: ['GET', 'POST'],
+    budget: 'remote',
+    handler: async io => {
+      const url = io.url
       try {
         const id = sessionId(url)
         const cwd = cwdForSession(id)
         if (cwd === undefined) throw new RepositoryActionError('session-unavailable', 'The Claude session is unavailable.')
         if (url.pathname === `${CLAUDE_REPOSITORY_ACTION_PATH}/preview`) {
-          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, await service.preview(cwd))
+          if (io.method !== 'GET') return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: await service.preview(cwd) }
         }
         if (url.pathname === `${CLAUDE_REPOSITORY_ACTION_PATH}/message`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
-          return json(res, 200, { message: await service.generateMessage(cwd, string(input, 'fingerprint')) })
+          if (io.method !== 'POST') return { status: 405, value: { error: 'method not allowed' } }
+          const input = await readJson(io)
+          return { status: 200, value: { message: await service.generateMessage(cwd, string(input, 'fingerprint')) } }
         }
         if (url.pathname === CLAUDE_REPOSITORY_ACTION_PATH) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          return json(res, 200, await service.execute(cwd, actionRequest(await readJson(req))))
+          if (io.method !== 'POST') return { status: 405, value: { error: 'method not allowed' } }
+          return { status: 200, value: await service.execute(cwd, actionRequest(await readJson(io))) }
         }
-        return json(res, 404, { error: 'not found' })
+        return { status: 404, value: { error: 'not found' } }
       } catch (error) {
         if (error instanceof RepositoryActionError) {
-          return json(res, 409, {
-            error: error.code,
-            message: error.message,
-            ...(error.commit === undefined ? {} : { commit: error.commit }),
-          })
+          return {
+            status: 409,
+            value: {
+              error: error.code,
+              message: error.message,
+              ...(error.commit === undefined ? {} : { commit: error.commit }),
+            },
+          }
         }
-        if (error instanceof SyntaxError) return json(res, 400, { error: 'invalid-json' })
-        return json(res, 500, { error: 'repository-action-unavailable', message: 'Repository action is unavailable.' })
+        if (error instanceof SyntaxError) return { status: 400, value: { error: 'invalid-json' } }
+        return { status: 500, value: { error: 'repository-action-unavailable', message: 'Repository action is unavailable.' } }
       }
     },
-  }), 'dsh-claude: repository action route')
+  })
 }

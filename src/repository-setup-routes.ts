@@ -1,8 +1,8 @@
-import type { IncomingMessage } from 'node:http'
+import type { ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REPOSITORY_SETUP_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { json, registerPluginRoute, type PluginRouteIo } from './http.ts'
 import {
   RepositorySetupError,
   type RepositorySetupResult,
@@ -18,16 +18,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_BODY_BYTES) throw new RepositorySetupError('body-too-large', 'The request body is too large.')
-    chunks.push(buffer)
+async function readJson(io: PluginRouteIo): Promise<Record<string, unknown>> {
+  let parsed: unknown
+  try {
+    parsed = await io.body<unknown>(MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof SyntaxError) throw error
+    throw new RepositorySetupError('body-too-large', 'The request body is too large.')
   }
-  const value = record(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+  const value = record(parsed)
   if (value === undefined) throw new RepositorySetupError('invalid-request', 'The request body is invalid.')
   return value
 }
@@ -45,7 +44,7 @@ function optionalString(input: Record<string, unknown>, key: string): string | u
   return value
 }
 
-function ndjsonHeaders(res: import('node:http').ServerResponse): void {
+function ndjsonHeaders(res: ServerResponse): void {
   res.writeHead(200, {
     'content-type': 'application/x-ndjson; charset=utf-8',
     'cache-control': 'no-store',
@@ -54,12 +53,15 @@ function ndjsonHeaders(res: import('node:http').ServerResponse): void {
   res.flushHeaders?.()
 }
 
-function ndjson(res: import('node:http').ServerResponse, value: unknown): void {
+function ndjson(res: ServerResponse, value: unknown): void {
   res.write(`${JSON.stringify(value)}\n`)
 }
 
+// `RepositorySetupService.setup` takes no signal, so the route's disconnect
+// abort cannot reach the Git work it drives; the stream registration is still
+// what bounds how many of these may be live at once.
 async function streamSetup(
-  res: import('node:http').ServerResponse,
+  res: ServerResponse,
   service: RepositorySetupService,
   input: Record<string, unknown>,
 ): Promise<void> {
@@ -87,42 +89,52 @@ async function streamSetup(
   }
 }
 
-/** Register trusted browser routes for safe pre-session Git setup. */
+/** Register trusted browser routes for safe pre-session Git setup.
+ *
+ *  The prefix is registered as a stream because the setup POST holds its
+ *  connection open for the whole worktree build; the short sibling paths ride
+ *  the same registration and answer with `json` before releasing it. */
 export function registerRepositorySetupRoute(ctx: Context, service: RepositorySetupService): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'stream',
     kind: 'prefix',
     path: CLAUDE_REPOSITORY_SETUP_PATH,
-    handler: async (req, res) => {
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+    methods: ['GET', 'POST'],
+    maxConcurrent: 2,
+    // Only the branch paths name their checkout in the URL; the setup POST
+    // carries it in the body, so it keys on its path alone and a reopen
+    // supersedes the response it is replacing.
+    streamKey: url => `${url.pathname}?${url.searchParams.get('cwd') ?? url.searchParams.get('branch') ?? ''}`,
+    handler: async (res, io) => {
+      const pathname = io.url.pathname
       try {
         // Not a GET: --prune rewrites this checkout's remote-tracking refs.
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/branches/refresh`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(io)
           return json(res, 200, await service.refreshBranches(string(input, 'cwd')))
         }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/branches`) {
-          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-          const cwd = new URL(req.url ?? '/', 'http://localhost').searchParams.get('cwd')
+          if (io.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          const cwd = io.url.searchParams.get('cwd')
           if (cwd === null) throw new RepositorySetupError('invalid-request', 'The cwd query parameter is required.')
           return json(res, 200, await service.listBranches(cwd))
         }
         if (pathname === CLAUDE_REPOSITORY_SETUP_PATH) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(io)
           if (typeof input.worktree !== 'boolean') throw new RepositorySetupError('invalid-request', 'The worktree field is required.')
           await streamSetup(res, service, input)
           return
         }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(io)
           return json(res, 200, await service.cleanupMerged(string(input, 'path'), string(input, 'baseBranch')))
         }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/bind`) {
-          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-          const input = await readJson(req)
+          if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          const input = await readJson(io)
           await service.bindLease(string(input, 'leaseId'), string(input, 'sessionId'))
           return json(res, 200, { ok: true })
         }
@@ -133,5 +145,5 @@ export function registerRepositorySetupRoute(ctx: Context, service: RepositorySe
         return json(res, 500, { error: 'repository setup unavailable' })
       }
     },
-  }), 'dsh-claude: repository setup route')
+  })
 }

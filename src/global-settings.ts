@@ -2,12 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { chmod, mkdir, opendir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
-import type { IncomingMessage } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from './constants.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 
 const MAX_SETTINGS_BYTES = 256 * 1024
 const MAX_REQUEST_BYTES = 8 * 1024
@@ -354,39 +353,30 @@ export function updateGlobalSettings(changes: unknown, deps: GlobalSettingsDepen
   return operation
 }
 
-async function requestJson(req: IncomingMessage): Promise<unknown> {
-  const declared = Number(req.headers['content-length'] ?? 0)
-  if (!Number.isFinite(declared) || declared < 0 || declared > MAX_REQUEST_BYTES) throw new Error('Request body is too large')
-  const chunks: Buffer[] = []
-  let bytes = 0
-  for await (const chunk of req) {
-    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    bytes += data.byteLength
-    if (bytes > MAX_REQUEST_BYTES) throw new Error('Request body is too large')
-    chunks.push(data)
-  }
-  const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
-  const body = object(value)
+async function requestJson(io: PluginRouteIo): Promise<unknown> {
+  const body = object(await io.body(MAX_REQUEST_BYTES))
   if (body === undefined || Object.keys(body).some(key => key !== 'changes')) throw new Error('Invalid global settings request')
   return body.changes
 }
 
 export function registerClaudeGlobalSettingsRoute(ctx: Context, deps: GlobalSettingsDependencies = {}): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'exact',
     path: CLAUDE_GLOBAL_SETTINGS_PATH,
-    handler: async (req, res) => {
-      if (req.method !== 'GET' && req.method !== 'PATCH') return json(res, 405, { error: 'method not allowed' })
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+    methods: ['GET', 'PATCH'],
+    // Reads and writes two small JSON files under the home directory.
+    budget: 'fast',
+    handler: async io => {
       try {
-        const result = req.method === 'GET'
+        const result = io.method === 'GET'
           ? await readGlobalSettings(deps)
-          : await updateGlobalSettings(await requestJson(req), deps)
-        if (req.method === 'PATCH') await deps.onUpdated?.()
-        json(res, 200, result)
+          : await updateGlobalSettings(await requestJson(io), deps)
+        if (io.method === 'PATCH') await deps.onUpdated?.()
+        return { status: 200, value: result }
       } catch (error) {
-        json(res, 400, { error: error instanceof Error ? error.message : 'Invalid global settings request' })
+        return { status: 400, value: { error: error instanceof Error ? error.message : 'Invalid global settings request' } }
       }
     },
-  }), 'dsh-claude: global settings')
+  })
 }
