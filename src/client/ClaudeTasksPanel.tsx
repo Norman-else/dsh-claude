@@ -6,6 +6,8 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
 import { isProjectedTask } from './task-projection.ts'
+import { taskTools } from './conversation-sidecar.ts'
+import { ClaudeTranscriptToolItem } from './ClaudeActivityNode.tsx'
 import { formatTokenCount } from './token-format.ts'
 
 export interface ClaudeTasksPanelInjected {
@@ -110,8 +112,16 @@ function TaskActivity({ activity, t }: { activity: ClaudeActivityEvent; t: Claud
   )
 }
 
-function TaskCard(props: { task: ClaudeTaskInfo; activities: readonly ClaudeActivityEvent[]; t: ClaudeTasksPanelInjected['t'] }) {
-  const { task, activities, t } = props
+function TaskCard(props: {
+  task: ClaudeTaskInfo
+  activities: readonly ClaudeActivityEvent[]
+  /** The whole stream: a task's tools are addressed to the call that
+   *  dispatched it, not to the task, so they carry no taskId to filter on. */
+  allActivities: readonly ClaudeActivityEvent[]
+  t: ClaudeTasksPanelInjected['t']
+}) {
+  const { task, activities, allActivities, t } = props
+  const tools = useMemo(() => taskTools(allActivities, task.taskId), [allActivities, task.taskId])
   const [activityOpen, setActivityOpen] = useState(false)
   const running = task.status === 'running'
   const failed = task.status === 'failed' || task.status === 'killed'
@@ -132,14 +142,21 @@ function TaskCard(props: { task: ClaudeTaskInfo; activities: readonly ClaudeActi
       </div>
       {meta.length === 0 ? null : <p style={styles.taskMeta}>{meta.join(' · ')}</p>}
       {task.summary === undefined || running ? null : <p style={styles.taskSummary}>{task.summary}</p>}
-      {activities.length === 0 ? null : (
+      {activities.length === 0 && tools.length === 0 ? null : (
         <div style={styles.taskActivitySection}>
           <button type="button" style={styles.taskTextButton} aria-expanded={activityOpen} onClick={() => setActivityOpen(value => !value)}>
             {activityOpen ? t('tasksHideActivity') : t('tasksViewActivity')}
           </button>
-          {activityOpen ? <ul style={styles.taskActivityList}>{activities.map(activity => (
-            <TaskActivity key={`${activity.turn}:${activity.step}:${activity.ordinal}`} activity={activity} t={t} />
-          ))}</ul> : null}
+          {/* The tools the task ran, drawn by the same cards as the
+              transcript. The lifecycle pings are the fallback: they are raw
+              protocol, and only worth showing when there is nothing better. */}
+          {!activityOpen ? null : tools.length > 0
+            ? <div style={styles.taskToolList}>{tools.map(tool => (
+              <ClaudeTranscriptToolItem key={tool.toolUseId} tool={tool} t={t} />
+            ))}</div>
+            : <ul style={styles.taskActivityList}>{activities.map(activity => (
+              <TaskActivity key={`${activity.turn}:${activity.step}:${activity.ordinal}`} activity={activity} t={t} />
+            ))}</ul>}
         </div>
       )}
     </article>
@@ -193,7 +210,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
         <section aria-label={t('tasksRunning')}>
           <GroupHeading label={t('tasksRunning')} count={groups.running.length} />
           {groups.running.length === 0 ? <p style={styles.tasksGroupEmpty}>{t('tasksNoneRunning')}</p> : (
-            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
           )}
         </section>
         <section aria-label={t('tasksSettled')} style={styles.tasksFinishedSection}>
@@ -205,7 +222,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
             {...(groups.finished.length === 0 ? {} : { action: { label: t('tasksClear'), onClick: clearFinished } })}
           />
           {finishedCollapsed || groups.finished.length === 0 ? null : (
-            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
           )}
         </section>
       </div>

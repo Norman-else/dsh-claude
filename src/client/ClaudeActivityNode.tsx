@@ -53,6 +53,10 @@ const ACTIVITY_CSS = [
   '.dsh-claude-diff-delete{color:var(--dsw-alias-state-error-primary)}',
   '.dsh-claude-tool-name{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}',
   '.dsh-claude-tool-summary{margin-left:8px;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-claude-tool-terminal{display:flex;gap:8px;margin:6px 0 0;padding:8px 10px;max-height:220px;overflow:auto;',
+    'border-radius:8px;background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small)}',
+  '.dsh-claude-tool-prompt{flex:none;user-select:none;color:var(--dsw-alias-label-caption)}',
+  '.dsh-claude-tool-command{min-width:0;margin:0;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere}',
   '.dsh-claude-tool-detail{margin:6px 0 0;padding:8px 10px;max-height:220px;overflow:auto;border-radius:8px;background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small);white-space:pre-wrap;overflow-wrap:anywhere}',
   '.dsh-claude-flow-row{position:relative;overflow:hidden}',
   '.dsh-claude-flow-leading{flex-shrink:0}',
@@ -222,6 +226,17 @@ function Source({ content, start = 1 }: { content: string; start?: number }) {
   ))}</div>
 }
 
+/** The command as a shell prompt rather than a labelled field: it was typed
+ *  at one, and the prompt is what tells a reader that at a glance. */
+function Terminal({ command }: { command: string }) {
+  return (
+    <div className="dsh-claude-tool-terminal">
+      <span className="dsh-claude-tool-prompt" aria-hidden="true">$</span>
+      <pre className="dsh-claude-tool-command">{command}</pre>
+    </div>
+  )
+}
+
 function TextDetail({ title, value }: { title: string; value: string | undefined }) {
   if (value === undefined || value.length === 0) return null
   return <Section title={title}><pre className="dsh-claude-tool-detail">{value}</pre></Section>
@@ -270,9 +285,10 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
     const stdout = text(output?.stdout)
     const stderr = text(output?.stderr)
     const terminal = [stdout, stderr].filter((value): value is string => value !== undefined).join('\n')
+    const typed = command ?? (typeof inputValue === 'string' ? inputValue : undefined)
     return <>
-      <TextDetail title="Command" value={command ?? (typeof inputValue === 'string' ? inputValue : undefined)} />
-      {input === undefined ? null : <Section title={t('toolInput')}><Fields value={input} omit={['command']} /></Section>}
+      {typed === undefined ? null : <Terminal command={typed} />}
+      {input === undefined ? null : <Section title={t('toolInput')}><Fields value={input} omit={['command', 'description']} /></Section>}
       <TextDetail title={outputTitle} value={terminal || (typeof outputValue === 'string' ? outputValue : undefined)} />
     </>
   }

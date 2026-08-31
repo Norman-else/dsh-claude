@@ -611,6 +611,15 @@ export const taskActivitySection: CSSProperties = {
   margin: '7px 0 0 27px',
 }
 
+/** The task's tool cards. No inset panel of their own: each card already
+ *  carries its own surface, and nesting two would read as a box in a box. */
+export const taskToolList: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  marginTop: 7,
+}
+
 export const taskActivityList: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
