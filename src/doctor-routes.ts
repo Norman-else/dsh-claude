@@ -7,7 +7,7 @@ import { CLAUDE_DOCTOR_PATH } from './constants.ts'
 import { runClaudeDoctor, type ExecutableRuntime } from './executable.ts'
 import type { ClaudeSupervisor, ClaudeSupervisorConfig } from './supervisor.ts'
 import { redactText } from './events.ts'
-import { json, trustedRequest } from './http.ts'
+import { registerPluginRoute } from './http.ts'
 
 export const CLAUDE_DOCTOR_PROBE_TIMEOUT_MS = 15_000
 
@@ -64,15 +64,16 @@ export function registerClaudeDoctorRoutes(
   config: ClaudeSupervisorConfig,
   resolutionError?: unknown,
 ): void {
-  ctx.effect(() => ctx.webServer.register({
+  registerPluginRoute(ctx, {
+    mode: 'unary',
     kind: 'exact',
     path: CLAUDE_DOCTOR_PATH,
-    handler: async (req, res) => {
-      if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-      if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+    methods: ['GET'],
+    budget: 'git',
+    handler: async io => {
       try {
         if (resolutionError !== undefined) {
-          return json(res, 200, {
+          return { status: 200, value: {
             executable: {
               status: 'missing',
               searched: config.executablePath.length > 0 ? [config.executablePath] : ['claude', '~/.local/bin/claude', '/opt/homebrew/bin/claude', '/usr/local/bin/claude'],
@@ -86,16 +87,18 @@ export function registerClaudeDoctorRoutes(
               maxProcesses: config.maxProcesses,
             },
             processes: { count: 0, active: 0 },
-          })
+          } }
         }
         const report = await runClaudeDoctor(runtime, {
           configuredPath: config.executablePath,
           cwd: process.cwd(),
-          signal: AbortSignal.timeout(CLAUDE_DOCTOR_PROBE_TIMEOUT_MS),
+          // Threaded so freeing the socket also stops the probe, rather than
+          // leaving a spawn nobody is waiting for; the ceiling stays its own.
+          signal: AbortSignal.any([io.signal, AbortSignal.timeout(CLAUDE_DOCTOR_PROBE_TIMEOUT_MS)]),
         })
         const processes = supervisor.snapshots()
         if (processes.some(process => process.claudeSessionId !== undefined)) report.handshake = 'ok'
-        json(res, 200, {
+        return { status: 200, value: {
           ...report,
           limits: {
             idleTimeoutMs: config.idleTimeoutMs,
@@ -106,10 +109,10 @@ export function registerClaudeDoctorRoutes(
             active: processes.filter(process => process.state === 'running' || process.state === 'starting').length,
           },
           commandBridge: commandDiagnostics(ctx),
-        })
+        } }
       } catch (error) {
-        json(res, 500, { error: safeMessage(error) })
+        return { status: 500, value: { error: safeMessage(error) } }
       }
     },
-  }), 'dsh-claude: Doctor route')
+  })
 }

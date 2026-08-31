@@ -1,25 +1,16 @@
 import { CLAUDE_REVIEW_COMMENT_PATH } from '../constants.ts'
 import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
-import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
+import { pluginWrite } from './plugin-transport.ts'
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 async function post(path: string, sessionId: string, body: Record<string, unknown>): Promise<unknown> {
-  const response = await fetch(`${CLAUDE_REVIEW_COMMENT_PATH}${path}?sessionId=${encodeURIComponent(sessionId)}`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
+  return await pluginWrite<unknown>(`${CLAUDE_REVIEW_COMMENT_PATH}${path}`, 'fast', undefined, {
+    query: { sessionId },
+    json: body,
   })
-  const value = await response.json() as unknown
-  if (!response.ok) {
-    const error = record(value)
-    throw new Error(typeof error?.message === 'string' ? error.message : 'Review comment request failed.')
-  }
-  return value
 }
 
 export async function addReviewComment(

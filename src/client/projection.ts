@@ -4,7 +4,9 @@ import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
+import { MAX_MULTIPLEX_SESSIONS } from '../plugin-budget.ts'
 import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
+import { pluginProjectionStream } from './plugin-transport.ts'
 
 export interface ClaudeClientProjection {
   readonly schemaVersion: 1
@@ -32,6 +34,10 @@ export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
 }
 
 const RETRY_DELAY_MS = 2_000
+/** Wait for the subscribed set to stop moving before reopening the carrier:
+ *  mounting a session list changes it once per row. */
+const SUBSCRIPTION_SETTLE_MS = 250
+const NDJSON_SEPARATOR = String.fromCharCode(10)
 /** Coalesce stream deltas into at most one React notification per frame. */
 const FRAME_MS = 16
 /** Typewriter smoothing: drain newly arrived prose over roughly this window,
@@ -205,6 +211,8 @@ export function selectStepActivities(
 
 export interface ClaudeProjectionSource extends HostObservable<ClaudeClientProjection> {
   dispose(): void
+  /** Apply one NDJSON line the store demultiplexed to this session. */
+  feed(line: string): void
 }
 
 function isAbort(error: unknown): boolean {
@@ -218,12 +226,16 @@ function delay(ms: number): Promise<void> {
   })
 }
 
-/** Create one lazy source: active subscribers open the Host NDJSON stream, and
- *  a dropped stream reconnects with a fresh snapshot after a bounded delay. */
+/** One session's reducer over the shared carrier's lines.
+ *
+ *  A source opens nothing. It used to hold a stream of its own, which made the
+ *  plugin's connection count a function of how many sessions existed;
+ *  {@link ClaudeProjectionStore} now owns the single carrier and feeds each
+ *  session's lines here. `onDemand` reports whether anyone is watching, which
+ *  is what the store uses to decide which sessions the carrier subscribes to. */
 export function createClaudeProjectionSource(
   sessionId: string,
-  fetchProjection: typeof fetch = fetch,
-  retryDelayMs = RETRY_DELAY_MS,
+  onDemand: (active: boolean) => void = () => {},
 ): ClaudeProjectionSource {
   let snapshot = EMPTY_CLAUDE_PROJECTION
   let revision = 0
@@ -239,8 +251,6 @@ export function createClaudeProjectionSource(
   /** Streaming prose still being revealed: full arrived text plus shown chars. */
   const reveal = new Map<string, { full: ClaudeActivityEvent; shown: number }>()
   let disposed = false
-  let running = false
-  let controller: AbortController | undefined
   let frame: ReturnType<typeof setTimeout> | number | undefined
   let usedAnimationFrame = false
   const listeners = new Set<() => void>()
@@ -447,88 +457,168 @@ export function createClaudeProjectionSource(
     schedulePublish()
   }
 
-  const run = async (): Promise<void> => {
-    if (running) return
-    running = true
-    try {
-      while (!disposed && listeners.size > 0) {
-        controller = new AbortController()
-        try {
-          const response = await fetchProjection(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent(sessionId)}/stream`, {
-            headers: { accept: 'application/x-ndjson' },
-            signal: controller.signal,
-          })
-          if (!response.ok) throw new Error(`Claude projection stream failed (${response.status})`)
-          if (response.body === null) throw new Error('Claude projection stream is unavailable')
-          const reader = response.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
-          while (true) {
-            if (disposed || listeners.size === 0) {
-              await reader.cancel().catch(() => undefined)
-              break
-            }
-            const chunk = await reader.read()
-            buffer += decoder.decode(chunk.value, { stream: !chunk.done })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-            for (const line of lines) applyLine(line)
-            if (chunk.done) break
-          }
-        } catch (error) {
-          // Abort is the ordinary unmount path; other failures retry below.
-          if (isAbort(error)) return
-        } finally {
-          controller = undefined
-        }
-        if (disposed || listeners.size === 0) return
-        await delay(retryDelayMs)
-      }
-    } finally {
-      running = false
-    }
-  }
-
   return {
     getSnapshot: () => snapshot,
+    feed: applyLine,
     subscribe(listener) {
       if (disposed) return () => {}
       const wasIdle = listeners.size === 0
       listeners.add(listener)
-      if (wasIdle) void run()
+      if (wasIdle) onDemand(true)
       return () => {
         listeners.delete(listener)
         if (listeners.size !== 0) return
-        controller?.abort()
-        controller = undefined
         cancelFrame()
+        onDemand(false)
       }
     },
     dispose() {
       disposed = true
       listeners.clear()
-      controller?.abort()
-      controller = undefined
       cancelFrame()
+      onDemand(false)
     },
   }
 }
 
+/**
+ * Every session's projection over ONE connection.
+ *
+ * The plugin used to open an NDJSON stream per session, so its share of the
+ * browser's small per-origin connection budget grew with the number of Claude
+ * sessions — and the overview panel subscribes one per LISTED session, not per
+ * open one. Past a handful of sessions the plugin's own settings panel could no
+ * longer get a connection at all, which is the failure this class exists to
+ * make impossible: the carrier is one connection whatever the session count.
+ *
+ * `source(sessionId)` keeps its shape, so consumers are unaware of any of this.
+ */
 export class ClaudeProjectionStore {
   readonly #sources = new Map<string, ClaudeProjectionSource>()
+  /** Sessions with at least one live subscriber, newest interest last. */
+  readonly #wanted = new Set<string>()
+  readonly #open: (path: string, cancel: AbortSignal) => Promise<ReadableStreamDefaultReader<Uint8Array>>
+  readonly #retryDelayMs: number
+  readonly #settleMs: number
+  #controller: AbortController | undefined
+  #settle: ReturnType<typeof setTimeout> | undefined
+  #running = false
+  #disposed = false
+
+  constructor(options: {
+    open?: (path: string, cancel: AbortSignal) => Promise<ReadableStreamDefaultReader<Uint8Array>>
+    retryDelayMs?: number
+    settleMs?: number
+  } = {}) {
+    this.#open = options.open ?? ((path, cancel) => pluginProjectionStream(path, cancel))
+    this.#retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS
+    this.#settleMs = options.settleMs ?? SUBSCRIPTION_SETTLE_MS
+  }
 
   source(sessionId: string): ClaudeProjectionSource {
     let source = this.#sources.get(sessionId)
     if (source === undefined) {
-      source = createClaudeProjectionSource(sessionId)
+      source = createClaudeProjectionSource(sessionId, active => { this.#demand(sessionId, active) })
       this.#sources.set(sessionId, source)
     }
     return source
   }
 
   dispose(): void {
+    this.#disposed = true
+    if (this.#settle !== undefined) clearTimeout(this.#settle)
+    this.#settle = undefined
+    this.#controller?.abort()
+    this.#controller = undefined
     for (const source of this.#sources.values()) source.dispose()
     this.#sources.clear()
+    this.#wanted.clear()
+  }
+
+  /** Note interest and reopen the carrier once the set stops moving. Mounting
+   *  a session list would otherwise reopen it once per row. */
+  #demand(sessionId: string, active: boolean): void {
+    if (this.#disposed) return
+    if (active) {
+      // Re-inserting moves it to the end, so the LRU drops the coldest lane.
+      this.#wanted.delete(sessionId)
+      this.#wanted.add(sessionId)
+    } else if (!this.#wanted.delete(sessionId)) return
+    if (this.#settle !== undefined) clearTimeout(this.#settle)
+    const timer = setTimeout(() => {
+      this.#settle = undefined
+      this.#reopen()
+    }, this.#settleMs)
+    ;(timer as { unref?: () => void }).unref?.()
+    this.#settle = timer
+  }
+
+  #lanes(): readonly string[] {
+    const wanted = [...this.#wanted]
+    // Newest interest wins a lane; an evicted session keeps its last snapshot.
+    return wanted.slice(Math.max(0, wanted.length - MAX_MULTIPLEX_SESSIONS))
+  }
+
+  #reopen(): void {
+    this.#controller?.abort()
+    this.#controller = undefined
+    if (this.#disposed || this.#wanted.size === 0) return
+    void this.#run()
+  }
+
+  async #run(): Promise<void> {
+    if (this.#running) return
+    this.#running = true
+    try {
+      while (!this.#disposed && this.#wanted.size > 0) {
+        const controller = new AbortController()
+        this.#controller = controller
+        const lanes = this.#lanes()
+        try {
+          const reader = await this.#open(
+            `${CLAUDE_PROJECTION_PATH}/multi?sessions=${lanes.map(encodeURIComponent).join(',')}`,
+            controller.signal,
+          )
+          const decoder = new TextDecoder()
+          let buffer = ''
+          while (!controller.signal.aborted) {
+            const chunk = await reader.read()
+            buffer += decoder.decode(chunk.value, { stream: !chunk.done })
+            const lines = buffer.split(NDJSON_SEPARATOR)
+            buffer = lines.pop() ?? ''
+            for (const line of lines) this.#dispatch(line)
+            if (chunk.done) break
+          }
+          await reader.cancel().catch(() => undefined)
+        } catch (error) {
+          if (isAbort(error)) {
+            // A deliberate reopen; the loop re-reads the current lane set.
+            if (this.#controller !== controller) continue
+            return
+          }
+        } finally {
+          if (this.#controller === controller) this.#controller = undefined
+        }
+        if (this.#disposed || this.#wanted.size === 0) return
+        await delay(this.#retryDelayMs)
+      }
+    } finally {
+      this.#running = false
+    }
+  }
+
+  /** Route one carrier line to the session that owns it. A line for a session
+   *  nobody is watching any more is dropped rather than reviving its lane. */
+  #dispatch(line: string): void {
+    if (line.length === 0) return
+    let session: unknown
+    try {
+      session = (JSON.parse(line) as { session?: unknown }).session
+    } catch {
+      return
+    }
+    if (typeof session !== 'string') return
+    this.#sources.get(session)?.feed(line)
   }
 }
 

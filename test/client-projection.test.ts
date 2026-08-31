@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ClaudeProjectionStore,
   EMPTY_CLAUDE_PROJECTION,
-  createClaudeProjectionSource,
   parseClaudeClientProjection,
   selectStepActivities,
 } from '../src/client/projection.ts'
+import { CLAUDE_PROJECTION_PATH } from '../src/constants.ts'
 
 const valid = {
   schemaVersion: 1 as const,
@@ -15,14 +16,26 @@ const valid = {
 }
 
 const FRAME_MS = 16
+const RETRY_MS = 100
 
-function ndjsonStream() {
+interface Carrier {
+  readonly reader: ReadableStreamDefaultReader<Uint8Array>
+  /** Publish one carrier line, stamped with the session that owns it. */
+  push(session: string, value: object): void
+  pushRaw(line: string): void
+  close(): void
+}
+
+/** One multiplexed NDJSON carrier, handed to the store as an open reader. */
+function carrier(): Carrier {
   let controller!: ReadableStreamDefaultController<Uint8Array>
   const stream = new ReadableStream<Uint8Array>({ start(c) { controller = c } })
   const encoder = new TextEncoder()
   return {
-    response: new Response(stream, { status: 200 }),
-    push(value: unknown) { controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`)) },
+    reader: stream.getReader(),
+    push(session, value) {
+      controller.enqueue(encoder.encode(`${JSON.stringify({ ...value, session })}\n`))
+    },
     pushRaw(line: string) { controller.enqueue(encoder.encode(line)) },
     close() {
       try {
@@ -32,6 +45,26 @@ function ndjsonStream() {
       }
     },
   }
+}
+
+/** A store whose single carrier is ours, so a test can observe exactly how
+ *  many connections the plugin opens and what it asked for. */
+function projectionStore(planned: readonly Carrier[] = []) {
+  const queued = [...planned]
+  const opened: string[] = []
+  const signals: AbortSignal[] = []
+  const store = new ClaudeProjectionStore({
+    open: async (path, cancel) => {
+      opened.push(path)
+      signals.push(cancel)
+      // An unplanned open is not thrown away silently: `opened` records it and
+      // the connection-count assertions fail on it.
+      return (queued.shift() ?? carrier()).reader
+    },
+    retryDelayMs: RETRY_MS,
+    settleMs: 0,
+  })
+  return { store, opened, signals }
 }
 
 async function flush(): Promise<void> {
@@ -103,34 +136,66 @@ describe('Claude client sidecar projection', () => {
     }
   })
 
+  it('carries every subscribed session over a single connection', async () => {
+    // The bug this branch exists to fix. The overview subscribes one source per
+    // LISTED session; when each source opened its own stream the plugin ate the
+    // browser's whole per-origin budget and its own settings panel could no
+    // longer get a connection.
+    vi.useFakeTimers()
+    const stream = carrier()
+    const { store, opened } = projectionStore([stream])
+    const sessions = Array.from({ length: 12 }, (_value, index) => `session-${index}`)
+    const stop = sessions.map(id => store.source(id).subscribe(() => {}))
+    await flush()
+
+    expect(opened).toEqual([
+      `${CLAUDE_PROJECTION_PATH}/multi?sessions=${sessions.map(encodeURIComponent).join(',')}`,
+    ])
+    // One carrier, still demultiplexed: each session sees only its own lines.
+    stream.push('session-3', { ...valid, type: 'snapshot' })
+    stream.push('session-7', { ...valid, type: 'snapshot', revision: 5 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(store.source('session-3').getSnapshot().revision).toBe(1)
+    expect(store.source('session-7').getSnapshot().revision).toBe(5)
+    expect(store.source('session-0').getSnapshot()).toBe(EMPTY_CLAUDE_PROJECTION)
+    // Nothing opens a second connection later either, however long we wait.
+    await vi.advanceTimersByTimeAsync(RETRY_MS * 10)
+    expect(opened).toHaveLength(1)
+    for (const unsubscribe of stop) unsubscribe()
+    stream.close()
+    store.dispose()
+  })
+
   it('carries the rewind ranges from the snapshot line into the published projection', async () => {
     vi.useFakeTimers()
-    const stream = ndjsonStream()
-    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session/a', fetchProjection, 100)
+    const stream = carrier()
+    const { store } = projectionStore([stream])
+    const source = store.source('session/a')
     const unsubscribe = source.subscribe(() => {})
-    stream.push({ ...valid, type: 'snapshot', rewind: { ranges: [{ start: 4, end: 9 }] } })
+    await flush()
+    stream.push('session/a', { ...valid, type: 'snapshot', rewind: { ranges: [{ start: 4, end: 9 }] } })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().rewind).toEqual({ ranges: [{ start: 4, end: 9 }] })
     expect(() => parseClaudeClientProjection({ ...valid, rewind: { ranges: [{ start: -1, end: 2 }] } })).toThrow()
     unsubscribe()
     stream.close()
-    source.dispose()
+    store.dispose()
   })
 
   it('applies the snapshot line and coalesces text appends into one frame', async () => {
     vi.useFakeTimers()
-    const stream = ndjsonStream()
-    const fetchProjection = vi.fn(async (url: RequestInfo | URL) => {
-      expect(String(url)).toContain(`${encodeURIComponent('session/a')}/stream`)
-      return stream.response
-    }) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session/a', fetchProjection, 100)
+    const stream = carrier()
+    const { store, opened } = projectionStore([stream])
+    const source = store.source('session/a')
     expect(source.getSnapshot()).toBe(EMPTY_CLAUDE_PROJECTION)
     const listener = vi.fn()
     const unsubscribe = source.subscribe(listener)
-    stream.push({
+    await flush()
+    // The session id reaches the carrier encoded, as one lane of the multiplex.
+    expect(opened[0]).toBe(`${CLAUDE_PROJECTION_PATH}/multi?sessions=${encodeURIComponent('session/a')}`)
+    stream.push('session/a', {
       ...valid,
       type: 'snapshot',
       activities: [
@@ -143,8 +208,8 @@ describe('Claude client sidecar projection', () => {
     expect(source.getSnapshot().revision).toBe(1)
     const otherStep = selectStepActivities(source.getSnapshot(), 2, 1)
     expect(otherStep).toHaveLength(1)
-    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo' })
-    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 0, append: ' world' })
+    stream.push('session/a', { type: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo' })
+    stream.push('session/a', { type: 'text', turn: 1, step: 1, ordinal: 0, append: ' world' })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     // Typewriter smoothing: the arrived burst reveals gradually, not at once.
@@ -159,25 +224,27 @@ describe('Claude client sidecar projection', () => {
     expect(selectStepActivities(after, 2, 1)).toBe(otherStep)
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(2)
     unsubscribe()
-    source.dispose()
+    stream.close()
+    store.dispose()
   })
 
   it('applies activity and metadata delta lines', async () => {
     vi.useFakeTimers()
-    const stream = ndjsonStream()
-    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const stream = carrier()
+    const { store } = projectionStore([stream])
+    const source = store.source('session')
     const unsubscribe = source.subscribe(() => {})
-    stream.push({ ...valid, type: 'snapshot' })
-    stream.push({ type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
-    stream.push({
+    await flush()
+    stream.push('session', { ...valid, type: 'snapshot' })
+    stream.push('session', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
+    stream.push('session', {
       type: 'meta',
       owned: true,
       commands: [{ publicName: 'review', claudeName: 'review', description: 'Review changes', prefixed: false }],
       repository: { status: 'ready', cwd: '/repo', root: '/repo', branch: 'feature/x', detached: false, worktree: false, dirty: true },
       reviewComments: [],
     })
-    stream.push({ type: 'contextUsage', value: { model: 'default', totalTokens: 5, maxTokens: 10, percentage: 50, categories: [] } })
+    stream.push('session', { type: 'contextUsage', value: { model: 'default', totalTokens: 5, maxTokens: 10, percentage: 50, categories: [] } })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     const snapshot = source.getSnapshot()
@@ -186,65 +253,80 @@ describe('Claude client sidecar projection', () => {
     expect(snapshot.repository?.branch).toBe('feature/x')
     expect(snapshot.contextUsage?.totalTokens).toBe(5)
     unsubscribe()
-    source.dispose()
+    stream.close()
+    store.dispose()
   })
 
-  it('reconnects with a fresh snapshot after the stream ends', async () => {
+  it('reconnects with a fresh snapshot after the carrier ends', async () => {
     vi.useFakeTimers()
-    const first = ndjsonStream()
-    const second = ndjsonStream()
-    const responses = [first, second]
-    const fetchProjection = vi.fn(async () => responses.shift()!.response) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const first = carrier()
+    const second = carrier()
+    const { store, opened } = projectionStore([first, second])
+    const source = store.source('session')
     const unsubscribe = source.subscribe(() => {})
-    first.push({ ...valid, type: 'snapshot' })
+    await flush()
+    first.push('session', { ...valid, type: 'snapshot' })
     first.close()
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
-    second.push({ ...valid, type: 'snapshot', revision: 5 })
-    await vi.advanceTimersByTimeAsync(100)
+    second.push('session', { ...valid, type: 'snapshot', revision: 5 })
+    await vi.advanceTimersByTimeAsync(RETRY_MS)
+    await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
-    expect(fetchProjection).toHaveBeenCalledTimes(2)
+    expect(opened).toHaveLength(2)
     expect(source.getSnapshot().revision).toBe(5)
     unsubscribe()
-    source.dispose()
+    second.close()
+    store.dispose()
   })
 
   it('stops consuming after the last unsubscribe', async () => {
     vi.useFakeTimers()
-    const stream = ndjsonStream()
-    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const stream = carrier()
+    const { store, opened, signals } = projectionStore([stream])
+    const source = store.source('session')
     const unsubscribe = source.subscribe(() => {})
-    stream.push({ ...valid, type: 'snapshot' })
+    await flush()
+    stream.push('session', { ...valid, type: 'snapshot' })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
     unsubscribe()
-    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 9, text: 'late' })
+    await flush()
+    // The carrier is released rather than held open for nobody.
+    expect(signals[0]?.aborted).toBe(true)
+    stream.push('session', { type: 'text', turn: 1, step: 1, ordinal: 9, text: 'late' })
     await flush()
     await vi.advanceTimersByTimeAsync(200)
     expect(source.getSnapshot().revision).toBe(1)
-    expect(fetchProjection).toHaveBeenCalledTimes(1)
-    source.dispose()
+    expect(opened).toHaveLength(1)
+    stream.close()
+    store.dispose()
   })
 
   it('keeps the last verified state when lines are malformed or invalid', async () => {
     vi.useFakeTimers()
-    const stream = ndjsonStream()
-    const fetchProjection = vi.fn(async () => stream.response) as unknown as typeof fetch
-    const source = createClaudeProjectionSource('session', fetchProjection, 100)
+    const stream = carrier()
+    const { store } = projectionStore([stream])
+    const source = store.source('session')
     const unsubscribe = source.subscribe(() => {})
-    stream.push({ ...valid, type: 'snapshot' })
+    await flush()
+    stream.push('session', { ...valid, type: 'snapshot' })
     stream.pushRaw('not json\n')
-    stream.push({ type: 'activity', activity: { turn: -1 } })
-    stream.push({ type: 'text', turn: 1, step: 1, ordinal: 5, append: 'orphan append without base' })
+    stream.push('session', { type: 'activity', activity: { turn: -1 } })
+    stream.push('session', { type: 'text', turn: 1, step: 1, ordinal: 5, append: 'orphan append without base' })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
     expect(source.getSnapshot().activities).toEqual(valid.activities)
+    // The carrier survived the bad lines: the next good one still lands.
+    stream.push('session', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().activities.map(activity => activity.ordinal)).toEqual([0, 1])
     unsubscribe()
-    source.dispose()
+    stream.close()
+    store.dispose()
   })
 })

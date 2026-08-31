@@ -25,23 +25,42 @@ function context(): Context & { handler: Handler } {
 }
 
 function request(method: string, url: string, body?: unknown, overrides: Partial<IncomingMessage> = {}): IncomingMessage {
-  const stream = Readable.from(body === undefined ? [] : [typeof body === 'string' ? body : JSON.stringify(body)])
-  Object.assign(stream, {
+  const text = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body)
+  // io.body() consumes the request with `for await`, so the body has to be a
+  // real stream; the declared content-length is what the wrapper's byte cap
+  // reads before it starts reading.
+  const stream = Readable.from(text.length === 0 ? [] : [Buffer.from(text)])
+  return {
     method,
     url,
-    headers: { host: 'localhost:56454', origin: 'http://localhost:56454' },
+    headers: {
+      host: 'localhost:56454',
+      origin: 'http://localhost:56454',
+      ...(text.length === 0 ? {} : { 'content-length': String(Buffer.byteLength(text)) }),
+    },
     socket: { remoteAddress: '::1' },
+    // registerPluginRoute wires disconnect teardown before its first await.
+    // These cases model a caller that stays connected for the whole exchange,
+    // so the fake accepts listeners and never fires one.
+    on() { return this },
+    [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
     ...overrides,
-  })
-  return stream as IncomingMessage
+  } as unknown as IncomingMessage
 }
 
 function response(): ServerResponse & { statusCode: number; body: string } {
   return {
     statusCode: 0,
     body: '',
-    writeHead(status: number) { this.statusCode = status; return this },
-    end(body: string) { this.body = body },
+    headersSent: false,
+    writableEnded: false,
+    // registerPluginRoute wires disconnect teardown before its first await, so
+    // a fake response has to accept listeners even when a test never fires one.
+    on() { return this },
+    flushHeaders() {},
+    write(chunk: string) { this.body += chunk; return true },
+    writeHead(status: number) { this.statusCode = status; this.headersSent = true; return this },
+    end(body?: string) { this.writableEnded = true; if (body !== undefined) this.body += body },
   } as unknown as ServerResponse & { statusCode: number; body: string }
 }
 

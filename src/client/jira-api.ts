@@ -1,6 +1,6 @@
 import { CLAUDE_JIRA_PATH } from '../constants.ts'
 import type { JiraStatus, JiraTicket } from '../jira.ts'
-import { PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
+import { PluginRequestError, pluginRead, pluginWrite } from './plugin-transport.ts'
 
 export type { JiraStatus, JiraTicket } from '../jira.ts'
 
@@ -18,62 +18,84 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function call(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(`${CLAUDE_JIRA_PATH}${path}`, {
-    credentials: 'same-origin',
-    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS),
-    ...init,
-  })
-  const body = record(await response.json() as unknown)
-  if (!response.ok) {
-    throw new JiraClientError(
-      typeof body?.message === 'string' ? body.message : 'Jira is unavailable.',
-      typeof body?.error === 'string' ? body.error : undefined,
-    )
+/**
+ * Every Jira failure the panels catch is a `JiraClientError`, whatever the
+ * transport threw: `ClaudeHeroRepositoryControls` branches on `code` to tell
+ * 'not-connected' apart from a real outage, and the settings card renders the
+ * message verbatim.
+ *
+ * The routes answer `{ error, message }`, so `message` is already the sentence
+ * to show. A body carrying only a code — a 405, a bad JSON body — used to read
+ * 'Jira is unavailable.' rather than leaking the code as prose, and it still
+ * does. Transport failures (a starved pool, an elapsed budget, an older Host
+ * without the route) carry their own wording and keep it.
+ */
+function jiraFailure(cause: unknown): JiraClientError {
+  if (cause instanceof JiraClientError) return cause
+  if (!(cause instanceof PluginRequestError)) {
+    return new JiraClientError(cause instanceof Error ? cause.message : String(cause))
   }
+  return new JiraClientError(cause.message === cause.code ? 'Jira is unavailable.' : cause.message, cause.code)
+}
+
+function payload(value: unknown): Record<string, unknown> {
+  const body = record(value)
   if (body === undefined) throw new JiraClientError('Invalid Jira response.')
   return body
 }
 
-function status(body: Record<string, unknown>): JiraStatus {
+function status(value: unknown): JiraStatus {
+  const body = payload(value)
   if (typeof body.connected !== 'boolean') throw new JiraClientError('Invalid Jira status response.')
   return body as unknown as JiraStatus
 }
 
 export async function loadJiraStatus(signal?: AbortSignal): Promise<JiraStatus> {
-  return status(await call('/status', { method: 'GET', headers: { accept: 'application/json' }, ...(signal === undefined ? {} : { signal }) }))
+  try {
+    return status(await pluginRead(`${CLAUDE_JIRA_PATH}/status`, 'remote', signal))
+  } catch (cause) {
+    throw jiraFailure(cause)
+  }
 }
 
 export async function connectJira(input: { siteUrl: string; email: string; apiToken: string }): Promise<JiraStatus> {
-  return status(await call('/connect', {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  }))
+  try {
+    return status(await pluginWrite(`${CLAUDE_JIRA_PATH}/connect`, 'remote', undefined, { json: input }))
+  } catch (cause) {
+    throw jiraFailure(cause)
+  }
 }
 
 export async function disconnectJira(): Promise<void> {
-  await call('/disconnect', { method: 'POST', headers: { accept: 'application/json' } })
+  try {
+    await pluginWrite(`${CLAUDE_JIRA_PATH}/disconnect`, 'remote')
+  } catch (cause) {
+    throw jiraFailure(cause)
+  }
 }
 
 export async function searchJiraTickets(query: string, signal?: AbortSignal): Promise<readonly JiraTicket[]> {
-  const body = await call(`/search?query=${encodeURIComponent(query)}`, { method: 'GET', headers: { accept: 'application/json' }, ...(signal === undefined ? {} : { signal }) })
-  if (!Array.isArray(body.tickets)) throw new JiraClientError('Invalid Jira search response.')
-  const tickets: JiraTicket[] = []
-  for (const item of body.tickets) {
-    const ticket = record(item)
-    if (ticket === undefined || typeof ticket.key !== 'string' || typeof ticket.summary !== 'string' || typeof ticket.url !== 'string') continue
-    tickets.push(ticket as unknown as JiraTicket)
+  try {
+    const body = payload(await pluginRead(`${CLAUDE_JIRA_PATH}/search`, 'remote', signal, { query: { query } }))
+    if (!Array.isArray(body.tickets)) throw new JiraClientError('Invalid Jira search response.')
+    const tickets: JiraTicket[] = []
+    for (const item of body.tickets) {
+      const ticket = record(item)
+      if (ticket === undefined || typeof ticket.key !== 'string' || typeof ticket.summary !== 'string' || typeof ticket.url !== 'string') continue
+      tickets.push(ticket as unknown as JiraTicket)
+    }
+    return tickets
+  } catch (cause) {
+    throw jiraFailure(cause)
   }
-  return tickets
 }
 
 export async function assignJiraTicket(key: string): Promise<void> {
-  await call('/assign', {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ key }),
-  })
+  try {
+    await pluginWrite(`${CLAUDE_JIRA_PATH}/assign`, 'remote', undefined, { json: { key } })
+  } catch (cause) {
+    throw jiraFailure(cause)
+  }
 }
 
 /** Draft seeded into the composer when a session starts from a ticket. */

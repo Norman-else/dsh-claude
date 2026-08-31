@@ -33,8 +33,13 @@ function response() {
   return {
     statusCode: 0,
     body: '',
-    writeHead(status: number) { this.statusCode = status },
-    end(body: string) { this.body = body },
+    headersSent: false,
+    writableEnded: false,
+    on() { return this },
+    flushHeaders() {},
+    write(chunk: string) { this.body += chunk; return true },
+    writeHead(status: number) { this.statusCode = status; this.headersSent = true; return this },
+    end(body?: string) { this.writableEnded = true; if (body !== undefined) this.body += body },
   } as unknown as ServerResponse & { statusCode: number; body: string }
 }
 
@@ -42,6 +47,7 @@ function request(headers: Record<string, string>): IncomingMessage {
   return {
     method: 'GET',
     headers,
+    on() { return this },
     socket: { remoteAddress: '127.0.0.1' },
   } as unknown as IncomingMessage
 }

@@ -5,13 +5,7 @@ import type {
   RepositoryActionRequest,
   RepositoryActionResult,
 } from '../repository-actions.ts'
-import { PLUGIN_ACTION_TIMEOUT_MS, PLUGIN_READ_TIMEOUT_MS, pluginRequestSignal } from './plugin-request.ts'
-
-interface ErrorBody {
-  readonly error?: string
-  readonly message?: string
-  readonly commit?: string
-}
+import { PluginRequestError, pluginRead, pluginWrite } from './plugin-transport.ts'
 
 export class RepositoryActionClientError extends Error {
   readonly code?: string
@@ -29,18 +23,14 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-async function response(pending: Promise<Response>): Promise<unknown> {
-  const result = await pending
-  const body = await result.json() as unknown
-  if (!result.ok) {
-    const error = record(body) as ErrorBody | undefined
-    throw new RepositoryActionClientError(
-      typeof error?.message === 'string' ? error.message : 'Repository action failed.',
-      typeof error?.error === 'string' ? error.error : undefined,
-      typeof error?.commit === 'string' ? error.commit : undefined,
-    )
-  }
-  return body
+/** The dialog branches on `code`, so a route refusal keeps arriving as this
+ *  class rather than as the transport's own error.
+ *
+ *  `commit` cannot be carried across: the transport forwards a failed route's
+ *  message and error code, not the rest of its body, so a commit that survived
+ *  a failed push no longer reaches the dialog that offers its hash. */
+function actionError(error: unknown): unknown {
+  return error instanceof PluginRequestError ? new RepositoryActionClientError(error.message, error.code) : error
 }
 
 function preview(value: unknown): RepositoryActionPreview {
@@ -73,40 +63,38 @@ function result(value: unknown): RepositoryActionResult {
   return input as unknown as RepositoryActionResult
 }
 
-function endpoint(path: string, sessionId: string): string {
-  return `${CLAUDE_REPOSITORY_ACTION_PATH}${path}?sessionId=${encodeURIComponent(sessionId)}`
-}
-
+/** The preview only chains local Git; everything that writes may reach a remote. */
 export async function loadRepositoryActionPreview(sessionId: string, signal?: AbortSignal): Promise<RepositoryActionPreview> {
-  return preview(await response(fetch(endpoint('/preview', sessionId), {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json' },
-    signal: pluginRequestSignal(PLUGIN_READ_TIMEOUT_MS, signal),
-  })))
+  try {
+    return preview(await pluginRead<unknown>(`${CLAUDE_REPOSITORY_ACTION_PATH}/preview`, 'git', signal, { query: { sessionId } }))
+  } catch (error) {
+    throw actionError(error)
+  }
 }
 
 export async function generateCommitMessage(sessionId: string, fingerprint: string, signal?: AbortSignal): Promise<string> {
-  const value = record(await response(fetch(endpoint('/message', sessionId), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ fingerprint }),
-    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS, signal),
-  })))
-  if (typeof value?.message !== 'string') throw new Error('Invalid generated commit message.')
-  return value.message
+  try {
+    const value = record(await pluginWrite<unknown>(`${CLAUDE_REPOSITORY_ACTION_PATH}/message`, 'remote', signal, {
+      query: { sessionId },
+      json: { fingerprint },
+    }))
+    if (typeof value?.message !== 'string') throw new Error('Invalid generated commit message.')
+    return value.message
+  } catch (error) {
+    throw actionError(error)
+  }
 }
 
-export function executeRepositoryAction(
+export async function executeRepositoryAction(
   sessionId: string,
   request: RepositoryActionRequest & { readonly action: RepositoryActionKind },
 ): Promise<RepositoryActionResult> {
-  return response(fetch(endpoint('', sessionId), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-    signal: pluginRequestSignal(PLUGIN_ACTION_TIMEOUT_MS),
-  })).then(result)
+  try {
+    return result(await pluginWrite<unknown>(CLAUDE_REPOSITORY_ACTION_PATH, 'remote', undefined, {
+      query: { sessionId },
+      json: request,
+    }))
+  } catch (error) {
+    throw actionError(error)
+  }
 }

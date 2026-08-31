@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ClaudeSidecarRepository } from '../src/sidecar.ts'
@@ -10,10 +10,13 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>
 function context(): Context & { handler: Handler } {
   const target = { handler: async () => {} } as { handler: Handler }
   return Object.assign(target, {
-    effect: (register: () => unknown) => {
+    effect: (register: () => unknown, _label?: string) => {
       const route = register() as { handler: Handler }
       target.handler = route.handler
     },
+    // The projection route is a stream route: registerPluginRoute reports a
+    // failed stream through the logger rather than the socket.
+    logger: { info: () => {}, warn: () => {} },
     webServer: {
       register: (route: { kind: string; path: string; handler: Handler }) => {
         expect(route).toMatchObject({ kind: 'prefix', path: CLAUDE_PROJECTION_PATH })
@@ -28,24 +31,61 @@ function request(url: string, overrides: Partial<IncomingMessage> = {}): Incomin
     method: 'GET',
     url,
     headers: { host: 'localhost:56454' },
+    // registerPluginRoute arms disconnect teardown before its first await, so
+    // the fake has to accept listeners on both halves of the exchange.
+    on() { return this },
     socket: { remoteAddress: '::1' },
     ...overrides,
   } as unknown as IncomingMessage
 }
 
-function response(): ServerResponse & { statusCode: number; body: string; headers: Record<string, string> } {
+type FakeResponse = ServerResponse & {
+  statusCode: number
+  body: string
+  headers: Record<string, string>
+  flushed: boolean
+  /** Fire these to simulate the browser dropping the connection. */
+  closeHandlers: (() => void)[]
+}
+
+function response(): FakeResponse {
+  const closeHandlers: (() => void)[] = []
   return {
     statusCode: 0,
     body: '',
-    headers: {},
-    writeHead(status: number, headers: Record<string, string>) {
-      this.statusCode = status
-      this.headers = headers
+    headers: {} as Record<string, string>,
+    flushed: false,
+    headersSent: false,
+    writableEnded: false,
+    closeHandlers,
+    on(event: string, callback: () => void) {
+      if (event === 'close') closeHandlers.push(callback)
       return this
     },
-    end(body: string) { this.body = body },
-  } as unknown as ServerResponse & { statusCode: number; body: string; headers: Record<string, string> }
+    flushHeaders() { this.flushed = true },
+    writeHead(status: number, headers: Record<string, string> = {}) {
+      this.statusCode = status
+      this.headers = headers
+      this.headersSent = true
+      return this
+    },
+    write(chunk: string) { this.body += chunk; return true },
+    end(chunk?: string) { this.writableEnded = true; if (chunk !== undefined) this.body += chunk },
+  } as unknown as FakeResponse
 }
+
+function lines(res: FakeResponse): Record<string, unknown>[] {
+  return res.body.split('\n').filter(line => line.length > 0).map(line => JSON.parse(line) as Record<string, unknown>)
+}
+
+/** The multiplexed carrier's URL: one connection, whatever the session count. */
+function multi(...sessionIds: readonly string[]): string {
+  return `${CLAUDE_PROJECTION_PATH}/multi?sessions=${sessionIds.map(id => encodeURIComponent(id)).join(',')}`
+}
+
+const settled = async (): Promise<void> => { await new Promise(resolve => setImmediate(resolve)) }
+
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('Claude sidecar projection route', () => {
   it('returns only client-safe projection fields', async () => {
@@ -115,40 +155,90 @@ describe('Claude sidecar projection route', () => {
     expect(method.statusCode).toBe(405)
   })
 
-  it('streams a snapshot line, forwards live deltas, and unsubscribes on close', async () => {
+  it('carries every session on one stream, stamping each line with its session', async () => {
     const ctx = context()
-    let listener: ((delta: unknown) => void) | undefined
-    let unsubscribed = false
+    const listeners = new Map<string, (delta: unknown) => void>()
+    const unsubscribed: string[] = []
     const sidecar = {
       read: async () => ({ schemaVersion: 1 as const, revision: 2, activities: [] }),
-      subscribe: (_sessionId: string, callback: (delta: unknown) => void) => {
-        listener = callback
-        return () => { unsubscribed = true }
+      subscribe: (sessionId: string, callback: (delta: unknown) => void) => {
+        listeners.set(sessionId, callback)
+        return () => { unsubscribed.push(sessionId) }
       },
     } as unknown as ClaudeSidecarRepository
     registerClaudeProjectionRoute(ctx, sidecar, () => true)
-    const closeHandlers: (() => void)[] = []
-    const res = {
-      statusCode: 0,
-      body: '',
-      headers: {} as Record<string, string>,
-      writeHead(status: number, headers: Record<string, string>) { this.statusCode = status; this.headers = headers; return this },
-      flushHeaders() {},
-      write(chunk: string) { this.body += chunk; return true },
-      end() {},
-      on(event: string, callback: () => void) { if (event === 'close') closeHandlers.push(callback); return this },
-    } as unknown as ServerResponse & { statusCode: number; body: string; headers: Record<string, string> }
-    const pending = ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent('session/a')}/stream`), res)
-    await new Promise(resolve => setImmediate(resolve))
+    const res = response()
+    const pending = ctx.handler(request(multi('session/a', 'session-b')), res)
+    await settled()
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('ndjson')
-    const first = JSON.parse(res.body.split('\n')[0]!)
-    expect(first).toMatchObject({ type: 'snapshot', revision: 2, owned: true, reviewComments: [] })
-    listener!({ kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
-    const lines = res.body.trim().split('\n')
-    expect(JSON.parse(lines[1]!)).toEqual({ type: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
-    for (const callback of closeHandlers) callback()
+    expect(lines(res)).toEqual([
+      expect.objectContaining({ type: 'snapshot', session: 'session/a', revision: 2, owned: true, reviewComments: [] }),
+      expect.objectContaining({ type: 'snapshot', session: 'session-b', revision: 2, owned: true, reviewComments: [] }),
+    ])
+    listeners.get('session/a')!({ kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
+    listeners.get('session-b')!({ kind: 'text', turn: 4, step: 2, ordinal: 7, append: 'There' })
+    expect(lines(res).slice(2)).toEqual([
+      { type: 'text', session: 'session/a', turn: 1, step: 1, ordinal: 0, append: 'Hi' },
+      { type: 'text', session: 'session-b', turn: 4, step: 2, ordinal: 7, append: 'There' },
+    ])
+    for (const callback of res.closeHandlers) callback()
     await pending
-    expect(unsubscribed).toBe(true)
+    expect(unsubscribed).toEqual(['session/a', 'session-b'])
+  })
+
+  it('paints the carrier before any repository probe, so one wedged session cannot block the rest', async () => {
+    const ctx = context()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 5, activities: [] }),
+      subscribe: () => () => undefined,
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(
+      ctx,
+      sidecar,
+      () => true,
+      () => [],
+      async sessionId => sessionId === 'wedged'
+        ? await new Promise(() => undefined)
+        : { status: 'ready', cwd: '/tmp', root: '/tmp', branch: 'main', detached: false, worktree: false, dirty: false },
+    )
+    const res = response()
+    const pending = ctx.handler(request(multi('wedged', 'healthy')), res)
+    // Synchronously, before a single probe has had the chance to resolve: the
+    // headers are out, so the browser already knows the carrier is alive.
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('ndjson')
+    expect(res.headers['cache-control']).toContain('no-store')
+    expect(res.flushed).toBe(true)
+    await settled()
+    // The wedged session owes its own lane a snapshot and nobody else's.
+    expect(lines(res)).toEqual([
+      expect.objectContaining({ type: 'snapshot', session: 'healthy', revision: 5 }),
+    ])
+    for (const callback of res.closeHandlers) callback()
+    await pending
+  })
+
+  it('tears the carrier down when the client leaves before the first snapshot resolves', async () => {
+    const setIntervals = vi.spyOn(globalThis, 'setInterval')
+    const clearIntervals = vi.spyOn(globalThis, 'clearInterval')
+    const ctx = context()
+    let unsubscribed = 0
+    const sidecar = {
+      // Never resolves: the client gives up while the snapshot is still being
+      // assembled, which is the window the 53-open/33-close leak lived in.
+      read: async () => await new Promise(() => undefined),
+      subscribe: () => () => { unsubscribed += 1 },
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(ctx, sidecar, () => true)
+    const res = response()
+    const pending = ctx.handler(request(multi('session/a', 'session-b')), res)
+    for (const callback of res.closeHandlers) callback()
+    await pending
+    expect(res.body).toBe('')
+    expect(unsubscribed).toBe(2)
+    const timer = setIntervals.mock.results.at(-1)?.value
+    expect(timer).toBeDefined()
+    expect(clearIntervals).toHaveBeenCalledWith(timer)
   })
 })

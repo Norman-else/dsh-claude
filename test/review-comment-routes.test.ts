@@ -23,15 +23,24 @@ function context(): Context & { handler: Handler } {
   }) as unknown as Context & { handler: Handler }
 }
 
+/** `io.body()` reads the request with `for await` and refuses a body whose
+ *  declared length overruns the route cap, so a fake carrying one has to be
+ *  async-iterable and has to declare its own size. */
 function request(url: string, body?: unknown): IncomingMessage {
-  const payload = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
+  const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body))
   return {
     method: 'POST',
     url,
-    headers: { host: 'localhost:56454' },
+    headers: {
+      host: 'localhost:56454',
+      ...(payload === undefined ? {} : { 'content-length': String(payload.byteLength) }),
+    },
+    // registerPluginRoute attaches its disconnect teardown before the first
+    // await, so even a request that never disconnects has to accept listeners.
+    on() { return this },
     socket: { remoteAddress: '::1' },
     [Symbol.asyncIterator]: async function* () {
-      for (const chunk of payload) yield chunk
+      if (payload !== undefined) yield payload
     },
   } as unknown as IncomingMessage
 }
@@ -40,11 +49,17 @@ function response(): ServerResponse & { statusCode: number; body: string } {
   return {
     statusCode: 0,
     body: '',
+    headersSent: false,
+    writableEnded: false,
+    on() { return this },
+    flushHeaders() {},
+    write(chunk: string) { this.body += chunk; return true },
     writeHead(status: number) {
       this.statusCode = status
+      this.headersSent = true
       return this
     },
-    end(body: string) { this.body = body },
+    end(body?: string) { this.writableEnded = true; if (body !== undefined) this.body += body },
   } as unknown as ServerResponse & { statusCode: number; body: string }
 }
 

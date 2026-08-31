@@ -102,9 +102,12 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>
 function context(): Context & { handler: Handler } {
   const target = { handler: async () => {} } as { handler: Handler }
   return Object.assign(target, {
-    effect: (register: () => unknown) => {
+    effect: (register: () => unknown, _label?: string) => {
       target.handler = (register() as { handler: Handler }).handler
     },
+    // The ask route is a stream route: registerPluginRoute reports a failed
+    // stream through the logger rather than the socket.
+    logger: { info: () => {}, warn: () => {} },
     webServer: {
       register: (route: { kind: string; path: string; handler: Handler }) => {
         expect(route).toMatchObject({ kind: 'exact', path: CLAUDE_ASK_PATH })
@@ -115,23 +118,39 @@ function context(): Context & { handler: Handler } {
 }
 
 function request(url: string, body?: unknown): IncomingMessage {
-  const stream = Readable.from(body === undefined ? [] : [JSON.stringify(body)])
+  const text = body === undefined ? '' : JSON.stringify(body)
+  // `io.body()` consumes the request with `for await`, so the fake has to be a
+  // real readable. A real IncomingMessage emits 'close' only once its response
+  // has finished; a plain Readable fires it as soon as the body is drained,
+  // which registerPluginRoute would read as the client disconnecting mid-ask.
+  const stream = Readable.from(text.length === 0 ? [] : [Buffer.from(text)], { emitClose: false })
   Object.assign(stream, {
     method: 'POST',
     url,
-    headers: { host: 'localhost:56454', origin: 'http://localhost:56454' },
+    headers: {
+      host: 'localhost:56454',
+      origin: 'http://localhost:56454',
+      // The byte cap is checked against the declared length before a chunk is read.
+      ...(text.length === 0 ? {} : { 'content-length': String(Buffer.byteLength(text)) }),
+    },
     socket: { remoteAddress: '::1' },
   })
-  return stream as IncomingMessage
+  return stream as unknown as IncomingMessage
 }
 
 function response(): ServerResponse & { statusCode: number; body: string } {
   return {
     statusCode: 0,
     body: '',
-    writeHead(status: number) { this.statusCode = status; return this },
+    headersSent: false,
+    writableEnded: false,
+    // registerPluginRoute wires disconnect teardown before its first await, so
+    // a fake response has to accept listeners even when a test never fires one.
+    on() { return this },
+    flushHeaders() {},
+    writeHead(status: number) { this.statusCode = status; this.headersSent = true; return this },
     write(chunk: string) { this.body += chunk; return true },
-    end(chunk?: string) { if (chunk !== undefined) this.body += chunk },
+    end(chunk?: string) { this.writableEnded = true; if (chunk !== undefined) this.body += chunk },
   } as unknown as ServerResponse & { statusCode: number; body: string }
 }
 

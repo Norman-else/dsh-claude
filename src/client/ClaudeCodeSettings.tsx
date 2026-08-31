@@ -5,6 +5,7 @@ import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
+import { PluginRequestError, pluginRead, pluginWrite } from './plugin-transport.ts'
 
 interface DoctorReport {
   executable: { status: 'found' | 'missing'; path?: string; searched: readonly string[] }
@@ -265,8 +266,9 @@ export function isPlanUsageReport(value: unknown): value is PlanUsageReport {
       && typeof (entry as Record<string, unknown>).id === 'string')
 }
 
-/** Coarse duration for a reset countdown or a fetch age: minutes below an
- *  hour, then hours, then days. Never negative — a passed reset reads '0m'. */
+/** Coarse duration for a reset countdown or the age of a reading: minutes
+ *  below an hour, then hours, then days. Never negative — a passed reset
+ *  reads '0m'. */
 export function durationLabel(milliseconds: number): string {
   const minutes = Math.max(0, Math.round(milliseconds / 60_000))
   if (minutes < 60) return `${minutes}m`
@@ -296,26 +298,48 @@ export function PlanUsageMeter({ window: usageWindow, t, now }: {
   )
 }
 
-/** Every panel read is a local plugin route, so a request still outstanding
- *  after this long is a wedged host, not a slow one — and a settings card that
- *  says so beats one that says "Loading…" forever. */
-const SETTINGS_REQUEST_TIMEOUT_MS = 20_000
+/**
+ * These four cards are the ones that fail together when the connection pool
+ * saturates, so the failure line has to say which kind of failure this was.
+ * `starved` means the plugin is holding every connection it may hold and this
+ * read never left the browser — a transient local condition the user can retry,
+ * which is why it carries the meter's pressure tone rather than the error tone.
+ * Every other reason is a Host that answered badly or not at all.
+ *
+ * The detail stays the failing route's own sentence, exactly as before; this
+ * branch fixes a fault and ships no new user-facing copy.
+ */
+interface CardFailure {
+  detail: string
+  starved: boolean
+}
 
-/** Fetch the plan usage report; POST forces the backend to re-read it. */
-export async function loadPlanUsage(refresh: boolean): Promise<PlanUsageReport> {
-  const response = await fetch(CLAUDE_USAGE_PATH, {
-    method: refresh ? 'POST' : 'GET',
-    credentials: 'same-origin',
-    signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
-    headers: { accept: 'application/json' },
-  })
-  const payload = await response.json() as unknown
-  if (!response.ok) {
-    const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
-      ? payload.error
-      : `HTTP ${response.status}`
-    throw new Error(message)
+function cardFailure(cause: unknown): CardFailure {
+  return {
+    detail: cause instanceof Error ? cause.message : String(cause),
+    starved: cause instanceof PluginRequestError && cause.reason === 'starved',
   }
+}
+
+function FailureNotice({ label, failure }: { label: string; failure: CardFailure }) {
+  return (
+    <p
+      role="alert"
+      style={{
+        ...styles.notice,
+        color: failure.starved ? 'var(--dsw-alias-state-warning-primary, #d69e2e)' : 'var(--dsw-alias-state-error-primary)',
+      }}
+    >{label}: {failure.detail}</p>
+  )
+}
+
+/** The plan usage report. A plain read serves the cached reading from memory;
+ *  the refresh spawns a probe process, which is why only it pays the remote
+ *  budget. */
+export async function loadPlanUsage(refresh: boolean): Promise<PlanUsageReport> {
+  const payload = refresh
+    ? await pluginWrite(CLAUDE_USAGE_PATH, 'remote')
+    : await pluginRead(CLAUDE_USAGE_PATH, 'fast')
   if (!isPlanUsageReport(payload)) throw new Error('Invalid plan usage response')
   return payload
 }
@@ -326,7 +350,7 @@ export function PlanUsageCard({ t, load }: {
 }) {
   const [report, setReport] = useState<PlanUsageReport>()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<CardFailure>()
 
   const request = useCallback(async (refresh: boolean) => {
     setBusy(true)
@@ -334,7 +358,7 @@ export function PlanUsageCard({ t, load }: {
     try {
       setReport(await load(refresh))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(cardFailure(cause))
     } finally {
       setBusy(false)
     }
@@ -342,8 +366,8 @@ export function PlanUsageCard({ t, load }: {
 
   useEffect(() => { void request(false) }, [request])
 
-  // Countdowns are read at render time; the fetch timestamp is enough of a
-  // clock because a stale reading is labelled with its own age.
+  // Countdowns are read at render time; the report's own timestamp is enough
+  // of a clock because a stale reading is labelled with its own age.
   const now = Date.now()
   return (
     <section style={styles.settingsCard}>
@@ -379,23 +403,23 @@ export function PlanUsageCard({ t, load }: {
       {report !== undefined && report.fetchedAt > 0
         ? <p style={styles.notice}>{t('planUsageUpdated', { age: durationLabel(now - report.fetchedAt) })}</p>
         : null}
-      {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('planUsageError')}: {error}</p>}
+      {error === undefined ? null : <FailureNotice label={t('planUsageError')} failure={error} />}
     </section>
   )
 }
 
 export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   const [report, setReport] = useState<DoctorReport>()
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<CardFailure>()
   const [busy, setBusy] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<PluginUpdateStatus>()
-  const [updateError, setUpdateError] = useState<string>()
+  const [updateError, setUpdateError] = useState<CardFailure>()
   const [updateBusy, setUpdateBusy] = useState<'check' | 'update'>()
   const [globalSettings, setGlobalSettings] = useState<GlobalSettingsView>()
-  const [globalSettingsError, setGlobalSettingsError] = useState<string>()
+  const [globalSettingsError, setGlobalSettingsError] = useState<CardFailure>()
   const [globalSettingsBusy, setGlobalSettingsBusy] = useState(false)
   const [jiraStatus, setJiraStatus] = useState<JiraStatus>()
-  const [jiraError, setJiraError] = useState<string>()
+  const [jiraError, setJiraError] = useState<CardFailure>()
   const [jiraBusy, setJiraBusy] = useState(false)
   const [jiraSite, setJiraSite] = useState('')
   const [jiraEmail, setJiraEmail] = useState('')
@@ -403,7 +427,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
   useEffect(() => {
     const controller = new AbortController()
     void loadJiraStatus(controller.signal).then(setJiraStatus, (reason: unknown) => {
-      if (!controller.signal.aborted) setJiraError(reason instanceof Error ? reason.message : String(reason))
+      if (!controller.signal.aborted) setJiraError(cardFailure(reason))
     })
     return () => { controller.abort() }
   }, [])
@@ -414,7 +438,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
       setJiraStatus(await connectJira({ siteUrl: jiraSite, email: jiraEmail, apiToken: jiraToken }))
       setJiraToken('')
     } catch (cause) {
-      setJiraError(cause instanceof Error ? cause.message : String(cause))
+      setJiraError(cardFailure(cause))
     } finally {
       setJiraBusy(false)
     }
@@ -426,7 +450,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
       await disconnectJira()
       setJiraStatus({ connected: false })
     } catch (cause) {
-      setJiraError(cause instanceof Error ? cause.message : String(cause))
+      setJiraError(cardFailure(cause))
     } finally {
       setJiraBusy(false)
     }
@@ -437,16 +461,9 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
     setError(undefined)
     setReport(undefined)
     try {
-      const response = await fetch(CLAUDE_DOCTOR_PATH, {
-        credentials: 'same-origin',
-        signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
-        headers: { accept: 'application/json' },
-      })
-      const payload = await response.json() as DoctorReport | { error?: string }
-      if (!response.ok) throw new Error('error' in payload ? payload.error : `HTTP ${response.status}`)
-      setReport(payload as DoctorReport)
+      setReport(await pluginRead<DoctorReport>(CLAUDE_DOCTOR_PATH, 'fast'))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(cardFailure(cause))
     } finally {
       setBusy(false)
     }
@@ -458,24 +475,13 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
     setGlobalSettingsBusy(true)
     setGlobalSettingsError(undefined)
     try {
-      const response = await fetch(CLAUDE_GLOBAL_SETTINGS_PATH, {
-        method: changes === undefined ? 'GET' : 'PATCH',
-        credentials: 'same-origin',
-        signal: AbortSignal.timeout(SETTINGS_REQUEST_TIMEOUT_MS),
-        headers: { accept: 'application/json', ...(changes === undefined ? {} : { 'content-type': 'application/json' }) },
-        ...(changes === undefined ? {} : { body: JSON.stringify({ changes }) }),
-      })
-      const payload = await response.json() as unknown
-      if (!response.ok) {
-        const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
-          ? payload.error
-          : `HTTP ${response.status}`
-        throw new Error(message)
-      }
+      const payload = changes === undefined
+        ? await pluginRead(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast')
+        : await pluginWrite(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast', undefined, { method: 'PATCH', json: { changes } })
       if (!isGlobalSettingsView(payload)) throw new Error('Invalid global settings response')
       setGlobalSettings(payload)
     } catch (cause) {
-      setGlobalSettingsError(cause instanceof Error ? cause.message : String(cause))
+      setGlobalSettingsError(cardFailure(cause))
     } finally {
       setGlobalSettingsBusy(false)
     }
@@ -487,22 +493,13 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
     setUpdateBusy(action)
     setUpdateError(undefined)
     try {
-      const response = await fetch(action === 'check' ? CLAUDE_UPDATE_CHECK_PATH : CLAUDE_UPDATE_PATH, {
-        method: action === 'check' ? 'GET' : 'POST',
-        credentials: 'same-origin',
-        headers: { accept: 'application/json' },
-      })
-      const payload = await response.json() as unknown
-      if (!response.ok) {
-        const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
-          ? payload.error
-          : `HTTP ${response.status}`
-        throw new Error(message)
-      }
+      const payload = action === 'check'
+        ? await pluginRead(CLAUDE_UPDATE_CHECK_PATH, 'remote')
+        : await pluginWrite(CLAUDE_UPDATE_PATH, 'remote')
       if (!isPluginUpdateStatus(payload)) throw new Error('Invalid update response')
       setUpdateStatus(payload)
     } catch (cause) {
-      setUpdateError(cause instanceof Error ? cause.message : String(cause))
+      setUpdateError(cardFailure(cause))
     } finally {
       setUpdateBusy(undefined)
     }
@@ -545,7 +542,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
             ])}
           </div>
         )}
-        {error === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('error')}: {error}</p>}
+        {error === undefined ? null : <FailureNotice label={t('error')} failure={error} />}
       </section>
 
       <PlanUsageCard t={t} load={loadPlanUsage} />
@@ -579,7 +576,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           </div>
           )
         })}
-        {globalSettingsError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('globalSettingsError')}: {globalSettingsError}</p>}
+        {globalSettingsError === undefined ? null : <FailureNotice label={t('globalSettingsError')} failure={globalSettingsError} />}
       </section>
 
       <section style={styles.settingsCard}>
@@ -621,7 +618,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
             >{jiraBusy ? t('jiraConnecting') : t('jiraConnect')}</button>
           </div>
         </>}
-        {jiraError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('jiraError')}: {jiraError}</p>}
+        {jiraError === undefined ? null : <FailureNotice label={t('jiraError')} failure={jiraError} />}
       </section>
 
       <section style={styles.settingsCard}>
@@ -645,7 +642,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         )}
         {updateStatus?.message === undefined ? null : <p style={styles.notice}>{updateStatus.message}</p>}
         {updateStatus?.restartRequired !== true ? null : <p style={styles.notice}>{t('restartRequired')}</p>}
-        {updateError === undefined ? null : <p role="alert" style={{ ...styles.notice, color: 'var(--dsw-alias-state-error-primary)' }}>{t('updateError')}: {updateError}</p>}
+        {updateError === undefined ? null : <FailureNotice label={t('updateError')} failure={updateError} />}
         <div style={styles.settingsActions}>
           <button type="button" style={styles.button} onClick={() => { void requestUpdate('check') }} disabled={updateBusy !== undefined}>
             {updateBusy === 'check' ? t('checkingUpdates') : t('checkUpdates')}

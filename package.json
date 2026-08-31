@@ -98,6 +98,7 @@
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-subprocess": "*",
+    "@deepseek-ai/dsh-timeout": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-user-approval": "*",
     "@deepseek-ai/dsh-user-questions": "*",

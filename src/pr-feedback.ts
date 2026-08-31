@@ -328,7 +328,10 @@ export class PullRequestFeedbackService {
     }
   }
 
-  async failingChecks(cwd: string, pullNumber: number): Promise<readonly FailingCheck[]> {
+  /** `signal` bounds the log fetches below: each is capped on its own, but they
+   *  run one after another, so the honest worst case is their sum rather than
+   *  any single ceiling — more than a route is allowed to hold a connection. */
+  async failingChecks(cwd: string, pullNumber: number, signal?: AbortSignal): Promise<readonly FailingCheck[]> {
     const gh = await this.#gh()
     const result = await this.#run(gh, [
       'pr', 'checks', String(pullNumber), '--json', 'name,state,link,description,bucket',
@@ -344,6 +347,10 @@ export class PullRequestFeedbackService {
     for (const check of checks) {
       const jobId = detailed.length < MAX_FAILING_CHECKS ? actionsJobId(check.link) : undefined
       if (jobId === undefined) {
+        detailed.push(check)
+        continue
+      }
+      if (signal?.aborted === true) {
         detailed.push(check)
         continue
       }
