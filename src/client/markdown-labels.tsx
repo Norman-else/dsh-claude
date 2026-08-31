@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { CLAUDE_MARKDOWN_SCOPE, ensureClaudeMarkdownTheme } from './markdown-theme.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 /** Localized Markdown chrome the Host's renderer requires.
@@ -38,5 +39,8 @@ export function ClaudeMarkdown({ text, labels, streaming }: {
 }) {
   const props = { text, labels, ...(streaming === undefined ? {} : { streaming }) }
   const Renderer = MarkdownText as unknown as (input: typeof props) => JSX.Element
-  return <Renderer {...props} />
+  // The wrapper is the palette's scope and nothing else: `display:contents`
+  // keeps it out of layout while custom properties still inherit through it.
+  ensureClaudeMarkdownTheme()
+  return <div className={CLAUDE_MARKDOWN_SCOPE}><Renderer {...props} /></div>
 }
