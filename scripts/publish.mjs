@@ -2,13 +2,9 @@
 
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { nextReleaseVersion, parseReleaseArguments, writeVersion } from './release-version.mjs'
 
-const dryRun = process.argv.includes('--dry-run')
-const allowedArguments = new Set(['--dry-run', '--yes'])
-const unknownArguments = process.argv.slice(2).filter(argument => !allowedArguments.has(argument))
-if (unknownArguments.length > 0) {
-  throw new Error(`Unknown argument: ${unknownArguments.join(', ')}`)
-}
+const { dryRun, requested } = parseReleaseArguments(process.argv.slice(2))
 
 const WINDOWS_COMMAND_SHIMS = new Set(['npm', 'pnpm', 'npx'])
 
@@ -77,18 +73,26 @@ async function waitForPublishedGitHead(packageVersion, expectedHead) {
   }
 }
 
-const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const packageName = packageJson.name
-const version = packageJson.version
-if (typeof packageName !== 'string' || typeof version !== 'string') {
-  throw new Error('package.json must contain string name and version fields')
-}
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-  throw new Error(`Unsupported release version: ${version}`)
+/** npm's `latest`, or undefined when the package has never been published. */
+function latestPublishedVersion(name) {
+  const result = run('npm', ['view', name, 'version'], { capture: true, allowFailure: true })
+  // An existing package with nothing on `latest` answers with silence, which
+  // is the same answer as a package that does not exist yet.
+  if (result.status === 0) return result.stdout.trim().length === 0 ? undefined : result.stdout.trim()
+  if (`${result.stderr}${result.stdout}`.includes('E404')) return undefined
+  process.stderr.write(result.stderr)
+  throw new Error(`Unable to query the published versions of ${name} from npm`)
 }
 
-const tag = `v${version}`
-const head = capture('git', ['rev-parse', 'HEAD'])
+const packageUrl = new URL('../package.json', import.meta.url)
+const packageJson = JSON.parse(readFileSync(packageUrl, 'utf8'))
+const packageName = packageJson.name
+const manifestVersion = packageJson.version
+if (typeof packageName !== 'string' || typeof manifestVersion !== 'string') {
+  throw new Error('package.json must contain string name and version fields')
+}
+
+let head = capture('git', ['rev-parse', 'HEAD'])
 const branch = capture('git', ['branch', '--show-current'])
 if (branch.length === 0) throw new Error('Releases require a checked-out branch')
 if (capture('git', ['status', '--porcelain']).length > 0) {
@@ -103,24 +107,64 @@ if (remoteHead !== head) {
 
 run('npm', ['whoami'])
 run('gh', ['auth', 'status'])
+
+/** The commit npm recorded for a version, or undefined when it has no such
+ *  version. Null is a published version whose metadata carries no gitHead. */
+function publishedGitHead(specifier) {
+  const result = run('npm', ['view', specifier, 'gitHead', '--json'], { capture: true, allowFailure: true })
+  if (result.status === 0) {
+    const answer = result.stdout.trim()
+    // npm answers a known package with an unknown version by saying nothing.
+    return answer.length === 0 ? undefined : JSON.parse(answer) ?? null
+  }
+  if (`${result.stderr}${result.stdout}`.includes('E404')) return undefined
+  process.stderr.write(result.stderr)
+  throw new Error(`Unable to query ${specifier} from npm`)
+}
+
+// A release that reached npm and stopped there is resumed, not restarted:
+// bumping again would strand the published version without its tag.
+const resuming = publishedGitHead(`${packageName}@${manifestVersion}`) === head
+if (resuming && requested !== undefined) {
+  throw new Error(`${packageName}@${manifestVersion} is already published from HEAD; re-run without a version to finish that release`)
+}
+const latest = resuming ? manifestVersion : latestPublishedVersion(packageName)
+if (!resuming && latest === undefined) {
+  console.log(`npm has no published version of ${packageName}; this release starts the sequence.`)
+}
+const version = resuming
+  ? manifestVersion
+  : nextReleaseVersion({ current: manifestVersion, latest, requested })
+const tag = `v${version}`
+console.log(version === manifestVersion
+  ? `Releasing ${packageName}@${version}.`
+  : `Releasing ${packageName}@${version} (npm latest ${latest ?? 'none'}, package.json ${manifestVersion}).`)
+
 run('pnpm', ['check'])
 run('npm', ['pack', '--dry-run'])
 
-const published = run('npm', ['view', `${packageName}@${version}`, 'gitHead', '--json'], {
-  capture: true,
-  allowFailure: true,
-})
-let alreadyPublished = false
-if (published.status === 0) {
-  const publishedHead = JSON.parse(published.stdout.trim())
-  if (publishedHead !== head) {
-    throw new Error(`${packageName}@${version} is already published from ${publishedHead ?? 'an unknown commit'}, not ${head}`)
-  }
-  alreadyPublished = true
+const alreadyPublished = resuming
+if (resuming) {
   console.log(`${packageName}@${version} is already published from HEAD; npm publish will be skipped.`)
-} else if (!`${published.stderr}\n${published.stdout}`.includes('E404')) {
-  process.stderr.write(published.stderr)
-  throw new Error(`Unable to query ${packageName}@${version} from npm`)
+} else {
+  const targetHead = publishedGitHead(`${packageName}@${version}`)
+  if (targetHead !== undefined) {
+    throw new Error(`${packageName}@${version} is already published from ${targetHead ?? 'an unknown commit'}, not ${head}`)
+  }
+}
+
+// The bump is the last thing to happen before anything leaves the machine, so
+// a failed check never leaves a version commit behind to be undone by hand.
+if (version !== manifestVersion) {
+  if (dryRun) {
+    console.log(`Dry run: package.json would move ${manifestVersion} -> ${version} and be committed to ${branch}.`)
+  } else {
+    writeVersion(packageUrl, manifestVersion, version)
+    run('git', ['add', '--', 'package.json'])
+    run('git', ['commit', '-m', `Bump version to ${version}`])
+    run('git', ['push', 'origin', `HEAD:${branch}`])
+    head = capture('git', ['rev-parse', 'HEAD'])
+  }
 }
 
 const release = run('gh', ['release', 'view', tag, '--json', 'url'], {
