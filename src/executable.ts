@@ -1,3 +1,5 @@
+import { constants } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, win32 } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
@@ -58,6 +60,45 @@ function abortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
 }
 
+/**
+ * Prefer the package's own native binary over a Windows npm shim.
+ *
+ * A PATH lookup on Windows answers `claude.CMD`, and since the fix for
+ * CVE-2024-27980 Node refuses to spawn `.cmd` and `.bat` without
+ * `shell: true` — every probe and every session then fails with
+ * `spawn EINVAL`, reported to the user as an executable and authentication
+ * error with nothing pointing at the file extension. Auto-resolution
+ * therefore cannot work on Windows at all, and the user has to discover
+ * `executablePath` to get anywhere.
+ *
+ * npm installs the package beside the shim it writes, and
+ * `@anthropic-ai/claude-code` ships a native executable (its own manifest
+ * declares `"bin": { "claude": "bin/claude.exe" }`), which carries no such
+ * restriction. Falling back to the shim keeps a layout that does not match
+ * this assumption working exactly as before.
+ *
+ * @param path - the resolved candidate, possibly a Windows shim.
+ * @returns the native executable when one sits beside the shim, else `path`.
+ */
+async function preferNativeWindowsBinary(path: string): Promise<string> {
+  if (process.platform !== 'win32') return path
+  if (!/\.(?:cmd|bat)$/iu.test(path)) return path
+  const native = win32.join(
+    win32.dirname(path),
+    'node_modules',
+    '@anthropic-ai',
+    'claude-code',
+    'bin',
+    'claude.exe',
+  )
+  try {
+    await access(native, constants.X_OK)
+    return native
+  } catch {
+    return path
+  }
+}
+
 export async function resolveClaudeExecutable(
   runtime: ExecutableRuntime,
   configuredPath?: string,
@@ -76,8 +117,8 @@ export async function resolveClaudeExecutable(
     if (searched.includes(candidate)) continue
     searched.push(candidate)
     try {
-      const path = await runtime.resolveExecutable(candidate, undefined, signal)
-      return { path, searched }
+      const resolved = await runtime.resolveExecutable(candidate, undefined, signal)
+      return { path: await preferNativeWindowsBinary(resolved), searched }
     } catch (error) {
       if (abortError(error) || signal?.aborted === true) throw error
       lastError = error
