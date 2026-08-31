@@ -133,7 +133,19 @@ export const CLAUDE_MARKDOWN_THEME_CSS = [
   // The Host's inline-code rule sets a background but no colour, so the chip
   // inherits body text. Claude's build tints it with the brand clay.
   // Claude's chip is tighter than the Host's 6px/0 5px.
-  `.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${CLAY_EMPHASIZED};border-radius:4px;padding:1px 2px}`,
+  //
+  // `!important` on the size is not a preference: the Host's own declaration
+  // carries it (MarkdownText.module.css `font-size: 0.875em !important`), so
+  // nothing weaker can reach it. 0.875em leaves a monospace chip visibly
+  // shorter than the CJK body text beside it — the code font's x-height is
+  // already lower at equal px, and the two shrinks compound. The `em` resolves
+  // against the PARENT, so against a 14px body the Host's rule lands at
+  // 12.25px; 1.05em lands at 14.7px, which is where a monospace chip stops
+  // reading as smaller than the prose it sits in. Anything under 1em is inside
+  // the noise of antialiasing here and looks unchanged. This sits in the BASE
+  // sheet, not the enhanced one: legibility is not part of the palette a
+  // reader opts into.
+  `.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${CLAY_EMPHASIZED};border-radius:4px;padding:1px 2px;font-size:1.05em!important}`,
   `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${CLAY}}`,
 
   // --- Chrome -------------------------------------------------------------

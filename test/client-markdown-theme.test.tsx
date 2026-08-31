@@ -51,6 +51,13 @@ describe('Claude markdown palette', () => {
     expect(CLAUDE_MARKDOWN_THEME_CSS).toContain(`.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:`)
   })
 
+  it('raises the inline-code size past the Host declaration it competes with', () => {
+    // The Host declares `font-size: 0.875em !important` on the same selector,
+    // so a plain declaration here is unreachable — dropping the flag would
+    // silently restore a chip shorter than the prose around it.
+    expect(block(`.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{`)).toContain('font-size:1.05em!important')
+  })
+
   it('lifts the banner bar out of flow without hiding the copy button', () => {
     // The Host draws a sticky bar carrying the language name AND the copy
     // button; Claude draws none and floats its actions. Hiding the bar
