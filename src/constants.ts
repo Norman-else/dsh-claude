@@ -26,3 +26,19 @@ export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'
 export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
 export const CLAUDE_EDITOR_OPEN_PATH = '/plugins/dsh-claude/editor/open'
 export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
+
+/** Which renderer draws Claude's visible output.
+ *
+ *  'plugin' keeps the sidecar-backed transcript this package owns (interleaved
+ *  prose, grouped tool cards, activity rows). 'native' hands the same turn to
+ *  DSH's own conversation renderer: prose streams as ordinary assistant text
+ *  blocks, thinking as reasoning blocks, and root Claude tools are mirrored
+ *  into the durable `tool/call`/`tool/result` channel so the Host's tool
+ *  presentation pipeline draws them exactly like DSH-executed calls. */
+export type ClaudeRenderMode = 'plugin' | 'native'
+export const CLAUDE_RENDER_MODES = ['plugin', 'native'] as const
+export const DEFAULT_CLAUDE_RENDER_MODE: ClaudeRenderMode = 'plugin'
+
+export function isClaudeRenderMode(value: unknown): value is ClaudeRenderMode {
+  return value === 'plugin' || value === 'native'
+}

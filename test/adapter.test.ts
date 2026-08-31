@@ -404,3 +404,81 @@ describe('reasoning effort', () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+describe('DSH stream mapping under the native renderer', () => {
+  const nativeAdapter = (events: ClaudeTurnStreamEvent[], error?: unknown) => new ClaudeCodeAdapter(
+    supervisorEvents(events, error),
+    { currentInitiator: () => agent, get: () => agent },
+    attachmentStore(),
+    claudePreset,
+    () => [],
+    () => 'native',
+  )
+
+  it('settles each Claude result as one assistant text block', async () => {
+    const adapter = nativeAdapter([
+      { type: 'text-delta', text: 'hel' },
+      { type: 'text-delta', text: 'lo' },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1 } },
+      { type: 'complete', text: 'hello' },
+    ])
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'hello' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'hello' } },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1 } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ])
+  })
+
+  it('gives each task-report segment its own block before one finish', async () => {
+    const adapter = nativeAdapter([
+      { type: 'text-delta', text: 'Tasks are still running.' },
+      { type: 'segment-complete', text: 'Tasks are still running.' },
+      { type: 'text-delta', text: 'All tasks completed.' },
+      { type: 'usage', usage: { inputTokens: 8, outputTokens: 4 } },
+      { type: 'complete', text: 'All tasks completed.' },
+    ])
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks.filter(chunk => chunk.type === 'block-end')).toEqual([
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'Tasks are still running.' } },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'All tasks completed.' } },
+    ])
+  })
+
+  it('draws settled thinking as a reasoning block ahead of the prose it precedes', async () => {
+    const adapter = nativeAdapter([
+      { type: 'thinking', text: 'Weighing the options.' },
+      { type: 'text-delta', text: 'Here is the plan.' },
+      { type: 'complete', text: 'Here is the plan.' },
+    ])
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 0, text: 'Weighing the options.' },
+      { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'Weighing the options.' } },
+      { type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'Here is the plan.' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'Here is the plan.' } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ])
+  })
+
+  it('settles the delivered prefix before an aborted finish', async () => {
+    const abort = new Error('Claude Code turn aborted')
+    abort.name = 'AbortError'
+    const adapter = nativeAdapter([{ type: 'text-delta', text: 'partial' }], abort)
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'partial' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'partial' } },
+      { type: 'finish', reason: { kind: 'aborted', failure: { code: 'aborted', message: 'Claude Code turn aborted' } } },
+    ])
+  })
+})

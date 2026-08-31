@@ -19,11 +19,53 @@ vi.mock('../src/client/details-resize.ts', () => ({
   },
 }))
 
+function conversationCapture() {
+  const definitions: Array<{ kind?: string }> = []
+  const registrations: Array<{ readonly name: string; readonly key?: string }> = []
+  const dispose = (): void => {}
+  const uiConversation = {
+    events: {
+      register(definition: { kind?: string }) {
+        definitions.push(definition)
+        return dispose
+      },
+    },
+  }
+  const ctx = {
+    effect(register: () => unknown) { register() },
+    get(name: string) { return name === 'uiConversation' ? uiConversation : undefined },
+    inject() { throw new Error('legacy conversationEvents injection must not be used') },
+    locale: { register: () => dispose, bind: () => (key: string) => key },
+    inputTriggers: { registerSource: () => dispose },
+    slots: {
+      onEntryError: () => dispose,
+      inject(_name: string, register: () => unknown) { register() },
+      register(options: { readonly name: string; readonly key?: string }) {
+        registrations.push(options)
+        return dispose
+      },
+    },
+  }
+  return { ctx, definitions, registrations }
+}
+
 describe('Claude client slot registration', () => {
   beforeEach(() => {
     resizeLifecycle.events.length = 0
     resizeLifecycle.enable.mockClear()
     resizeLifecycle.dispose.mockClear()
+  })
+
+  it('registers the transcript node unconditionally so the renderer choice is read per step', () => {
+    // Registration must not depend on a Client-side copy of the setting: the
+    // Host switches on the next turn, and a boot-time decision that disagreed
+    // would draw every step twice. A natively drawn step folds to no items.
+    const captured = conversationCapture()
+    apply(captured.ctx as never)
+
+    expect(captured.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
+    expect(captured.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
+    expect(captured.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
   })
 
   it('mounts the custom Claude definitions through the Desktop conversation service', () => {

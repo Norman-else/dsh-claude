@@ -3,7 +3,7 @@ import type { ClaudeActivityEvent, ClaudeContextUsageEvent, ClaudeTasksEvent } f
 import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment } from '../review-comments.ts'
-import { CLAUDE_PROJECTION_PATH } from '../constants.ts'
+import { CLAUDE_PROJECTION_PATH, isClaudeRenderMode } from '../constants.ts'
 import { MAX_MULTIPLEX_SESSIONS } from '../plugin-budget.ts'
 import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
 import { pluginProjectionStream } from './plugin-transport.ts'
@@ -357,7 +357,7 @@ export function createClaudeProjectionSource(
   }
 
   const applyText = (event: Record<string, unknown>): boolean => {
-    const { turn, step, ordinal, append, text } = event
+    const { turn, step, ordinal, append, text, renderer } = event
     if (!nonNegativeInteger(turn) || !nonNegativeInteger(step) || !nonNegativeInteger(ordinal)) return false
     if (append !== undefined && (typeof append !== 'string' || append.length > MAX_TRANSCRIPT_CHARS)) return false
     if (text !== undefined && (typeof text !== 'string' || text.length > MAX_TRANSCRIPT_CHARS)) return false
@@ -374,7 +374,16 @@ export function createClaudeProjectionSource(
     // currently revealed prefix stored in byStep.
     const baseText = pending?.full.text ?? existing?.text ?? ''
     const fullText = (typeof text === 'string' ? text : `${baseText}${append as string}`).slice(0, MAX_TRANSCRIPT_CHARS)
-    const template = pending?.full ?? existing ?? { turn, step, ordinal, kind: 'text' as const, phase: 'updated' as const }
+    const template = pending?.full ?? existing ?? {
+      turn,
+      step,
+      ordinal,
+      kind: 'text' as const,
+      phase: 'updated' as const,
+      // The stamp travels with the prose so a natively drawn step is not also
+      // drawn by the plugin transcript while it streams.
+      ...(isClaudeRenderMode(renderer) ? { renderer } : {}),
+    }
     const full = { ...template, text: fullText }
     const shown = Math.min(pending?.shown ?? existing?.text?.length ?? 0, fullText.length)
     if (fullText.length - shown > MAX_INSTANT_REVEAL) {

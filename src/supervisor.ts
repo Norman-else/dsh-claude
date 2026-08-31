@@ -12,13 +12,16 @@ import {
   type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { AsyncQueue } from './async-queue.ts'
-import { TASK_TOOL_NAMES } from './constants.ts'
+import { DEFAULT_CLAUDE_RENDER_MODE, TASK_TOOL_NAMES, type ClaudeRenderMode } from './constants.ts'
 import {
   currentClaudeActivityCursor,
+  redactText,
+  safeDetail,
   type ClaudeActivityCursor,
   type ClaudeActivityInput,
   type ClaudeTaskInfo,
@@ -27,6 +30,7 @@ import {
 import { createPermissionBridge } from './permission.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
+import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
@@ -50,10 +54,16 @@ export interface ClaudeSupervisorConfig {
   idleTimeoutMs: number
   maxProcesses: number
   defaultModel: string
+  /** Which renderer the visible turn is produced for; read per message so a
+   *  Settings change lands on the next turn without a Host restart. */
+  renderMode?: ClaudeRenderMode
 }
 
 export type ClaudeTurnStreamEvent =
   | { type: 'text-delta'; text: string }
+  /** One settled Claude thinking block, forwarded only for the native
+   *  renderer, which draws it as a DSH reasoning block. */
+  | { type: 'thinking'; text: string }
   | { type: 'usage'; usage: ClaudeUsage }
   | { type: 'segment-complete'; text: string }
   | { type: 'complete'; text: string }
@@ -276,6 +286,7 @@ export class ClaudeSupervisor {
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
+  readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
   #admissionGate: Promise<void> = Promise.resolve()
@@ -816,6 +827,9 @@ export class ClaudeSupervisor {
           title: 'Claude thinking',
           summary: message.text,
         })
+        // The plugin transcript reads thinking off the sidecar; the native
+        // renderer needs it on the stream to build a reasoning block.
+        if (this.#nativeRendering()) active.output.push({ type: 'thinking', text: message.text })
         return
       case 'tool-call':
         if (message.parentToolUseId === undefined) this.#closeTranscriptTextSegment(active)
@@ -829,7 +843,16 @@ export class ClaudeSupervisor {
           summary: message.parentToolUseId === undefined ? rootCallSummary(message.toolName, message.input) : `Subagent called ${message.toolName}`,
           detail: message.input,
         })
-        if (message.parentToolUseId === undefined) active.callNames.set(message.toolUseId, message.toolName)
+        if (message.parentToolUseId === undefined) {
+          active.callNames.set(message.toolUseId, message.toolName)
+          // Only root calls are mirrored: a subagent's nested tools belong to
+          // the Task card that dispatched them, and the native channel has no
+          // nesting to hang them under.
+          if (this.#nativeRendering()) {
+            this.#ensureDynamicPresenter(active.agent, message.toolName)
+            await this.#appendNativeToolCall(active, message)
+          }
+        }
         return
       case 'tool-result':
         await this.#appendActivity(active, {
@@ -841,6 +864,9 @@ export class ClaudeSupervisor {
           detail: message.output,
           isError: message.isError,
         })
+        if (message.parentToolUseId === undefined && this.#nativeRendering()) {
+          await this.#appendNativeToolResult(active, message)
+        }
         return
       case 'subagent':
         await this.#appendActivity(active, {
@@ -894,7 +920,82 @@ export class ClaudeSupervisor {
           title: message.toolName,
           summary: message.summary,
         })
+        // A denied call never produces a tool result, so the native card would
+        // stay pending forever. Settle it as the failure it is.
+        if (this.#nativeRendering()) {
+          await this.#appendNativeToolResult(active, {
+            kind: 'tool-result',
+            toolUseId: message.toolUseId,
+            output: message.summary,
+            isError: true,
+          })
+        }
         return
+    }
+  }
+
+  #nativeRendering(): boolean {
+    return (this.#config.renderMode ?? DEFAULT_CLAUDE_RENDER_MODE) === 'native'
+  }
+
+  /** Register one presenter-only mirror for a tool name the static preset
+   *  registry does not cover (MCP tools, newly added built-ins). Runs in the
+   *  agent scope so the mirror is visible only to this preset's sessions and
+   *  unwinds with the agent; failure keeps the generic card, never the turn. */
+  #ensureDynamicPresenter(agent: Agent, name: string): void {
+    if (CLAUDE_PRESENTER_NAMES.has(name)) return
+    let known = this.#dynamicPresenterNames.get(agent)
+    if (known === undefined) {
+      known = new Set<string>()
+      this.#dynamicPresenterNames.set(agent, known)
+    }
+    if (known.has(name)) return
+    try {
+      agent.ctx.tools.register(dynamicPresenterDefinition(name))
+      known.add(name)
+    } catch {
+      // A late or disposed agent keeps the generic card; presentation must
+      // never unsettle the Claude turn.
+    }
+  }
+
+  /** Mirror one root Claude tool call into the durable native tool channel so
+   *  the host's tool presentation renders it exactly like a DSH-executed call.
+   *  Presentation duplication is best-effort and never unsettles the turn. */
+  async #appendNativeToolCall(
+    active: ActiveTurn,
+    message: Extract<NormalizedSdkMessage, { kind: 'tool-call' }>,
+  ): Promise<void> {
+    try {
+      await active.agent.session.append('tool/call', {
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        callId: CallId(message.toolUseId),
+        name: message.toolName,
+        arguments: safeDetail(message.input) ?? '{}',
+      })
+    } catch {
+      // Presentation duplication must never unsettle the Claude turn.
+    }
+  }
+
+  async #appendNativeToolResult(
+    active: ActiveTurn,
+    message: Pick<Extract<NormalizedSdkMessage, { kind: 'tool-result' }>, 'kind' | 'toolUseId' | 'output' | 'isError'>,
+  ): Promise<void> {
+    const text = typeof message.output === 'string' ? redactText(message.output) : safeDetail(message.output) ?? ''
+    try {
+      await active.agent.session.append('tool/result', {
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        message: createToolResultMessage({
+          callId: CallId(message.toolUseId),
+          content: [{ type: 'text', text }],
+          isError: message.isError,
+        }),
+      }, { surfaceOp: 'append' })
+    } catch {
+      // Presentation duplication must never unsettle the Claude turn.
     }
   }
 
@@ -1198,6 +1299,7 @@ export class ClaudeSupervisor {
       // coalesced inside the repository and flushed at segment/turn edges.
       this.#sidecar.appendTranscriptText(active.agent.id as string, {
         text: active.transcriptText,
+        ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
         turn: active.cursor.turn,
         step: active.cursor.step,
         ordinal,
@@ -1221,6 +1323,10 @@ export class ClaudeSupervisor {
     const ordinal = active.cursor.nextOrdinal++
     await this.#sidecar.appendActivity(active.agent.id as string, {
       ...activity,
+      // Stamp the renderer this record was produced for. The Client reads it
+      // back per step, so a step drawn natively is never also drawn by the
+      // plugin transcript -- and history keeps whichever renderer produced it.
+      ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
       turn: active.cursor.turn,
       step: active.cursor.step,
       ordinal,

@@ -5,7 +5,13 @@ import { dirname, extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import { CLAUDE_GLOBAL_SETTINGS_PATH } from './constants.ts'
+import {
+  CLAUDE_GLOBAL_SETTINGS_PATH,
+  CLAUDE_RENDER_MODES,
+  DEFAULT_CLAUDE_RENDER_MODE,
+  isClaudeRenderMode,
+  type ClaudeRenderMode,
+} from './constants.ts'
 import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 
 const MAX_SETTINGS_BYTES = 256 * 1024
@@ -21,7 +27,7 @@ const MAX_IDLE_TIMEOUT_MINUTES = 24 * 60
 const DEFAULT_LIMITS: SupervisorLimits = { maxProcesses: 4, idleTimeoutMs: 30 * 60_000 }
 
 type JsonObject = Record<string, unknown>
-export type GlobalSettingEffect = 'new-session' | 'next-worktree' | 'restart'
+export type GlobalSettingEffect = 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 
 export interface GlobalSettingOption {
   value: string
@@ -214,6 +220,31 @@ const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
   },
 }
 
+/** Which renderer draws Claude's visible output. Plugin settings, not Claude's:
+ *  the CLI has no opinion about how DSH paints a turn. The option labels stay
+ *  machine-readable ids; the Client translates the two known values. */
+const RENDERER: SelectSettingDescriptor = {
+  key: 'renderer',
+  kind: 'select',
+  document: 'plugin',
+  // The Host reads this per message and stamps every record it writes with the
+  // renderer that produced it, so the switch lands on the next turn and a turn
+  // already recorded keeps the renderer it was recorded with.
+  effect: 'next-turn',
+  async options() {
+    return CLAUDE_RENDER_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) {
+    const value = document.renderer
+    return isClaudeRenderMode(value) ? value : DEFAULT_CLAUDE_RENDER_MODE
+  },
+  apply(document, value) {
+    if (!isClaudeRenderMode(value)) throw new Error('Invalid value for global setting renderer')
+    if (value === DEFAULT_CLAUDE_RENDER_MODE) delete document.renderer
+    else document.renderer = value
+  },
+}
+
 function isBoundedInteger(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
 }
@@ -245,7 +276,7 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses)
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
@@ -306,6 +337,18 @@ export async function readSupervisorLimitOverrides(deps: GlobalSettingsDependenc
     ...(isBoundedInteger(maxProcesses, 1, MAX_PROCESSES_LIMIT) ? { maxProcesses } : {}),
     ...(isBoundedInteger(idleTimeoutMinutes, 1, MAX_IDLE_TIMEOUT_MINUTES) ? { idleTimeoutMs: idleTimeoutMinutes * 60_000 } : {}),
   }
+}
+
+/** The renderer the Host should produce output for. A missing, unreadable, or
+ *  malformed plugin settings file keeps today's plugin-owned transcript. */
+export async function readRenderMode(deps: GlobalSettingsDependencies = {}): Promise<ClaudeRenderMode> {
+  let document: JsonObject
+  try {
+    document = await readDocument(pathsFor(deps).pluginSettingsFile)
+  } catch {
+    return DEFAULT_CLAUDE_RENDER_MODE
+  }
+  return isClaudeRenderMode(document.renderer) ? document.renderer : DEFAULT_CLAUDE_RENDER_MODE
 }
 
 export async function readWorktreeBranchPrefix(deps: GlobalSettingsDependencies = {}): Promise<string> {

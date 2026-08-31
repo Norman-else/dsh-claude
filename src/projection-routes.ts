@@ -155,6 +155,7 @@ export function registerClaudeProjectionRoute(
             ordinal: delta.ordinal,
             ...(delta.append === undefined ? {} : { append: delta.append }),
             ...(delta.text === undefined ? {} : { text: delta.text }),
+            ...(delta.renderer === undefined ? {} : { renderer: delta.renderer }),
           })
           return
         case 'activity':

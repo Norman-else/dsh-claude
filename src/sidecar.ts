@@ -19,7 +19,7 @@ import {
   type ClaudeTaskInfo,
   type ClaudeTasksEvent,
 } from './events.ts'
-import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION } from './constants.ts'
+import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION, type ClaudeRenderMode } from './constants.ts'
 import {
   EMPTY_REWIND_STATE,
   MAX_REWIND_ANCHORS,
@@ -48,7 +48,7 @@ export interface ClaudeSidecarProjection {
 
 /** Change notification published to live subscribers after each accepted write. */
 export type ClaudeSidecarDelta =
-  | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string }
+  | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string; renderer?: ClaudeRenderMode }
   | { kind: 'activity'; activity: ClaudeActivityEvent }
   | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
   | { kind: 'tasks'; value: ClaudeTasksEvent }
@@ -247,7 +247,7 @@ export class ClaudeSidecarRepository {
    *  redacted text grows in place) and persistence is coalesced. */
   appendTranscriptText(
     sessionId: string,
-    value: { turn: number; step: number; ordinal: number; text: string },
+    value: { turn: number; step: number; ordinal: number; text: string; renderer?: ClaudeRenderMode },
   ): void {
     const normalized = normalizeActivity({ kind: 'text', phase: 'updated', ...value })
     const key = activityKey(normalized)
@@ -260,7 +260,12 @@ export class ClaudeSidecarRepository {
     overlay.set(key, normalized)
     this.#boost.set(sessionId, (this.#boost.get(sessionId) ?? 0) + 1)
     const text = normalized.text ?? ''
-    const base = { turn: normalized.turn, step: normalized.step, ordinal: normalized.ordinal }
+    const base = {
+      turn: normalized.turn,
+      step: normalized.step,
+      ordinal: normalized.ordinal,
+      ...(normalized.renderer === undefined ? {} : { renderer: normalized.renderer }),
+    }
     // Redaction may rewrite earlier characters once a secret completes, so a
     // non-prefix update falls back to a full-text replacement.
     this.#notify(sessionId, previous?.text !== undefined && text.startsWith(previous.text)

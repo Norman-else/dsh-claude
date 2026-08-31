@@ -171,6 +171,11 @@ export function apply(ctx: ClientContext): void {
     ctx.effect(() => uiConversation.events.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
     ctx.effect(() => uiConversation.events.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
   }
+  // The transcript node is always registered. Which renderer actually draws a
+  // step is decided from the step's own records, not from a Client-side copy
+  // of the setting: the Host switches on the next turn while a running Client
+  // would keep a boot-time decision, and disagreeing draws everything twice.
+  // A step the Host drew natively folds to no items and the node renders null.
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-activity-step',

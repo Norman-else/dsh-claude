@@ -330,6 +330,24 @@ function toolDescription(toolName: string, input: Record<string, unknown> | unde
   return failed ? `Failed to ${failedAction}` : completed
 }
 
+/** Whether the Host drew this step with DSH's own renderer.
+ *
+ *  The stamp rides on the records themselves rather than on a Client-side copy
+ *  of the setting, because the two can disagree: the Host switches on the next
+ *  turn while a running Client keeps whatever it decided at boot, and the
+ *  failure mode of disagreeing is drawing every step twice. Reading it back per
+ *  step also keeps history honest in both directions -- a turn recorded under
+ *  one renderer keeps it after the setting changes. */
+export function nativelyRenderedStep(
+  activities: readonly ClaudeActivityEvent[],
+  turn: number,
+  step: number,
+): boolean {
+  return activities.some(activity => activity.turn === turn
+    && activity.step === step
+    && activity.renderer === 'native')
+}
+
 /** Fold one step's shared ordinal stream into Claude Code-style prose and tool groups. */
 export function transcriptItemsForStep(
   activities: readonly ClaudeActivityEvent[],
@@ -337,6 +355,9 @@ export function transcriptItemsForStep(
   step: number,
   tasks: readonly ClaudeTaskInfo[] = [],
 ): readonly ClaudeTranscriptItem[] {
+  // A natively drawn step is DSH's to paint: its prose arrived as an assistant
+  // text block and its root tools as mirrored tool cards.
+  if (nativelyRenderedStep(activities, turn, step)) return []
   const ordered = activities
     .filter(activity => activity.turn === turn
       && activity.step === step

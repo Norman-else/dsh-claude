@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readGlobalSettings, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
+import { readGlobalSettings, readRenderMode, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
 import { isGlobalSettingsView } from '../src/client/ClaudeCodeSettings.tsx'
 
 const roots: string[] = []
@@ -57,6 +57,42 @@ describe('Claude Code global settings registry', () => {
     expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ worktreeBranchPrefix: 'team/claude' })
     await expect(readFile(paths.settingsFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(updateGlobalSettings({ worktreeBranchPrefix: '../invalid' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
+  it('stores the AI output renderer in plugin settings, defaulting to the plugin transcript', async () => {
+    const paths = await fixture()
+    const initial = await readGlobalSettings({ paths })
+    expect(initial.settings.find(setting => setting.key === 'renderer')).toMatchObject({
+      kind: 'select', value: 'plugin', effect: 'next-turn',
+    })
+    expect(initial.settings.find(setting => setting.key === 'renderer')?.options).toEqual([
+      { value: 'plugin', label: 'plugin', source: 'built-in' },
+      { value: 'native', label: 'native', source: 'built-in' },
+    ])
+    await expect(readRenderMode({ paths })).resolves.toBe('plugin')
+
+    const updated = await updateGlobalSettings({ renderer: 'native' }, { paths })
+    expect(updated.settings.find(setting => setting.key === 'renderer')).toMatchObject({ value: 'native' })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ renderer: 'native' })
+    // The renderer is a plugin concern; Claude Code's own settings stay untouched.
+    await expect(readFile(paths.settingsFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readRenderMode({ paths })).resolves.toBe('native')
+
+    // Choosing the default clears the key rather than pinning today's default.
+    await updateGlobalSettings({ renderer: 'plugin' }, { paths })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
+    await expect(updateGlobalSettings({ renderer: 'Native' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
+  it('falls back to the plugin transcript for a malformed or absent renderer value', async () => {
+    const paths = await fixture()
+    await mkdir(join(paths.root, 'dsh'), { recursive: true })
+    await writeFile(paths.pluginSettingsFile, JSON.stringify({ renderer: 'holographic' }))
+    expect((await readGlobalSettings({ paths })).settings.find(setting => setting.key === 'renderer')).toMatchObject({ value: 'plugin' })
+    await expect(readRenderMode({ paths })).resolves.toBe('plugin')
+
+    await writeFile(paths.pluginSettingsFile, 'not json')
+    await expect(readRenderMode({ paths })).resolves.toBe('plugin')
   })
 
   it('exposes supervisor limits as bounded integers seeded from the plugin config', async () => {

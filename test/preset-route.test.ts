@@ -52,7 +52,7 @@ describe('Claude preset route', () => {
     const captured = capture()
     apply(captured.ctx)
     expect(captured.registered()).toEqual([
-      'Bash', 'Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit',
+      'Bash', 'PowerShell', 'Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit',
       'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Task', 'TodoWrite',
     ])
   })
