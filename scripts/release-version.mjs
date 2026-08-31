@@ -78,11 +78,12 @@ export function parseReleaseArguments(argv) {
  */
 export function nextReleaseVersion({ current, latest, requested }) {
   if (requested?.kind === 'exact') {
-    // An unpublished package has no floor to clear: whatever the manifest
-    // says, nothing has shipped, so any first version is a legal first version.
-    const floor = latest === undefined ? undefined : highest(current, latest)
-    if (floor !== undefined && compareVersions(requested.version, floor) <= 0) {
-      throw new Error(`${requested.version} does not move past ${floor}`)
+    // The floor is what npm actually holds, not what the manifest claims: a
+    // manifest version that never reached npm is a release still owed, and
+    // naming it explicitly has to stay allowed. An unpublished package has no
+    // floor at all, so any first version is a legal first version.
+    if (latest !== undefined && compareVersions(requested.version, latest) <= 0) {
+      throw new Error(`${requested.version} does not move past ${latest}`)
     }
     return requested.version
   }
@@ -92,6 +93,43 @@ export function nextReleaseVersion({ current, latest, requested }) {
   // Whichever side is ahead is the truth about where the package has reached:
   // npm knows what shipped, the manifest may carry a bump that has not.
   return bumpVersion(highest(current, latest), requested?.level ?? 'patch')
+}
+
+/**
+ * What this release run should do, given what npm already holds.
+ *
+ * The manifest version is not just an input to the arithmetic, it is a record:
+ * once written and committed it says "this version is being released". Bumping
+ * past it whenever a run fails would strand that version forever and leave a
+ * commit in the history that no release corresponds to, so the three states
+ * are told apart rather than collapsed into one bump.
+ *
+ * @param current - the version in package.json.
+ * @param latest - npm's latest published version, or undefined when nothing
+ *   has ever been published under this name.
+ * @param manifestGitHead - the commit npm recorded for `current`; undefined
+ *   when npm has no such version, null when it has one without a gitHead.
+ * @param head - the commit being released.
+ * @param requested - an explicit version or bump level from the command line.
+ * @returns the version to release and why.
+ */
+export function planRelease({ current, latest, manifestGitHead, head, requested }) {
+  // npm already has this exact commit: the last run got as far as publishing
+  // and stopped. Finish it -- a second publish is impossible anyway.
+  if (manifestGitHead === head) {
+    if (requested !== undefined) {
+      throw new Error(`${current} is already published from HEAD; re-run without a version to finish that release`)
+    }
+    return { version: current, action: 'resume' }
+  }
+  // The manifest names a version npm never saw, and this is a package that HAS
+  // been published before -- so the version was written and committed by a run
+  // that did not reach npm. Finish that release instead of starting another.
+  // An explicit request overrules it: redirecting is the caller's to decide.
+  if (latest !== undefined && manifestGitHead === undefined && requested === undefined) {
+    return { version: current, action: 'pending' }
+  }
+  return { version: nextReleaseVersion({ current, latest, requested }), action: 'bump' }
 }
 
 function highest(left, right) {

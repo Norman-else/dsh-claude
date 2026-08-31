@@ -8,6 +8,7 @@ import {
   compareVersions,
   nextReleaseVersion,
   parseReleaseArguments,
+  planRelease,
   writeVersion,
 } from '../scripts/release-version.mjs'
 
@@ -84,11 +85,65 @@ describe('nextReleaseVersion', () => {
       .toThrow(/0\.1\.34/u)
   })
 
+  it('allows naming a version the manifest is already carrying but npm never took', () => {
+    expect(nextReleaseVersion({ current: '0.1.35', latest: '0.1.34', requested: { kind: 'exact', version: '0.1.35' } }))
+      .toBe('0.1.35')
+  })
+
   it('honours an explicit first version for an unpublished package', () => {
     expect(nextReleaseVersion({ current: '0.0.0', latest: undefined, requested: { kind: 'exact', version: '1.0.0' } }))
       .toBe('1.0.0')
   })
 })
+describe('planRelease', () => {
+  const head = 'c0ffee'
+
+  it('bumps when the manifest records a version npm already has', () => {
+    expect(planRelease({ current: '0.1.34', latest: '0.1.34', manifestGitHead: 'older', head }))
+      .toEqual({ version: '0.1.35', action: 'bump' })
+  })
+
+  it('finishes the pending version instead of burning it', () => {
+    // The manifest was bumped and committed, then the run died before npm saw
+    // anything. Bumping again would strand 0.1.35 forever and leave a commit
+    // in the history that no release corresponds to.
+    expect(planRelease({ current: '0.1.35', latest: '0.1.34', manifestGitHead: undefined, head }))
+      .toEqual({ version: '0.1.35', action: 'pending' })
+  })
+
+  it('resumes rather than restarts when npm already has this very commit', () => {
+    expect(planRelease({ current: '0.1.35', latest: '0.1.35', manifestGitHead: head, head }))
+      .toEqual({ version: '0.1.35', action: 'resume' })
+  })
+
+  it('starts a never-published package at the first version, pending or not', () => {
+    // Nothing on npm at all is not a half-finished release: there is no
+    // release history for the manifest to be ahead of.
+    expect(planRelease({ current: '0.1.34', latest: undefined, manifestGitHead: undefined, head }))
+      .toEqual({ version: '0.1.0', action: 'bump' })
+  })
+
+  it('lets an explicit request overrule a pending version', () => {
+    expect(planRelease({
+      current: '0.1.35',
+      latest: '0.1.34',
+      manifestGitHead: undefined,
+      head,
+      requested: { kind: 'bump', level: 'minor' },
+    })).toEqual({ version: '0.2.0', action: 'bump' })
+  })
+
+  it('refuses to redirect a release npm has already taken', () => {
+    expect(() => planRelease({
+      current: '0.1.35',
+      latest: '0.1.35',
+      manifestGitHead: head,
+      head,
+      requested: { kind: 'exact', version: '0.2.0' },
+    })).toThrow(/already published from HEAD/u)
+  })
+})
+
 describe('writeVersion', () => {
   function manifest(body: string): string {
     const path = join(mkdtempSync(join(tmpdir(), 'dsh-claude-release-')), 'package.json')

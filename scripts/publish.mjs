@@ -2,7 +2,7 @@
 
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { nextReleaseVersion, parseReleaseArguments, writeVersion } from './release-version.mjs'
+import { parseReleaseArguments, planRelease, writeVersion } from './release-version.mjs'
 
 const { dryRun, requested } = parseReleaseArguments(process.argv.slice(2))
 
@@ -122,39 +122,44 @@ function publishedGitHead(specifier) {
   throw new Error(`Unable to query ${specifier} from npm`)
 }
 
-// A release that reached npm and stopped there is resumed, not restarted:
-// bumping again would strand the published version without its tag.
-const resuming = publishedGitHead(`${packageName}@${manifestVersion}`) === head
-if (resuming && requested !== undefined) {
-  throw new Error(`${packageName}@${manifestVersion} is already published from HEAD; re-run without a version to finish that release`)
-}
-const latest = resuming ? manifestVersion : latestPublishedVersion(packageName)
-if (!resuming && latest === undefined) {
-  console.log(`npm has no published version of ${packageName}; this release starts the sequence.`)
-}
-const version = resuming
-  ? manifestVersion
-  : nextReleaseVersion({ current: manifestVersion, latest, requested })
+// Three states, told apart rather than collapsed into one bump: npm already
+// has this commit (finish the release), npm never saw the manifest version
+// (finish the release that version was written for), or the manifest records
+// something already shipped (start the next one).
+const latest = latestPublishedVersion(packageName)
+const manifestGitHead = publishedGitHead(`${packageName}@${manifestVersion}`)
+const { version, action } = planRelease({
+  current: manifestVersion,
+  latest,
+  manifestGitHead,
+  head,
+  requested,
+})
 const tag = `v${version}`
-console.log(version === manifestVersion
-  ? `Releasing ${packageName}@${version}.`
-  : `Releasing ${packageName}@${version} (npm latest ${latest ?? 'none'}, package.json ${manifestVersion}).`)
+if (action === 'resume') {
+  console.log(`${packageName}@${version} is already published from HEAD; finishing that release.`)
+} else if (action === 'pending') {
+  console.log(`package.json already carries ${version} and npm never took it; finishing that release rather than bumping past it.`)
+} else if (latest === undefined) {
+  console.log(`npm has no published version of ${packageName}; starting the sequence at ${version}.`)
+} else {
+  console.log(`Releasing ${packageName}@${version} (npm latest ${latest}, package.json ${manifestVersion}).`)
+}
 
 run('pnpm', ['check'])
 run('npm', ['pack', '--dry-run'])
 
-const alreadyPublished = resuming
-if (resuming) {
-  console.log(`${packageName}@${version} is already published from HEAD; npm publish will be skipped.`)
-} else {
-  const targetHead = publishedGitHead(`${packageName}@${version}`)
+const alreadyPublished = action === 'resume'
+if (!alreadyPublished) {
+  const targetHead = version === manifestVersion ? manifestGitHead : publishedGitHead(`${packageName}@${version}`)
   if (targetHead !== undefined) {
     throw new Error(`${packageName}@${version} is already published from ${targetHead ?? 'an unknown commit'}, not ${head}`)
   }
 }
 
-// The bump is the last thing to happen before anything leaves the machine, so
-// a failed check never leaves a version commit behind to be undone by hand.
+// The manifest is written only when the version actually changes, so a run
+// that resumes or finishes a pending release adds no second commit for the
+// same version.
 if (version !== manifestVersion) {
   if (dryRun) {
     console.log(`Dry run: package.json would move ${manifestVersion} -> ${version} and be committed to ${branch}.`)
