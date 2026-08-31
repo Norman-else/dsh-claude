@@ -4,6 +4,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { CLAUDE_CODE_PRESET_ID } from '../constants.ts'
 import { claudeMarkUrl } from './claude-mark.ts'
 import { presetDisplayText, type AgentPresetRow, type HostTranslate } from './agent-preset-roster.ts'
+import { sessionRowPreset, type SessionPresetRow } from './session-preset.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 export interface ClaudeAgentPresetRosterSource {
@@ -21,7 +22,7 @@ export interface ClaudeAgentPresetLabelInjected {
 }
 
 export interface ClaudeAgentPresetLabelProps extends ClaudeAgentPresetLabelInjected {
-  useSessions: SnapshotSelectorHook<{ readonly byId: Readonly<Record<string, { readonly agentPreset?: string } | undefined>> }>
+  useSessions: SnapshotSelectorHook<{ readonly byId: Readonly<Record<string, SessionPresetRow | undefined>> }>
   sessionId: string
 }
 
@@ -50,7 +51,7 @@ function ensureCss(): void {
 }
 
 export function ClaudeAgentPresetLabel({ t, hostT, roster, sessionId, useSessions }: ClaudeAgentPresetLabelProps) {
-  const preset = useSessions(state => state.byId[sessionId]?.agentPreset)
+  const preset = useSessions(state => sessionRowPreset(state.byId[sessionId]))
   const rows = useSyncExternalStore(roster.subscribe, roster.getSnapshot, roster.getSnapshot)
   const { load } = roster
   useEffect(() => {

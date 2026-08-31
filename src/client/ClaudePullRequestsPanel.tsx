@@ -3,6 +3,7 @@ import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ClaudeActivityEvent } from '../events.ts'
 import { autoFixEnabled } from './auto-fix.ts'
+import { sessionRowPreset } from './session-preset.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
@@ -15,6 +16,10 @@ export interface OverviewSessionRow {
   readonly running?: boolean
   readonly blank?: boolean
   readonly origin?: string
+  /** Host-computed projection values carried on the list row. Desktop 2.0.4
+   *  serves the composed preset here and leaves the summary's own
+   *  `agentPreset` unset (see {@link sessionRowPreset}). */
+  readonly projectionValues?: { readonly agentPreset?: string }
 }
 
 export interface OverviewSessionListState {
@@ -84,7 +89,7 @@ export function claudeSessionRows(state: OverviewSessionListState, archivedSessi
   const archived = new Set(archivedSessionIds)
   return rows
     .filter((row): row is OverviewSessionRow => row !== undefined
-      && row.agentPreset === 'claude'
+      && sessionRowPreset(row) === 'claude'
       && row.blank !== true
       && row.origin !== 'subagent'
       && !archived.has(row.id)

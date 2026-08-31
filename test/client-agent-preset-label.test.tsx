@@ -13,8 +13,11 @@ const hostT = (key: string): string => ({
   presetCordisDescription: 'Compose a session from Cordis plugins.',
 }[key] ?? key)
 
-function render(preset: string | undefined, rows: readonly AgentPresetRow[] = []) {
-  const sessions = { byId: { 'session-1': preset === undefined ? {} : { agentPreset: preset } } }
+function render(preset: string | undefined, rows: readonly AgentPresetRow[] = [], seat: 'summary' | 'projection' = 'summary') {
+  const row = preset === undefined
+    ? {}
+    : seat === 'summary' ? { agentPreset: preset } : { projectionValues: { agentPreset: preset } }
+  const sessions = { byId: { 'session-1': row } }
   return renderToStaticMarkup(<ClaudeAgentPresetLabel
     t={t}
     hostT={hostT}
@@ -86,6 +89,15 @@ describe('Claude agent preset label', () => {
     expect(markup).toContain('dsh-claude-preset-icon')
     expect(markup).toContain('>Cordis</span>')
     expect(markup).not.toContain('dsh-claude-preset-mark')
+  })
+
+  it('brands the Claude preset when only the projection column carries it', () => {
+    // Desktop 2.0.4 leaves the summary's own `agentPreset` unset, which blanked
+    // this label everywhere until it read the projection column too.
+    const markup = render('claude', [], 'projection')
+
+    expect(markup).toContain('dsh-claude-preset-mark')
+    expect(markup).not.toContain('IconAgentPresetOutline16')
   })
 
   it('renders nothing until the session records a preset', () => {

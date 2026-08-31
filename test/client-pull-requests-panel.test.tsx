@@ -43,6 +43,26 @@ describe('Claude pull requests overview', () => {
     expect(claudeSessionRows({ ids: Object.keys(byId), byId }, ['b']).map(row => row.id)).toEqual(['a'])
   })
 
+  it('reads the preset from the projection column when the summary field is unset', () => {
+    // Desktop 2.0.4 serves every row with `agentPreset` unset and publishes the
+    // composed preset through `projectionValues` instead; reading only the
+    // summary field emptied the whole board.
+    const projected: Record<string, OverviewSessionRow> = {
+      p: { id: 'p', displayTitle: 'Projected', cwd: '/repo-p', projectionValues: { agentPreset: 'claude' } },
+      q: { id: 'q', displayTitle: 'Other agent', cwd: '/repo-q', projectionValues: { agentPreset: 'standard' } },
+    }
+
+    expect(claudeSessionRows({ ids: Object.keys(projected), byId: projected }).map(row => row.id)).toEqual(['p'])
+  })
+
+  it('prefers the summary field over the projection column', () => {
+    const both: Record<string, OverviewSessionRow> = {
+      r: { id: 'r', displayTitle: 'Switched', cwd: '/repo-r', agentPreset: 'standard', projectionValues: { agentPreset: 'claude' } },
+    }
+
+    expect(claudeSessionRows({ ids: ['r'], byId: both })).toEqual([])
+  })
+
   it('renders session rows and an empty state', () => {
     const markup = renderToStaticMarkup(<ClaudePullRequestsPanel t={t} closeDetails={vi.fn()} openSession={vi.fn()} loadStatus={vi.fn()} sessions={store(byId)} />)
     expect(markup).toContain('overviewTitle')
