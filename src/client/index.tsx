@@ -130,7 +130,12 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
-  const projections = new ClaudeProjectionStore()
+  // A carrier that loses a line leaves the projection quietly behind the
+  // server; the store resyncs itself, and says so here rather than letting a
+  // finished tool group pulse forever with a clean log.
+  const projections = new ClaudeProjectionStore({
+    report: (kind, detail) => { diagnostics.report(kind, detail) },
+  })
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined

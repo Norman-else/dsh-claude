@@ -33,10 +33,22 @@ function carrier(): Carrier {
   const encoder = new TextEncoder()
   return {
     reader: stream.getReader(),
+    // The server writing another line after the client walked away is a real
+    // sequence, and on a socket it is silent; only the fake would throw.
     push(session, value) {
-      controller.enqueue(encoder.encode(`${JSON.stringify({ ...value, session })}\n`))
+      try {
+        controller.enqueue(encoder.encode(`${JSON.stringify({ ...value, session })}\n`))
+      } catch {
+        // the reader is gone
+      }
     },
-    pushRaw(line: string) { controller.enqueue(encoder.encode(line)) },
+    pushRaw(line: string) {
+      try {
+        controller.enqueue(encoder.encode(line))
+      } catch {
+        // the reader is gone
+      }
+    },
     close() {
       try {
         controller.close()
@@ -53,7 +65,9 @@ function projectionStore(planned: readonly Carrier[] = []) {
   const queued = [...planned]
   const opened: string[] = []
   const signals: AbortSignal[] = []
+  const reported: string[] = []
   const store = new ClaudeProjectionStore({
+    report: (kind, detail) => { reported.push(`${kind}: ${detail}`) },
     open: async (path, cancel) => {
       opened.push(path)
       signals.push(cancel)
@@ -64,7 +78,7 @@ function projectionStore(planned: readonly Carrier[] = []) {
     retryDelayMs: RETRY_MS,
     settleMs: 0,
   })
-  return { store, opened, signals }
+  return { store, opened, signals, reported }
 }
 
 async function flush(): Promise<void> {
@@ -163,6 +177,81 @@ describe('Claude client sidecar projection', () => {
     await vi.advanceTimersByTimeAsync(RETRY_MS * 10)
     expect(opened).toHaveLength(1)
     for (const unsubscribe of stop) unsubscribe()
+    stream.close()
+    store.dispose()
+  })
+
+  it('resyncs when a numbered line proves an earlier one never arrived', async () => {
+    // The phantom spinner this exists to kill: the tool-call delta lands, its
+    // tool-result delta does not, and nothing ever reconciles -- so a finished
+    // group keeps pulsing until the session is reopened by hand.
+    vi.useFakeTimers()
+    const first = carrier()
+    const second = carrier()
+    const { store, opened, reported } = projectionStore([first, second])
+    const source = store.source('session/a')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    first.push('session/a', { ...valid, type: 'snapshot', seq: 4 })
+    first.push('session/a', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status' }, seq: 5 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(opened).toHaveLength(1)
+    // seq 6 never arrives; 7 exposes the hole.
+    first.push('session/a', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 3, kind: 'status' }, seq: 7 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(opened).toHaveLength(2)
+    expect(reported.join(' ')).toContain('projection-gap')
+    unsubscribe()
+    first.close()
+    second.close()
+    store.dispose()
+  })
+
+  it('resyncs when the turn-end checkpoint stands ahead of what it applied', async () => {
+    // The trailing loss: the missing delta is the LAST one, so no later line
+    // exposes the hole. The checkpoint the supervisor writes at settlement is
+    // what makes a stuck tail detectable at all.
+    vi.useFakeTimers()
+    const first = carrier()
+    const second = carrier()
+    const { store, opened, reported } = projectionStore([first, second])
+    const source = store.source('session/a')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    first.push('session/a', { ...valid, type: 'snapshot', seq: 1 })
+    first.push('session/a', { type: 'checkpoint', seq: 1 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    // A checkpoint that agrees costs nothing.
+    expect(opened).toHaveLength(1)
+    first.push('session/a', { type: 'checkpoint', seq: 3 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(opened).toHaveLength(2)
+    expect(reported.join(' ')).toContain('projection-gap')
+    unsubscribe()
+    first.close()
+    second.close()
+    store.dispose()
+  })
+
+  it('reports a delta it had to drop instead of leaving the gap invisible', async () => {
+    vi.useFakeTimers()
+    const stream = carrier()
+    const { store, reported } = projectionStore([stream])
+    const source = store.source('session/a')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    stream.push('session/a', { ...valid, type: 'snapshot', seq: 1 })
+    // Fails validateEnvelopeFragment: the reducer keeps the last good state,
+    // which is right, but silence is what turned this into a phantom spinner.
+    stream.push('session/a', { type: 'activity', activity: { turn: -1, step: 1, ordinal: 0, kind: 'status' }, seq: 2 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(reported.join(' ')).toContain('projection-delta-rejected')
+    unsubscribe()
     stream.close()
     store.dispose()
   })
@@ -308,25 +397,38 @@ describe('Claude client sidecar projection', () => {
   it('keeps the last verified state when lines are malformed or invalid', async () => {
     vi.useFakeTimers()
     const stream = carrier()
-    const { store } = projectionStore([stream])
+    const replacement = carrier()
+    const { store, opened } = projectionStore([stream, replacement])
     const source = store.source('session')
     const unsubscribe = source.subscribe(() => {})
     await flush()
     stream.push('session', { ...valid, type: 'snapshot' })
     stream.pushRaw('not json\n')
-    stream.push('session', { type: 'activity', activity: { turn: -1 } })
     stream.push('session', { type: 'text', turn: 1, step: 1, ordinal: 5, append: 'orphan append without base' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    // Neither line means the reducer fell behind: one is not a delta at all,
+    // and an append still waiting for its base is an ordinary arrival order.
+    expect(opened).toHaveLength(1)
+    // A delta that IS addressed to this reducer and cannot be applied is a
+    // different thing: what it carried is now missing from the reducer, and
+    // only a fresh snapshot can put it back.
+    stream.push('session', { type: 'activity', activity: { turn: -1 } })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().revision).toBe(1)
     expect(source.getSnapshot().activities).toEqual(valid.activities)
-    // The carrier survived the bad lines: the next good one still lands.
-    stream.push('session', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
+    expect(opened).toHaveLength(2)
+    // The client survived the bad lines: the replacement carrier restates the
+    // projection and the next good line still lands.
+    replacement.push('session', { ...valid, type: 'snapshot' })
+    replacement.push('session', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'working' } })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().activities.map(activity => activity.ordinal)).toEqual([0, 1])
     unsubscribe()
     stream.close()
+    replacement.close()
     store.dispose()
   })
 })

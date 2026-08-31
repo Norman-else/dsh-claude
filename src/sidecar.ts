@@ -46,13 +46,26 @@ export interface ClaudeSidecarProjection {
   readonly rewind?: ClaudeRewindState
 }
 
-/** Change notification published to live subscribers after each accepted write. */
+/** Change notification published to live subscribers after each accepted write.
+ *
+ *  `checkpoint` is the one kind that carries no change: it restates where the
+ *  stream stands so a reader can notice it is behind. See {@link ClaudeSidecarRepository.checkpoint}. */
 export type ClaudeSidecarDelta =
   | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string; renderer?: ClaudeRenderMode }
   | { kind: 'activity'; activity: ClaudeActivityEvent }
   | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
   | { kind: 'tasks'; value: ClaudeTasksEvent }
   | { kind: 'sync' }
+  | { kind: 'checkpoint' }
+
+/** One delta as subscribers see it: numbered, so a reader that applies them in
+ *  order can tell a missing one from a slow one.
+ *
+ *  The projection's own `revision` cannot do this job. Streaming prose notifies
+ *  subscribers without touching disk (see {@link ClaudeSidecarRepository.appendTranscriptText}),
+ *  so revisions and notifications advance on different clocks; this counter
+ *  advances once per notification and nothing else reads it. */
+export type ClaudeSidecarNotification = ClaudeSidecarDelta & { readonly seq: number }
 
 export interface ClaudeSidecarRepositoryOptions {
   readonly root?: string
@@ -210,7 +223,9 @@ export class ClaudeSidecarRepository {
   readonly #pending = new Map<string, Promise<unknown>>()
   /** Latest durable projection per session; disk is read once and written through. */
   readonly #latest = new Map<string, ClaudeSidecarProjection>()
-  readonly #listeners = new Map<string, Set<(delta: ClaudeSidecarDelta) => void>>()
+  readonly #listeners = new Map<string, Set<(delta: ClaudeSidecarNotification) => void>>()
+  /** Notifications published per session, so a reader can spot a hole. */
+  readonly #seq = new Map<string, number>()
   /** Streaming transcript segments not yet persisted, keyed by activity key. */
   readonly #live = new Map<string, Map<string, ClaudeActivityEvent>>()
   /** Monotonic revision boost so merged reads advance while text stays in memory. */
@@ -229,7 +244,7 @@ export class ClaudeSidecarRepository {
   }
 
   /** Observe accepted changes for one session; returns the unsubscriber. */
-  subscribe(sessionId: string, listener: (delta: ClaudeSidecarDelta) => void): () => void {
+  subscribe(sessionId: string, listener: (delta: ClaudeSidecarNotification) => void): () => void {
     let set = this.#listeners.get(sessionId)
     if (set === undefined) {
       set = new Set()
@@ -284,12 +299,33 @@ export class ClaudeSidecarRepository {
     return this.#flushLive(sessionId)
   }
 
+  /** How many notifications this session has published. */
+  sequence(sessionId: string): number {
+    return this.#seq.get(sessionId) ?? 0
+  }
+
+  /** Restate where the stream stands without changing anything.
+   *
+   *  A reader detects a lost delta from the hole the NEXT one leaves, which
+   *  never comes when the lost delta was the last of a turn -- exactly the
+   *  case that leaves a finished tool group pulsing forever. Called at turn
+   *  settlement, this gives that reader the one line it needs to disagree. */
+  checkpoint(sessionId: string): void {
+    this.#deliver(sessionId, { kind: 'checkpoint', seq: this.sequence(sessionId) })
+  }
+
   #notify(sessionId: string, delta: ClaudeSidecarDelta): void {
+    const seq = this.sequence(sessionId) + 1
+    this.#seq.set(sessionId, seq)
+    this.#deliver(sessionId, { ...delta, seq } as ClaudeSidecarNotification)
+  }
+
+  #deliver(sessionId: string, notification: ClaudeSidecarNotification): void {
     const set = this.#listeners.get(sessionId)
     if (set === undefined) return
     for (const listener of [...set]) {
       try {
-        listener(delta)
+        listener(notification)
       } catch {
         // A subscriber failure must never affect durable state.
       }

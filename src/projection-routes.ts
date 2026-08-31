@@ -132,7 +132,9 @@ export function registerClaudeProjectionRoute(
     const writeSnapshot = async (sessionId: string): Promise<void> => {
       const [projection, meta] = await Promise.all([sidecar.read(sessionId), assembleMeta(sessionId)])
       metas.set(sessionId, meta)
-      writeLine({ type: 'snapshot', session: sessionId, ...envelope(projection, meta) })
+      // Where the notification stream stands as of this read, so the first
+      // delta after this line has a number to be contiguous with.
+      writeLine({ type: 'snapshot', session: sessionId, seq: sidecar.sequence(sessionId), ...envelope(projection, meta) })
     }
     // Subscribe every lane synchronously, before the first await: a delta that
     // lands while the snapshots are still assembling belongs to this carrier.
@@ -156,16 +158,20 @@ export function registerClaudeProjectionRoute(
             ...(delta.append === undefined ? {} : { append: delta.append }),
             ...(delta.text === undefined ? {} : { text: delta.text }),
             ...(delta.renderer === undefined ? {} : { renderer: delta.renderer }),
+            seq: delta.seq,
           })
           return
         case 'activity':
-          writeLine({ type: 'activity', session: sessionId, activity: delta.activity })
+          writeLine({ type: 'activity', session: sessionId, activity: delta.activity, seq: delta.seq })
           return
         case 'contextUsage':
-          writeLine({ type: 'contextUsage', session: sessionId, value: delta.value })
+          writeLine({ type: 'contextUsage', session: sessionId, value: delta.value, seq: delta.seq })
           return
         case 'tasks':
-          writeLine({ type: 'tasks', session: sessionId, value: delta.value })
+          writeLine({ type: 'tasks', session: sessionId, value: delta.value, seq: delta.seq })
+          return
+        case 'checkpoint':
+          writeLine({ type: 'checkpoint', session: sessionId, seq: delta.seq })
           return
         case 'sync':
           void writeSnapshot(sessionId).catch(() => undefined)

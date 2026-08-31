@@ -89,6 +89,21 @@ function value(status: string, detail?: string): string {
   return detail === undefined ? status : `${status} · ${detail}`
 }
 
+/** The trigger's disclosure chevron.
+ *
+ *  Geometry rather than a character: the ink spans y 6 to 10 in a 16-unit box,
+ *  so it is centred on the box's own centre and the open state's 180-degree
+ *  flip lands exactly where the closed state sat. A text arrowhead carries its
+ *  ink below the centre of the em box, which is why this needed a hand-tuned
+ *  nudge that could only be right in one of the two states. */
+function SelectChevron() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 6l4 4 4-4" />
+    </svg>
+  )
+}
+
 interface GlobalSettingSelectProps {
   setting: Extract<GlobalSettingView, { kind: 'select' }>
   disabled: boolean
@@ -176,6 +191,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = op
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
       }}
     >
+      <style data-dsh-claude-setting-select-styles>{styles.settingSelectCss}</style>
       <button
         ref={triggerRef}
         type="button"
@@ -184,7 +200,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = op
         aria-controls={open ? listboxId : undefined}
         aria-activedescendant={open ? `${listboxId}-${activeIndex}` : undefined}
         disabled={disabled || setting.options.length === 0}
-        style={{ ...styles.settingSelectTrigger, ...(open ? styles.settingSelectTriggerOpen : {}) }}
+        className={styles.settingSelectTriggerClass}
         onClick={() => { if (open) setOpen(false); else openMenu() }}
         onKeyDown={event => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -207,7 +223,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = op
         }}
       >
         <span style={styles.settingSelectValue}>{selectedOption === undefined ? setting.value : labelFor(selectedOption)}</span>
-        <span aria-hidden="true" style={{ ...styles.settingSelectChevron, ...(open ? styles.settingSelectChevronOpen : {}) }}>⌄</span>
+        <span aria-hidden="true" className={styles.settingSelectChevronClass}><SelectChevron /></span>
       </button>
       {open ? (
         <div id={listboxId} role="listbox" aria-activedescendant={`${listboxId}-${activeIndex}`} style={styles.settingSelectMenu}>

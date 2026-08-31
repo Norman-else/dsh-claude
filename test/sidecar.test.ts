@@ -179,9 +179,9 @@ describe('Claude sidecar repository', () => {
     store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'Hello' })
     store.appendTranscriptText('session', { turn: 1, step: 1, ordinal: 0, text: 'Rewritten' })
     expect(deltas).toEqual([
-      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Hel' },
-      { kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo' },
-      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Rewritten' },
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Hel', seq: 1 },
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'lo', seq: 2 },
+      { kind: 'text', turn: 1, step: 1, ordinal: 0, text: 'Rewritten', seq: 3 },
     ])
     const live = await store.read('session')
     expect(live.revision).toBe(3)
@@ -216,6 +216,36 @@ describe('Claude sidecar repository', () => {
     await store.writeTasks('session', [{ taskId: 't', description: 'work', status: 'running' }])
     await store.writeContextUsage('session', { model: 'default', totalTokens: 1, maxTokens: 10, percentage: 10, categories: [] })
     expect(kinds).toEqual(['activity', 'tasks', 'contextUsage'])
+    unsubscribe()
+  })
+
+  it('numbers every delta per session so a subscriber can tell one was lost', async () => {
+    const store = await repository()
+    const seen: { session: string; kind: string; seq: number }[] = []
+    const stop = ['left', 'right'].map(session => store.subscribe(session, delta => {
+      seen.push({ session, kind: delta.kind, seq: delta.seq })
+    }))
+    await store.appendActivity('left', { turn: 1, step: 1, ordinal: 0, kind: 'status', title: 'one' })
+    await store.appendActivity('right', { turn: 1, step: 1, ordinal: 0, kind: 'status', title: 'one' })
+    await store.appendActivity('left', { turn: 1, step: 1, ordinal: 1, kind: 'status', title: 'two' })
+    // A checkpoint asserts where the stream has reached; it is not itself a
+    // delta, so it repeats the last number rather than claiming a new one.
+    store.checkpoint('left')
+    expect(seen).toEqual([
+      { session: 'left', kind: 'activity', seq: 1 },
+      { session: 'right', kind: 'activity', seq: 1 },
+      { session: 'left', kind: 'activity', seq: 2 },
+      { session: 'left', kind: 'checkpoint', seq: 2 },
+    ])
+    for (const unsubscribe of stop) unsubscribe()
+  })
+
+  it('checkpoints a session nobody has written to without inventing a delta', async () => {
+    const store = await repository()
+    const seen: number[] = []
+    const unsubscribe = store.subscribe('quiet', delta => seen.push(delta.seq))
+    store.checkpoint('quiet')
+    expect(seen).toEqual([0])
     unsubscribe()
   })
 })

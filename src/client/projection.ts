@@ -34,6 +34,9 @@ export const EMPTY_CLAUDE_PROJECTION: ClaudeClientProjection = {
 }
 
 const RETRY_DELAY_MS = 2_000
+/** Floor between carrier reopens forced by a desync. A carrier that is losing
+ *  lines must not be answered with a reconnect per lost line. */
+const RESYNC_COOLDOWN_MS = 5_000
 /** Wait for the subscribed set to stop moving before reopening the carrier:
  *  mounting a session list changes it once per row. */
 const SUBSCRIPTION_SETTLE_MS = 250
@@ -236,9 +239,13 @@ function delay(ms: number): Promise<void> {
 export function createClaudeProjectionSource(
   sessionId: string,
   onDemand: (active: boolean) => void = () => {},
+  onDesync: (kind: string, detail: string) => void = () => {},
 ): ClaudeProjectionSource {
   let snapshot = EMPTY_CLAUDE_PROJECTION
   let revision = 0
+  /** Last carrier line this reducer applied, by the server's count. Undefined
+   *  until a snapshot states where the stream stands. */
+  let seq: number | undefined
   let owned = false
   let commands: readonly ClaudeCommandView[] = []
   let contextUsage: ClaudeContextUsageEvent | undefined
@@ -396,6 +403,18 @@ export function createClaudeProjectionSource(
     return true
   }
 
+  /** This reducer is behind the server and cannot catch up on its own: only a
+   *  fresh snapshot can. Reported as well as acted on, because a silent
+   *  self-heal hides how often the carrier is losing lines.
+   *
+   *  Numbering stops until that snapshot arrives and states it again; every
+   *  line in between would only be measured against a count already known to
+   *  be wrong. */
+  const desync = (kind: string, detail: string): void => {
+    seq = undefined
+    onDesync(kind, `${sessionId}: ${detail}`)
+  }
+
   const applyLine = (line: string): void => {
     const trimmed = line.trim()
     if (trimmed.length === 0) return
@@ -407,10 +426,24 @@ export function createClaudeProjectionSource(
     }
     const event = record(value)
     if (event === undefined || typeof event.type !== 'string') return
+    // A checkpoint carries no change: it only restates where the stream ended,
+    // which is the sole way a turn's LAST lost delta ever becomes visible.
+    if (event.type === 'checkpoint') {
+      if (nonNegativeInteger(event.seq) && seq !== undefined && event.seq !== seq) {
+        desync('projection-gap', `checkpoint at ${event.seq}, applied ${seq}`)
+      }
+      return
+    }
+    // A snapshot restates the whole projection rather than extending it, so it
+    // is never measured against the count -- it IS the new count.
+    if (event.type !== 'snapshot' && nonNegativeInteger(event.seq) && seq !== undefined && event.seq !== seq + 1) {
+      desync('projection-gap', `expected ${seq + 1}, received ${event.seq}`)
+    }
     try {
       switch (event.type) {
         case 'snapshot': {
           const next = parseClaudeClientProjection(event)
+          seq = nonNegativeInteger(event.seq) ? event.seq : undefined
           revision = next.revision
           owned = next.owned
           commands = next.commands
@@ -423,7 +456,14 @@ export function createClaudeProjectionSource(
           break
         }
         case 'text':
-          if (!applyText(event)) return
+          if (!applyText(event)) {
+            // Either the line is unusable, or it appends to prose this reducer
+            // does not have -- and a base it never received is the same hole a
+            // dropped delta leaves. Before the first snapshot there is no count
+            // to be behind, and an early append is just arrival order.
+            if (seq !== undefined) desync('projection-delta-rejected', 'text not applied')
+            return
+          }
           revision += 1
           break
         case 'activity':
@@ -459,10 +499,13 @@ export function createClaudeProjectionSource(
           return
       }
     } catch {
-      // A malformed or oversized delta is transient; keep the last verified
-      // state visible instead of making mounted UI disappear.
+      // Keeping the last verified state visible is right -- mounted UI must not
+      // disappear over one bad line -- but staying silent about it is what let a
+      // dropped tool result read as a tool that never finished.
+      desync('projection-delta-rejected', `rejected ${event.type}`)
       return
     }
+    if (nonNegativeInteger(event.seq)) seq = event.seq
     schedulePublish()
   }
 
@@ -509,6 +552,9 @@ export class ClaudeProjectionStore {
   readonly #open: (path: string, cancel: AbortSignal) => Promise<ReadableStreamDefaultReader<Uint8Array>>
   readonly #retryDelayMs: number
   readonly #settleMs: number
+  readonly #report: (kind: string, detail: string) => void
+  readonly #resyncCooldownMs: number
+  #resyncedAt = 0
   #controller: AbortController | undefined
   #settle: ReturnType<typeof setTimeout> | undefined
   #running = false
@@ -518,19 +564,42 @@ export class ClaudeProjectionStore {
     open?: (path: string, cancel: AbortSignal) => Promise<ReadableStreamDefaultReader<Uint8Array>>
     retryDelayMs?: number
     settleMs?: number
+    /** Where a desync is reported; the DSH log by way of client diagnostics. */
+    report?: (kind: string, detail: string) => void
+    resyncCooldownMs?: number
   } = {}) {
     this.#open = options.open ?? ((path, cancel) => pluginProjectionStream(path, cancel))
     this.#retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS
     this.#settleMs = options.settleMs ?? SUBSCRIPTION_SETTLE_MS
+    this.#report = options.report ?? (() => {})
+    this.#resyncCooldownMs = options.resyncCooldownMs ?? RESYNC_COOLDOWN_MS
   }
 
   source(sessionId: string): ClaudeProjectionSource {
     let source = this.#sources.get(sessionId)
     if (source === undefined) {
-      source = createClaudeProjectionSource(sessionId, active => { this.#demand(sessionId, active) })
+      source = createClaudeProjectionSource(
+        sessionId,
+        active => { this.#demand(sessionId, active) },
+        (kind, detail) => { this.#resync(kind, detail) },
+      )
       this.#sources.set(sessionId, source)
     }
     return source
+  }
+
+  /** Reopen the carrier so every lane is restated from a fresh snapshot.
+   *
+   *  One session noticed the hole, but the carrier is shared and a dropped
+   *  line is a property of the carrier, so the others are suspect too --
+   *  reopening restates all of them for the price of the one reconnect. */
+  #resync(kind: string, detail: string): void {
+    if (this.#disposed) return
+    this.#report(kind, detail)
+    const now = Date.now()
+    if (now - this.#resyncedAt < this.#resyncCooldownMs) return
+    this.#resyncedAt = now
+    this.#reopen()
   }
 
   dispose(): void {
@@ -583,11 +652,22 @@ export class ClaudeProjectionStore {
         const controller = new AbortController()
         this.#controller = controller
         const lanes = this.#lanes()
+        // Set when a reopen interrupts this carrier, to tell a deliberate
+        // swap apart from a connection that failed on its own.
+        let superseded = false
         try {
           const reader = await this.#open(
             `${CLAUDE_PROJECTION_PATH}/multi?sessions=${lanes.map(encodeURIComponent).join(',')}`,
             controller.signal,
           )
+          // A reopen has to interrupt the read, not wait for the next byte:
+          // the carrier can sit silent for a long time between turns, and a
+          // resync that lands after the next delta is no resync at all.
+          const stop = (): void => {
+            superseded = true
+            void reader.cancel().catch(() => undefined)
+          }
+          controller.signal.addEventListener('abort', stop, { once: true })
           const decoder = new TextDecoder()
           let buffer = ''
           while (!controller.signal.aborted) {
@@ -598,6 +678,7 @@ export class ClaudeProjectionStore {
             for (const line of lines) this.#dispatch(line)
             if (chunk.done) break
           }
+          controller.signal.removeEventListener('abort', stop)
           await reader.cancel().catch(() => undefined)
         } catch (error) {
           if (isAbort(error)) {
@@ -609,6 +690,9 @@ export class ClaudeProjectionStore {
           if (this.#controller === controller) this.#controller = undefined
         }
         if (this.#disposed || this.#wanted.size === 0) return
+        // A deliberate reopen is not a failed connection: re-read the lane set
+        // now rather than making the user wait out the retry backoff.
+        if (superseded) continue
         await delay(this.#retryDelayMs)
       }
     } finally {

@@ -1279,6 +1279,32 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('checkpoints the projection when a turn settles, so a lost delta cannot outlive the turn', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const seen: { kind: string; seq: number }[] = []
+    const unsubscribe = sidecars.get(runtime)!.subscribe(owner.agent.id as string, delta => {
+      seen.push({ kind: delta.kind, seq: delta.seq })
+    })
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'look around' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    query.push(result('done'))
+    await collect(output)
+    // Last word of the turn, and it repeats the number of the delta before it:
+    // a client that applied everything agrees, a client that missed the tool
+    // result does not, and only the second one pays for a resync.
+    // The turn settles after its output stream closes, so the checkpoint lands
+    // just behind the last event `collect` saw.
+    await vi.waitFor(() => expect(seen.at(-1)?.kind).toBe('checkpoint'))
+    expect(seen.at(-1)?.seq).toBe(seen.at(-2)?.seq)
+    unsubscribe()
+    await runtime.dispose()
+  })
+
   it('keeps root Claude tools exclusively in the ordered sidecar transcript', async () => {
     const transport = factory()
     const owner = fakeAgent()

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { GlobalSettingSelect, SETTING_COPY, SETTING_OPTION_COPY, SettingHint, settingOptionLabel, type GlobalSettingView } from '../src/client/ClaudeCodeSettings.tsx'
 import { en } from '../src/client/locales.ts'
+import * as styles from '../src/client/styles.ts'
 
 const setting: GlobalSettingView = {
   key: 'outputStyle',
@@ -23,6 +24,33 @@ describe('GlobalSettingSelect', () => {
     expect(markup).toContain('aria-haspopup="listbox"')
     expect(markup).toContain('Concise')
     expect(markup).not.toContain('<select')
+  })
+
+  it('draws the chevron as geometry, not as a text glyph nudged into place', () => {
+    const markup = renderToStaticMarkup(
+      <GlobalSettingSelect setting={setting} disabled={false} onChange={vi.fn()} />,
+    )
+
+    // U+2304 carries its ink below the centre of its em box, so a text
+    // chevron only looks centred with a hand-tuned nudge -- and the nudge
+    // cannot survive the 180-degree flip, which moves the ink to the other
+    // side. Geometry centred in its own viewBox needs no compensation.
+    expect(markup).toContain('<svg')
+    expect(markup).not.toContain('⌄')
+    expect(markup).not.toContain('translateY')
+  })
+
+  it('keeps a focus ring of its own so the browser default never shows through', () => {
+    const markup = renderToStaticMarkup(
+      <GlobalSettingSelect setting={setting} disabled={false} onChange={vi.fn()} />,
+    )
+
+    // Focus and open are separate states: picking an option closes the menu
+    // while the button keeps focus, and an unstyled :focus-visible leaves the
+    // UA ring -- white on a dark theme -- outside the trigger's radius.
+    expect(markup).toContain(styles.settingSelectTriggerClass)
+    expect(markup).toContain(':focus-visible')
+    expect(markup).toContain('outline: none')
   })
 
   it('disables the trigger while a settings request is pending', () => {

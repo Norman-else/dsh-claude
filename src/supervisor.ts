@@ -1197,6 +1197,7 @@ export class ClaudeSupervisor {
       entry.state = 'idle'
       entry.lastUsedAt = Date.now()
       await this.#recordChainAnchor(entry, active)
+      this.#checkpointProjection(entry)
       this.#armIdleTimer(entry)
       return
     }
@@ -1274,7 +1275,22 @@ export class ClaudeSupervisor {
     entry.lastUsedAt = Date.now()
     await this.#recordChainAnchor(entry, active)
     await this.#learnContextWindow(entry)
+    this.#checkpointProjection(entry)
     this.#armIdleTimer(entry)
+  }
+
+  /** Tell every reader where this session's delta stream ended.
+   *
+   *  A reader that lost the turn's last delta has nothing later to reveal the
+   *  hole, and a settled turn produces nothing further -- so a finished tool
+   *  group would keep pulsing until the session was reopened by hand. Last
+   *  line of the turn, best effort: presentation must never unsettle it. */
+  #checkpointProjection(entry: SupervisorEntry): void {
+    try {
+      this.#sidecar.checkpoint(entry.sessionId)
+    } catch {
+      // A reader that misses the checkpoint is no worse off than before it.
+    }
   }
 
   /** Pin where Claude's chain ended for the DSH turn that just settled, so a

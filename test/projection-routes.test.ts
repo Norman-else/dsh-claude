@@ -161,6 +161,7 @@ describe('Claude sidecar projection route', () => {
     const unsubscribed: string[] = []
     const sidecar = {
       read: async () => ({ schemaVersion: 1 as const, revision: 2, activities: [] }),
+      sequence: () => 0,
       subscribe: (sessionId: string, callback: (delta: unknown) => void) => {
         listeners.set(sessionId, callback)
         return () => { unsubscribed.push(sessionId) }
@@ -176,21 +177,50 @@ describe('Claude sidecar projection route', () => {
       expect.objectContaining({ type: 'snapshot', session: 'session/a', revision: 2, owned: true, reviewComments: [] }),
       expect.objectContaining({ type: 'snapshot', session: 'session-b', revision: 2, owned: true, reviewComments: [] }),
     ])
-    listeners.get('session/a')!({ kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi' })
-    listeners.get('session-b')!({ kind: 'text', turn: 4, step: 2, ordinal: 7, append: 'There' })
+    listeners.get('session/a')!({ kind: 'text', turn: 1, step: 1, ordinal: 0, append: 'Hi', seq: 1 })
+    listeners.get('session-b')!({ kind: 'text', turn: 4, step: 2, ordinal: 7, append: 'There', seq: 1 })
     expect(lines(res).slice(2)).toEqual([
-      { type: 'text', session: 'session/a', turn: 1, step: 1, ordinal: 0, append: 'Hi' },
-      { type: 'text', session: 'session-b', turn: 4, step: 2, ordinal: 7, append: 'There' },
+      { type: 'text', session: 'session/a', turn: 1, step: 1, ordinal: 0, append: 'Hi', seq: 1 },
+      { type: 'text', session: 'session-b', turn: 4, step: 2, ordinal: 7, append: 'There', seq: 1 },
     ])
     for (const callback of res.closeHandlers) callback()
     await pending
     expect(unsubscribed).toEqual(['session/a', 'session-b'])
   })
 
+  it('numbers the stream so the client can detect a line it never received', async () => {
+    const ctx = context()
+    const listeners = new Map<string, (delta: unknown) => void>()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 2, activities: [] }),
+      sequence: () => 4,
+      subscribe: (sessionId: string, callback: (delta: unknown) => void) => {
+        listeners.set(sessionId, callback)
+        return () => undefined
+      },
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(ctx, sidecar, () => true)
+    const res = response()
+    const pending = ctx.handler(request(multi('session')), res)
+    await settled()
+    // The snapshot states where the stream stands, so the first delta after it
+    // has a number to be contiguous with.
+    expect(lines(res)).toEqual([expect.objectContaining({ type: 'snapshot', session: 'session', seq: 4 })])
+    listeners.get('session')!({ kind: 'activity', activity: { turn: 1, step: 1, ordinal: 0, kind: 'status' }, seq: 5 })
+    listeners.get('session')!({ kind: 'checkpoint', seq: 5 })
+    expect(lines(res).slice(1)).toEqual([
+      { type: 'activity', session: 'session', activity: { turn: 1, step: 1, ordinal: 0, kind: 'status' }, seq: 5 },
+      { type: 'checkpoint', session: 'session', seq: 5 },
+    ])
+    for (const callback of res.closeHandlers) callback()
+    await pending
+  })
+
   it('paints the carrier before any repository probe, so one wedged session cannot block the rest', async () => {
     const ctx = context()
     const sidecar = {
       read: async () => ({ schemaVersion: 1 as const, revision: 5, activities: [] }),
+      sequence: () => 0,
       subscribe: () => () => undefined,
     } as unknown as ClaudeSidecarRepository
     registerClaudeProjectionRoute(

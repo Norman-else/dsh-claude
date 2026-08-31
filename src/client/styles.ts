@@ -144,31 +144,66 @@ export const settingTextInput: CSSProperties = {
   lineHeight: '22px',
 }
 
-export const settingSelectTrigger: CSSProperties = {
-  width: '100%',
-  minHeight: 38,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 12,
-  padding: '7px 11px 7px 13px',
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 10,
-  background: 'var(--dsw-alias-bg-layer-2)',
-  color: 'var(--dsw-alias-label-primary)',
-  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent)',
-  font: 'inherit',
-  fontSize: 14,
-  lineHeight: '22px',
-  textAlign: 'left',
-  cursor: 'pointer',
-  transition: 'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
-}
+export const settingSelectTriggerClass = 'dshClaudeSettingSelectTrigger'
+export const settingSelectChevronClass = 'dshClaudeSettingSelectChevron'
 
-export const settingSelectTriggerOpen: CSSProperties = {
-  borderColor: 'var(--dsw-static-blue-450)',
-  boxShadow: '0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-450) 15%, transparent)',
+/**
+ * The listbox trigger and its chevron, in a stylesheet rather than inline
+ * because the states it has to draw cannot be expressed inline.
+ *
+ * Focus is the reason. An inline style carries no pseudo-class, so the blue
+ * ring used to ride on the open state alone: choosing an option closed the
+ * menu and took the ring with it while the button kept DOM focus, leaving the
+ * UA's own focus ring -- white on a dark theme, drawn outside the radius --
+ * as the only indicator. Focus and open are separate states; both draw the
+ * ring here, and `outline: none` retires the UA's.
+ *
+ * The open state reads `aria-expanded` instead of a second class because the
+ * attribute is already on the element and already correct. Its value is left
+ * unquoted: a valid identifier needs no quotes, and the sheet then survives
+ * React's server escaping, which would otherwise write `&quot;` into markup a
+ * browser reads as raw text.
+ */
+export const settingSelectCss = `
+.${settingSelectTriggerClass} {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 11px 7px 13px;
+  border: 1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
+.${settingSelectTriggerClass}:focus-visible,
+.${settingSelectTriggerClass}[aria-expanded=true] {
+  outline: none;
+  border-color: var(--dsw-static-blue-450);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-static-blue-450) 15%, transparent);
+}
+.${settingSelectChevronClass} {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease;
+}
+.${settingSelectTriggerClass}[aria-expanded=true] .${settingSelectChevronClass} {
+  transform: rotate(180deg);
+}
+`
 
 export const settingSelectValue: CSSProperties = {
   minWidth: 0,
@@ -176,19 +211,6 @@ export const settingSelectValue: CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-}
-
-export const settingSelectChevron: CSSProperties = {
-  flex: 'none',
-  color: 'var(--dsw-alias-label-tertiary)',
-  fontSize: 16,
-  lineHeight: 1,
-  transform: 'translateY(-1px)',
-  transition: 'transform 120ms ease',
-}
-
-export const settingSelectChevronOpen: CSSProperties = {
-  transform: 'translateY(1px) rotate(180deg)',
 }
 
 export const settingSelectMenu: CSSProperties = {
