@@ -82,6 +82,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Selectable AI output renderer** — Draws Claude's output either with this plugin's own transcript (interleaved prose, grouped tool cards, activity rows) or with DSH's native conversation renderer, where prose arrives as ordinary assistant text blocks, thinking as reasoning blocks, and root Claude tools as native tool cards (terminal, diff, search, read). Chosen in Settings and applied from the next turn; the plugin transcript remains the default, and turns already recorded keep the renderer that drew them.
 - **Background task tracking** — Shows running and completed Claude subagents or background tasks with task status, recent tools, and expandable activity.
 - **Context usage** — Tracks how much of the context window a session has consumed and surfaces it as a percentage in the conversation and on the session board.
+- **Turn accounting** — Closes each turn the plugin transcript drew with the footer DSH gives only its own messages: tokens, cache hit rate, wall time, time to first token, and cumulative cost. The timings are measured as the turn runs, because activity records carry no clock of their own.
 - **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, and handles Stop, cancellation, restart, and process-tree cleanup.
 - **Bilingual interface** — Ships every user-facing string in both English and Chinese.
 

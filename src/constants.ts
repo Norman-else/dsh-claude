@@ -42,3 +42,23 @@ export const DEFAULT_CLAUDE_RENDER_MODE: ClaudeRenderMode = 'plugin'
 export function isClaudeRenderMode(value: unknown): value is ClaudeRenderMode {
   return value === 'plugin' || value === 'native'
 }
+
+/** How this package paints the PROSE of a Claude answer.
+ *
+ *  'plain' is Claude's own presentation: body text in the Host's text colour,
+ *  colour reserved for code. 'enhanced' gives headings, emphasis, list markers,
+ *  quotes and links their own hues and darkens the code surface — the way a
+ *  Markdown-highlighting editor shows a document rather than the way Claude
+ *  desktop shows an answer. It is opt-in because it deliberately breaks the
+ *  parity the rest of `markdown-theme.ts` exists to hold.
+ *
+ *  Only meaningful under {@link ClaudeRenderMode} 'plugin': the stylesheet is
+ *  scoped to markup this package renders, and 'native' turns are drawn by the
+ *  Host, where it has no reach. */
+export type ClaudeProseMode = 'plain' | 'enhanced'
+export const CLAUDE_PROSE_MODES = ['plain', 'enhanced'] as const
+export const DEFAULT_CLAUDE_PROSE_MODE: ClaudeProseMode = 'plain'
+
+export function isClaudeProseMode(value: unknown): value is ClaudeProseMode {
+  return value === 'plain' || value === 'enhanced'
+}

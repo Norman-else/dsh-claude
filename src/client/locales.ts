@@ -48,6 +48,10 @@ export const zh = {
   rendererPlugin: '插件渲染器',
   rendererNative: 'DSH 原生渲染器',
   rendererEffect: '插件渲染器沿用本插件自带的转录视图：交错的正文、成组的工具卡片与活动行。DSH 原生渲染器改由 DSH 自身绘制：正文作为普通助手文本块，思考作为推理块，Claude 的顶层工具会镜像成原生工具卡片。修改从下一个回合起生效；已经产生的回合仍按记录时的渲染器显示，不会重绘。',
+  prose: 'Markdown 彩色高亮',
+  prosePlain: '关闭',
+  proseEnhanced: '开启',
+  proseEffect: '开启后，正文的标题、加粗、斜体、行内代码、列表符号、引用与链接各自着色，代码块换成深色描边底。这会覆盖本插件默认对齐 Claude 桌面版的配色。仅在使用插件渲染器时有效，改动立即生效，无需等待下一回合。',
   worktreeBranchPrefix: 'Worktree 分支前缀',
   worktreeBranchPrefixEffect: '分支前缀修改会应用于之后自动创建的 Worktree 分支；显式指定的完整分支名不会被修改。',
   maxProcessesSetting: 'Claude 进程上限',
@@ -361,6 +365,11 @@ export const zh = {
   rewindFailed: '回退失败（{code}）。',
   rewindBusy: '这个会话正在运行，请等本轮结束后再回退。',
   rewindStale: '宿主进程里的插件还是旧版本（没有回退接口）。重启 DSH 后再试。',
+  turnUsage: '本回合用量',
+  turnUsageTokens: '{count} tok',
+  turnUsageCache: '缓存命中 {percent}%',
+  turnUsageTtft: '首字 {duration}',
+  turnUsageCost: '累计 ${cost}',
 } as const
 
 export const en = {
@@ -413,6 +422,10 @@ export const en = {
   rendererPlugin: 'Plugin renderer',
   rendererNative: 'DSH native renderer',
   rendererEffect: 'The plugin renderer keeps this package’s own transcript: interleaved prose, grouped tool cards, and activity rows. The DSH native renderer hands the same turn to DSH itself — prose as ordinary assistant text blocks, thinking as reasoning blocks, and root Claude tools mirrored into native tool cards. A change applies from the next turn; turns already recorded keep the renderer they were recorded with and are not redrawn.',
+  prose: 'Markdown colour highlighting',
+  prosePlain: 'Off',
+  proseEnhanced: 'On',
+  proseEffect: 'Gives headings, bold, italics, inline code, list markers, quotes and links their own colours, and paints the code block on a dark outlined surface. This overrides the Claude-desktop palette this package matches by default. Only applies under the plugin renderer, and takes effect immediately rather than on the next turn.',
   worktreeBranchPrefix: 'Worktree branch prefix',
   worktreeBranchPrefixEffect: 'Prefix changes apply to subsequently generated Worktree branches. Explicit full branch names remain unchanged.',
   maxProcessesSetting: 'Claude process limit',
@@ -726,6 +739,11 @@ export const en = {
   rewindFailed: 'The rewind failed ({code}).',
   rewindBusy: 'This session is running; wait for the turn to finish before rewinding.',
   rewindStale: 'The Host process is still running the previous plugin build, which has no rewind route. Restart DSH and try again.',
+  turnUsage: 'Turn usage',
+  turnUsageTokens: '{count} tok',
+  turnUsageCache: 'Cache hit {percent}%',
+  turnUsageTtft: 'TTFT {duration}',
+  turnUsageCost: '${cost} total',
 } as const
 
 export type ClaudeCodeSettingsKey = keyof typeof en

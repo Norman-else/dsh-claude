@@ -1,3 +1,5 @@
+import { DEFAULT_CLAUDE_PROSE_MODE, type ClaudeProseMode } from '../constants.ts'
+
 /** Claude Code's code presentation over the Host's Markdown renderer.
  *
  *  This package renders no Markdown of its own — prose, fenced blocks and the
@@ -75,6 +77,30 @@ const PIERRE_LIGHT: readonly (readonly [string, string, string])[] = [
 const CLAY = '#d97757'
 const CLAY_EMPHASIZED = '#c8603f'
 
+/** Prose colours for the body of a Claude answer.
+ *
+ *  These are NOT Pierre: the palette above exists to match Claude's desktop
+ *  build inside code blocks, and Claude paints prose in plain body text. This
+ *  block is a deliberate departure — headings, emphasis and links get their
+ *  own hues so a long answer is scannable, the way a Markdown-highlighting
+ *  editor shows it. Values are theme-independent by design (the same six read
+ *  acceptably on both surfaces); split them if the light theme ever needs its
+ *  own ramp.
+ *
+ *  The inline-code entry REPLACES {@link CLAY} rather than sitting beside it:
+ *  two colours on the same chip is not a choice a stylesheet can make. */
+const PROSE = {
+  heading: '#7C9EFF',
+  bold: '#FFB454',
+  italic: '#5BD6C0',
+  inlineCode: '#FF7A93',
+  listMarker: '#F2C94C',
+  quote: '#9AA3B2',
+  link: '#4DA3FF',
+  codeBackground: '#0F1218',
+  codeBorder: '#2E3546',
+} as const
+
 /** The inline-code chip fill: a neutral 4% wash (Claude's `--t1`), not a tint
  *  of the text colour. A clay-tinted fill reads as a coloured box around every
  *  identifier; the neutral one disappears into the surface and lets the text
@@ -127,16 +153,78 @@ export const CLAUDE_MARKDOWN_THEME_CSS = [
   // intact and scrolls. Specificity beats the primitive's `:where(pre)`.
   `.${CLAUDE_MARKDOWN_SCOPE} pre{white-space:pre;word-break:normal;overflow-x:auto}`,
   `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]{--dsl-code-block-border-radius:${BLOCK_RADIUS}}`,
+
 ].join('')
 
-let injected = false
+/** The class the review-comment card puts on a rendered comment body. Declared
+ *  here rather than imported because it is a literal inside `styles.ts`'s CSS
+ *  string, not a constant; a rename there makes these rules miss and the
+ *  comment keeps its stock colours, which is the same fail-open the chrome
+ *  rules above rely on. */
+const COMMENT_BODY_SCOPE = 'dshClaudeDiffCommentBody'
 
-/** Attach the sheet once per page. */
+/** Everything the `prose: 'enhanced'` setting adds, and nothing the base sheet
+ *  needs. Appended AFTER the base sheet so its rules win ties on source order —
+ *  see the note on the inline-code selector below. */
+export const CLAUDE_MARKDOWN_ENHANCED_CSS = [
+  // Last in the sheet on purpose: every rule here has to win against an
+  // earlier one at EQUAL specificity, so source order is the tie-break. The
+  // inline-code entry repeats the clay rules' two selectors verbatim for that
+  // reason — the dark-theme one carries an extra attribute selector, and a
+  // single flat `.scope :not(pre)>code` would lose to it under a dark body.
+  `.${CLAUDE_MARKDOWN_SCOPE} :is(h1,h2,h3,h4,h5,h6){color:${PROSE.heading}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} strong{color:${PROSE.bold}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} em{color:${PROSE.italic}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} li::marker{color:${PROSE.listMarker}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} blockquote{border-left-color:${PROSE.quote};color:${PROSE.quote}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} a{color:${PROSE.link}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code,body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${PROSE.inlineCode}}`,
+
+  // Claude's own code surface, replaced by the palette the setting names. The
+  // base sheet deliberately paints this from a UI token (see `--shiki-background`
+  // at the top of this file); opting in trades that parity for the darker,
+  // outlined block the highlight palette is drawn against.
+  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]{background:${PROSE.codeBackground};box-shadow:0 0 0 1px ${PROSE.codeBorder}}`,
+  `.${CLAUDE_MARKDOWN_SCOPE} pre{background:${PROSE.codeBackground}}`,
+
+  // GitHub review comments never pass through MarkdownText — `comment-markdown.ts`
+  // renders them and the card owns their typography — so the same palette has
+  // to be spelled a second time against that scope.
+  `.${COMMENT_BODY_SCOPE} :is(h1,h2,h3,h4,h5,h6){color:${PROSE.heading}}`,
+  `.${COMMENT_BODY_SCOPE} strong{color:${PROSE.bold}}`,
+  `.${COMMENT_BODY_SCOPE} em{color:${PROSE.italic}}`,
+  `.${COMMENT_BODY_SCOPE} li::marker{color:${PROSE.listMarker}}`,
+  `.${COMMENT_BODY_SCOPE} blockquote{border-left-color:${PROSE.quote};color:${PROSE.quote}}`,
+  `.${COMMENT_BODY_SCOPE} a{color:${PROSE.link}}`,
+  `.${COMMENT_BODY_SCOPE} :not(pre)>code{color:${PROSE.inlineCode}}`,
+].join('')
+
+/** Live reference to this package's sheet, and the mode it currently holds.
+ *  The mode is remembered so `ensureClaudeMarkdownTheme` — called on every
+ *  Markdown render — cannot undo a choice boot or the settings panel made. */
+let styleTag: HTMLStyleElement | null = null
+let mode: ClaudeProseMode = DEFAULT_CLAUDE_PROSE_MODE
+
+function write(): void {
+  if (typeof document === 'undefined') return
+  if (styleTag === null || styleTag.parentNode === null) {
+    styleTag = document.createElement('style')
+    styleTag.dataset.dshClaudeMarkdownTheme = ''
+    document.head.appendChild(styleTag)
+  }
+  styleTag.textContent = mode === 'enhanced'
+    ? CLAUDE_MARKDOWN_THEME_CSS + CLAUDE_MARKDOWN_ENHANCED_CSS
+    : CLAUDE_MARKDOWN_THEME_CSS
+}
+
+/** Attach the sheet, keeping whatever mode is already set. Idempotent. */
 export function ensureClaudeMarkdownTheme(): void {
-  if (injected || typeof document === 'undefined') return
-  injected = true
-  const element = document.createElement('style')
-  element.dataset.dshClaudeMarkdownTheme = ''
-  element.textContent = CLAUDE_MARKDOWN_THEME_CSS
-  document.head.appendChild(element)
+  write()
+}
+
+/** Switch the prose palette. Rewriting one global sheet repaints every mounted
+ *  Markdown block at once, so no render state has to carry the setting. */
+export function applyClaudeMarkdownTheme(next: ClaudeProseMode): void {
+  mode = next
+  write()
 }

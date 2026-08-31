@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
 import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
+import { DEFAULT_CLAUDE_PROSE_MODE, isClaudeProseMode, type ClaudeProseMode } from '../constants.ts'
+import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
@@ -49,13 +51,13 @@ export type GlobalSettingView = {
   kind: 'select'
   value: string
   options: readonly GlobalSettingOption[]
-  effect: 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
+  effect: 'immediate' | 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 } | {
   key: string
   kind: 'text'
   value: string
   maxLength: number
-  effect: 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
+  effect: 'immediate' | 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 }
 
 interface GlobalSettingsView {
@@ -70,7 +72,7 @@ export function isGlobalSettingsView(value: unknown): value is GlobalSettingsVie
     const item = setting as Record<string, unknown>
     if (typeof item.key !== 'string'
       || typeof item.value !== 'string'
-      || !['new-session', 'next-turn', 'next-worktree', 'restart'].includes(String(item.effect))) return false
+      || !['immediate', 'new-session', 'next-turn', 'next-worktree', 'restart'].includes(String(item.effect))) return false
     if (item.kind === 'text') return typeof item.maxLength === 'number' && item.maxLength > 0
     return item.kind === 'select'
       && Array.isArray(item.options)
@@ -257,11 +259,33 @@ export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = op
  *  'Fable') arrive with their own `label` and are shown verbatim. */
 const TRANSLATED_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet'])
 
+/** The prose mode a settings payload carries, or the default when it carries
+ *  none — an older Host, or a response this Client does not fully understand,
+ *  leaves the palette alone rather than guessing. */
+export function proseModeOf(settings: readonly GlobalSettingView[]): ClaudeProseMode {
+  const value = settings.find(setting => setting.key === 'prose')?.value
+  return isClaudeProseMode(value) ? value : DEFAULT_CLAUDE_PROSE_MODE
+}
+
+/** Settings whose row only makes sense under a particular value of another.
+ *  Filtering here rather than server-side keeps the descriptor list flat: the
+ *  server has no view of what the Client can paint. Fails OPEN — a payload
+ *  missing the setting a row depends on shows the row rather than hiding it,
+ *  so an older Host cannot make a setting unreachable. */
+export function visibleGlobalSettings(settings: readonly GlobalSettingView[]): readonly GlobalSettingView[] {
+  // The prose palette is a stylesheet over markup this package renders; under
+  // the native renderer the Host draws the turn and the rules never match.
+  const renderer = settings.find(setting => setting.key === 'renderer')
+  if (renderer === undefined || renderer.value !== 'native') return settings
+  return settings.filter(setting => setting.key !== 'prose')
+}
+
 /** Per-setting label and the effect note that used to sit as a standalone
  *  paragraph under the card; it now hangs off the label as a hover hint. */
 export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKey; hint: ClaudeCodeSettingsKey }>> = {
   outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
   renderer: { label: 'renderer', hint: 'rendererEffect' },
+  prose: { label: 'prose', hint: 'proseEffect' },
   worktreeBranchPrefix: { label: 'worktreeBranchPrefix', hint: 'worktreeBranchPrefixEffect' },
   maxProcesses: { label: 'maxProcessesSetting', hint: 'maxProcessesEffect' },
   idleTimeoutMinutes: { label: 'idleTimeoutSetting', hint: 'idleTimeoutEffect' },
@@ -273,6 +297,8 @@ export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKe
 export const SETTING_OPTION_COPY: Readonly<Record<string, ClaudeCodeSettingsKey>> = {
   'renderer:plugin': 'rendererPlugin',
   'renderer:native': 'rendererNative',
+  'prose:plain': 'prosePlain',
+  'prose:enhanced': 'proseEnhanced',
 }
 
 export function settingOptionLabel(
@@ -517,6 +543,11 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         : await pluginWrite(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast', undefined, { method: 'PATCH', json: { changes } })
       if (!isGlobalSettingsView(payload)) throw new Error('Invalid global settings response')
       setGlobalSettings(payload)
+      // Presentation-only, so it lands by rewriting one global sheet rather
+      // than by threading a value down to every Markdown block. Covers the
+      // initial read as well as the write, so opening the panel re-syncs a
+      // stylesheet that boot could not reach.
+      applyClaudeMarkdownTheme(proseModeOf(payload.settings))
     } catch (cause) {
       setGlobalSettingsError(cardFailure(cause))
     } finally {
@@ -589,7 +620,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
           <h3 style={styles.settingsSectionHeading}>{t('globalSettings')}</h3>
           <p style={styles.settingsBody}>{t('globalSettingsBody')}</p>
         </div>
-        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : globalSettings.settings.map(setting => {
+        {globalSettings === undefined ? <p style={styles.notice}>{t('globalSettingsLoading')}</p> : visibleGlobalSettings(globalSettings.settings).map(setting => {
           const copy = SETTING_COPY[setting.key]
           return (
           <div key={setting.key} style={styles.diagnosticGrid}>

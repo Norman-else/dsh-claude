@@ -8,7 +8,10 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
   CLAUDE_GLOBAL_SETTINGS_PATH,
   CLAUDE_RENDER_MODES,
+  CLAUDE_PROSE_MODES,
+  DEFAULT_CLAUDE_PROSE_MODE,
   DEFAULT_CLAUDE_RENDER_MODE,
+  isClaudeProseMode,
   isClaudeRenderMode,
   type ClaudeRenderMode,
 } from './constants.ts'
@@ -27,7 +30,7 @@ const MAX_IDLE_TIMEOUT_MINUTES = 24 * 60
 const DEFAULT_LIMITS: SupervisorLimits = { maxProcesses: 4, idleTimeoutMs: 30 * 60_000 }
 
 type JsonObject = Record<string, unknown>
-export type GlobalSettingEffect = 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
+export type GlobalSettingEffect = 'immediate' | 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 
 export interface GlobalSettingOption {
   value: string
@@ -245,6 +248,29 @@ const RENDERER: SelectSettingDescriptor = {
   },
 }
 
+/** Whether Claude's prose gets the highlight palette. Presentation only: no
+ *  record carries it and nothing on the server reads it back, so unlike
+ *  {@link RENDERER} the switch lands the moment the Client rewrites its own
+ *  stylesheet — hence 'immediate' rather than 'next-turn'. */
+const PROSE: SelectSettingDescriptor = {
+  key: 'prose',
+  kind: 'select',
+  document: 'plugin',
+  effect: 'immediate',
+  async options() {
+    return CLAUDE_PROSE_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) {
+    const value = document.prose
+    return isClaudeProseMode(value) ? value : DEFAULT_CLAUDE_PROSE_MODE
+  },
+  apply(document, value) {
+    if (!isClaudeProseMode(value)) throw new Error('Invalid value for global setting prose')
+    if (value === DEFAULT_CLAUDE_PROSE_MODE) delete document.prose
+    else document.prose = value
+  },
+}
+
 function isBoundedInteger(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
 }
@@ -276,7 +302,7 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses)
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 

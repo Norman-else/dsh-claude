@@ -537,13 +537,19 @@ describe('Claude supervisor', () => {
       type: 'usage',
       usage: { inputTokens: 2, outputTokens: 30, cacheReadTokens: 1_000 },
     })
-    // The audit trail still records what the whole turn actually billed.
+    // The audit trail still records what the whole turn actually billed, now
+    // with the wall clock the transcript footer has no other way to know.
     const snapshot = await projection(runtime)
-    expect(snapshot.activities.filter(activity => activity.kind === 'usage')).toContainEqual(
-      expect.objectContaining({
-        usage: { inputTokens: 3, outputTokens: 30, cacheReadTokens: 1_900, cumulativeCostUsd: 0.01 },
+    const recorded = snapshot.activities.filter(activity => activity.kind === 'usage')
+    expect(recorded).toContainEqual(expect.objectContaining({
+      usage: expect.objectContaining({
+        inputTokens: 3,
+        outputTokens: 30,
+        cacheReadTokens: 1_900,
+        cumulativeCostUsd: 0.01,
+        durationMs: expect.any(Number),
       }),
-    )
+    }))
     await runtime.dispose()
   })
 

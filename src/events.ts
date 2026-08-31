@@ -36,6 +36,11 @@ export interface ClaudeUsage {
   cacheReadTokens?: number
   cacheCreationTokens?: number
   cumulativeCostUsd?: number
+  /** Wall time from the turn being admitted to it settling. Measured here
+   *  rather than derived on the client: activities carry no timestamps. */
+  durationMs?: number
+  /** Wall time to the first visible token of the turn. */
+  ttftMs?: number
 }
 
 export interface ClaudeSessionBoundEvent {

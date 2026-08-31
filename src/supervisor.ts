@@ -159,6 +159,10 @@ interface ActiveTurn {
   thinking: string
   /** Newest single-call prompt accounting; what DSH's context meter divides. */
   requestUsage: ClaudeUsage | undefined
+  /** When this turn was admitted, and when it first put a token on screen.
+   *  The transcript has no other clock: activities carry no timestamps. */
+  startedAt: number
+  firstOutputAt: number | undefined
   aborted: boolean
   deniedToolUseIds: Set<string>
   /** Root tool calls still waiting for their result, by toolUseId, with the
@@ -454,6 +458,8 @@ export class ClaudeSupervisor {
       transcriptTextOrdinal: undefined,
       thinking: '',
       requestUsage: undefined,
+      startedAt: Date.now(),
+      firstOutputAt: undefined,
       aborted: false,
       deniedToolUseIds: new Set(),
       openCalls: new Map(),
@@ -800,6 +806,7 @@ export class ClaudeSupervisor {
         active.text += message.text
         active.transcriptText += message.text
         await this.#upsertTranscriptText(active)
+        active.firstOutputAt ??= Date.now()
         active.output.push({ type: 'text-delta', text: message.text })
         return
       case 'assistant-text':
@@ -813,7 +820,8 @@ export class ClaudeSupervisor {
           active.text += message.text
           active.transcriptText += message.text
           await this.#upsertTranscriptText(active)
-          active.output.push({ type: 'text-delta', text: message.text })
+          active.firstOutputAt ??= Date.now()
+        active.output.push({ type: 'text-delta', text: message.text })
         }
         return
       case 'thinking':
@@ -934,6 +942,18 @@ export class ClaudeSupervisor {
           })
         }
         return
+    }
+  }
+
+  /** The turn's accounting with its wall clock attached. The transcript draws
+   *  this line itself under the plugin renderer: activities carry no
+   *  timestamps, so a duration it did not measure is a duration nobody has. */
+  #timedUsage(active: ActiveTurn, usage: ClaudeUsage): ClaudeUsage {
+    const now = Date.now()
+    return {
+      ...usage,
+      durationMs: Math.max(0, now - active.startedAt),
+      ...(active.firstOutputAt === undefined ? {} : { ttftMs: Math.max(0, active.firstOutputAt - active.startedAt) }),
     }
   }
 
@@ -1164,7 +1184,7 @@ export class ClaudeSupervisor {
         phase: 'completed',
         title: 'Claude usage',
         summary: usageSummary(result.usage),
-        usage: result.usage,
+        usage: this.#timedUsage(active, result.usage),
       })
       active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
     }
@@ -1211,7 +1231,7 @@ export class ClaudeSupervisor {
         phase: 'completed',
         title: 'Claude usage',
         summary: usageSummary(result.usage),
-        usage: result.usage,
+        usage: this.#timedUsage(active, result.usage),
       })
       active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
     }

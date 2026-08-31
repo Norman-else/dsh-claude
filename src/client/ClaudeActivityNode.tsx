@@ -7,7 +7,7 @@ import {
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ClaudeActivityEvent } from '../events.ts'
+import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
 import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
@@ -53,6 +53,9 @@ const ACTIVITY_CSS = [
   '.dsh-claude-diff-delete{color:var(--dsw-alias-state-error-primary)}',
   '.dsh-claude-tool-name{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}',
   '.dsh-claude-tool-summary{margin-left:8px;color:var(--dsw-alias-label-tertiary)}',
+  '.dsh-claude-turn-usage{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:10px;',
+    'color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+  '.dsh-claude-turn-usage-label{color:var(--dsw-alias-label-caption)}',
   '.dsh-claude-tool-terminal{display:flex;gap:8px;margin:6px 0 0;padding:8px 10px;max-height:220px;overflow:auto;',
     'border-radius:8px;background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small)}',
   '.dsh-claude-tool-prompt{flex:none;user-select:none;color:var(--dsw-alias-label-caption)}',
@@ -374,6 +377,58 @@ export function ClaudeTranscriptToolGroup({
   )
 }
 
+/** Round a duration the way a reader reads one: no more precision than the
+ *  number deserves. */
+export function formatTurnDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(1, Math.round(ms))}ms`
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : String(Math.round(seconds))}s`
+  const whole = Math.round(seconds)
+  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, '0')}s`
+}
+
+/** Share of the prompt that was served from cache.
+ *
+ *  Cache reads are counted against everything the prompt cost to assemble --
+ *  fresh input and cache writes included -- so a turn that read nothing scores
+ *  zero rather than dividing by nothing. */
+export function cacheHitRate(usage: ClaudeUsage): number | undefined {
+  const read = usage.cacheReadTokens ?? 0
+  const total = read + (usage.cacheCreationTokens ?? 0) + (usage.inputTokens ?? 0)
+  return total === 0 ? undefined : read / total
+}
+
+/** The turn's accounting, in the order a reader wants it: size, then cost of
+ *  assembling it, then how long it took, then money. */
+export function turnUsageParts(usage: ClaudeUsage, t: Translate): readonly string[] {
+  const tokens = (usage.inputTokens ?? 0)
+    + (usage.outputTokens ?? 0)
+    + (usage.cacheReadTokens ?? 0)
+    + (usage.cacheCreationTokens ?? 0)
+  const cached = cacheHitRate(usage)
+  const parts: string[] = []
+  if (tokens > 0) parts.push(t('turnUsageTokens', { count: formatTokenCount(tokens) }))
+  if (cached !== undefined) parts.push(t('turnUsageCache', { percent: (cached * 100).toFixed(1) }))
+  if (usage.durationMs !== undefined) parts.push(formatTurnDuration(usage.durationMs))
+  if (usage.ttftMs !== undefined) parts.push(t('turnUsageTtft', { duration: formatTurnDuration(usage.ttftMs) }))
+  if (usage.cumulativeCostUsd !== undefined) parts.push(t('turnUsageCost', { cost: usage.cumulativeCostUsd.toFixed(2) }))
+  return parts
+}
+
+/** The footer the Host draws under its own assistant message, drawn here for
+ *  the steps the Host never had a message for. */
+export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate }) {
+  const parts = turnUsageParts(usage, t)
+  if (parts.length === 0) return null
+  return (
+    <div className="dsh-claude-turn-usage">
+      <span className="dsh-claude-turn-usage-label">{t('turnUsage')}</span>
+      <span aria-hidden="true">·</span>
+      <span>{parts.join(' · ')}</span>
+    </div>
+  )
+}
+
 export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
   ensureCss()
   const marker = node.data
@@ -391,6 +446,8 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
         ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><ClaudeMarkdown text={item.text} labels={markdownLabels} /></div>
         : item.kind === 'compaction'
         ? <ClaudeCompactionDivider key={`compaction:${item.ordinal}`} compaction={item.compaction} t={t} />
+        : item.kind === 'usage'
+        ? <ClaudeTurnUsage key={`usage:${item.ordinal}`} usage={item.usage} t={t} />
         : item.kind === 'tools'
           ? <ClaudeTranscriptToolGroup
               key={`tools:${item.ordinal}`}

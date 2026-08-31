@@ -3,7 +3,7 @@ import type {
   ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus } from '../events.ts'
+import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeUsage } from '../events.ts'
 import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
 import { isProjectedTaskActivity } from './task-projection.ts'
 
@@ -53,6 +53,7 @@ export type ClaudeTranscriptItem =
   | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[]; additions?: number; deletions?: number; files?: number }
   | { kind: 'activity'; ordinal: number; row: ClaudeActivityChatData }
   | { kind: 'compaction'; ordinal: number; compaction: ClaudeCompaction }
+  | { kind: 'usage'; ordinal: number; usage: ClaudeUsage }
 
 export interface ClaudeTurnMarker {
   readonly turn: number
@@ -479,6 +480,14 @@ export function transcriptItemsForStep(
     if (activity.kind === 'compaction') {
       flushGroup()
       items.push({ kind: 'compaction', ordinal: activity.ordinal, compaction: compactionOf(activity) })
+      continue
+    }
+    // The turn's own accounting, drawn as a footer. The Host puts this under
+    // its native assistant message; a step the plugin draws has no such
+    // message to hang it on, so the transcript carries it instead.
+    if (activity.kind === 'usage' && activity.usage !== undefined) {
+      flushGroup()
+      items.push({ kind: 'usage', ordinal: activity.ordinal, usage: activity.usage })
       continue
     }
     if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {

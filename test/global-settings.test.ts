@@ -59,6 +59,28 @@ describe('Claude Code global settings registry', () => {
     await expect(updateGlobalSettings({ worktreeBranchPrefix: '../invalid' }, { paths })).rejects.toThrow('Invalid value')
   })
 
+  it('stores the prose highlight mode in plugin settings, defaulting to plain', async () => {
+    const paths = await fixture()
+    const initial = await readGlobalSettings({ paths })
+    expect(initial.settings.find(setting => setting.key === 'prose')).toMatchObject({
+      kind: 'select', value: 'plain', effect: 'immediate',
+    })
+    expect(initial.settings.find(setting => setting.key === 'prose')?.options).toEqual([
+      { value: 'plain', label: 'plain', source: 'built-in' },
+      { value: 'enhanced', label: 'enhanced', source: 'built-in' },
+    ])
+
+    const updated = await updateGlobalSettings({ prose: 'enhanced' }, { paths })
+    expect(updated.settings.find(setting => setting.key === 'prose')).toMatchObject({ value: 'enhanced' })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ prose: 'enhanced' })
+
+    // Back to the default: the key is deleted rather than written, so a
+    // never-touched setting leaves no trace in the document.
+    await updateGlobalSettings({ prose: 'plain' }, { paths })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
+    await expect(updateGlobalSettings({ prose: 'neon' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
   it('stores the AI output renderer in plugin settings, defaulting to the plugin transcript', async () => {
     const paths = await fixture()
     const initial = await readGlobalSettings({ paths })

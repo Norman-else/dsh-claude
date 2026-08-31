@@ -10,7 +10,10 @@ import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDe
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
-import { ClaudeCodeSettings, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
+import { ClaudeCodeSettings, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
+import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
+import { pluginRead } from './plugin-transport.ts'
+import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
@@ -130,6 +133,15 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
   ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
+  // The prose palette is a Client-side setting the Settings panel may never be
+  // opened to deliver, so read it once at boot. Deliberately unawaited and
+  // silently swallowed: a Host that cannot answer leaves the sheet on its
+  // default rather than blocking the rest of `apply`.
+  void pluginRead(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast')
+    .then(payload => {
+      if (isGlobalSettingsView(payload)) applyClaudeMarkdownTheme(proseModeOf(payload.settings))
+    })
+    .catch(() => {})
   // A carrier that loses a line leaves the projection quietly behind the
   // server; the store resyncs itself, and says so here rather than letting a
   // finished tool group pulse forever with a clean log.
