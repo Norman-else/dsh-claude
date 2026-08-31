@@ -161,10 +161,14 @@ Auxiliary DSH calls (`purpose: 'compaction' | 'session-title'`) are not routed t
 
 One `renderer` setting selects who draws a Claude turn. It is plugin state, not
 Claude Code state, and defaults to `plugin` so an install that never touches it
-behaves exactly as before. The Host reads it per message, so a change lands on
-the next turn; the Client decides its conversation nodes once at boot, so the
-setting is declared restart-scoped and a turn already recorded keeps the
-renderer it was recorded with.
+behaves exactly as before. The Host reads it per message and stamps every
+sidecar record it writes — prose included — with the renderer that produced it.
+The Client reads that stamp back per step rather than holding its own copy of
+the setting: the Host switches on the next turn while a running Client would
+keep a boot-time decision, and the failure mode of disagreeing is drawing every
+step twice. Reading it per step also keeps history honest in both directions —
+a turn recorded under one renderer keeps it after the setting changes, and is
+never redrawn under the other.
 
 Under `plugin`, the sidecar owns the complete visible transcript so prose and
 Claude tool groups share one exact ordinal stream, and DSH receives only an
@@ -253,14 +257,14 @@ A lightweight `ConversationNodeDefinition` starts exactly once at each standard 
 
 ### 5.2 Activity card
 
-The activity card is the `plugin` renderer's contribution and is registered
-only when that renderer is selected. Under `native` the Client withholds the
-step transcript node and lets DSH draw the assistant message, reasoning, and
-mirrored tool cards; the turn marker, the live task launcher, and every other
-control surface this package contributes stay mounted in both modes because
-they have no native counterpart. Compaction boundaries and non-tool activity
-rows (status, warning) have no native equivalent either and remain sidecar-only
-under `native`.
+The activity card is the `plugin` renderer's contribution. Its chat node is
+registered unconditionally; a step whose records carry the `native` stamp folds
+to no items and the node renders null, so DSH's assistant message, reasoning,
+and mirrored tool cards are the only thing drawn for it. The turn marker, the
+live task launcher, and every other control surface this package contributes
+stay mounted under both renderers because they have no native counterpart.
+Compaction boundaries and non-tool activity rows (status, warning) have no
+native equivalent either and remain sidecar-only under `native`.
 
 The activity card shows:
 
@@ -309,9 +313,9 @@ Persist plugin runtime settings through the plugin's own settings namespace if t
 The `renderer` field selects the AI output renderer (`plugin` or `native`, see
 3.4). It is stored in the plugin's own settings document, never in
 `~/.claude/settings.json`, and an unknown or malformed value reads back as
-`plugin`. The Client mirrors the chosen value into Web Storage because
-`apply()` must decide which conversation nodes to register before any route can
-answer; an unreadable mirror keeps the plugin transcript.
+`plugin`. Its effect scope is `next-turn`: the Host applies it to the next turn
+it runs, and the Client needs no copy of it because the renderer travels with
+each record.
 
 The initial global field is `outputStyle`. Read its current value from `~/.claude/settings.json`, enumerate built-in styles plus bounded names from `~/.claude/output-styles/*.md`, and update only that field while preserving all unknown settings. Selecting Default removes the override. Serialize updates, reject malformed or unlisted values, limit settings/style/request sizes, and replace the settings file atomically with user-only permissions. Never return style prompt bodies or unrelated settings. Output-style changes apply only to newly created Claude sessions.
 

@@ -4,6 +4,8 @@ import {
   CLAUDE_CONTEXT_USAGE_EVENT,
   CLAUDE_SESSION_BOUND_EVENT,
   CLAUDE_TASKS_EVENT,
+  isClaudeRenderMode,
+  type ClaudeRenderMode,
 } from './constants.ts'
 
 export type ClaudeActivityKind =
@@ -62,6 +64,12 @@ export interface ClaudeActivityEvent {
   text?: string
   isError?: boolean
   usage?: ClaudeUsage
+  /** Which renderer this record was produced for. Stamped only when the Host
+   *  drew the step natively, so a record written before the setting existed —
+   *  and every record written under the plugin renderer — reads as 'plugin'.
+   *  It travels with the data so a step always renders the way it was
+   *  recorded, whatever the setting says now. */
+  renderer?: ClaudeRenderMode
 }
 
 export interface ClaudeContextUsageCategory {
@@ -202,6 +210,7 @@ export function normalizeActivity(
   if (activity.text !== undefined) normalized.text = redactText(activity.text, MAX_TRANSCRIPT_TEXT_CHARS)
   if (activity.isError !== undefined) normalized.isError = activity.isError
   if (activity.usage !== undefined) normalized.usage = { ...activity.usage }
+  if (isClaudeRenderMode(activity.renderer)) normalized.renderer = activity.renderer
   return normalized
 }
 

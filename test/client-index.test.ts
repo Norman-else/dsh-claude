@@ -1,7 +1,6 @@
 import type { ReactElement } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.tsx'
-import { CLAUDE_RENDER_MODE_STORAGE_KEY } from '../src/client/render-mode.ts'
 
 const resizeLifecycle = vi.hoisted(() => ({
   events: [] as string[],
@@ -19,15 +18,6 @@ vi.mock('../src/client/details-resize.ts', () => ({
     }
   },
 }))
-
-/** Boot the Client as if Settings had stored this renderer choice. */
-function selectRenderer(mode: string): void {
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: { getItem: (key: string) => key === CLAUDE_RENDER_MODE_STORAGE_KEY ? mode : null, setItem: () => {} },
-    configurable: true,
-    writable: true,
-  })
-}
 
 function conversationCapture() {
   const definitions: Array<{ kind?: string }> = []
@@ -64,32 +54,18 @@ describe('Claude client slot registration', () => {
     resizeLifecycle.events.length = 0
     resizeLifecycle.enable.mockClear()
     resizeLifecycle.dispose.mockClear()
-    // Every unmarked case boots on the default renderer.
-    Reflect.deleteProperty(globalThis, 'localStorage')
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
   })
 
-  afterEach(() => {
-    Reflect.deleteProperty(globalThis, 'localStorage')
-    vi.unstubAllGlobals()
-  })
+  it('registers the transcript node unconditionally so the renderer choice is read per step', () => {
+    // Registration must not depend on a Client-side copy of the setting: the
+    // Host switches on the next turn, and a boot-time decision that disagreed
+    // would draw every step twice. A natively drawn step folds to no items.
+    const captured = conversationCapture()
+    apply(captured.ctx as never)
 
-  it('withholds the plugin transcript when the native renderer is selected', () => {
-    selectRenderer('native')
-    const native = conversationCapture()
-    apply(native.ctx as never)
-
-    // The turn marker and the live task launcher have no native counterpart
-    // and stay; only the sidecar-backed transcript node steps aside.
-    expect(native.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-active-tasks'])
-    expect(native.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(false)
-    expect(native.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
-
-    selectRenderer('plugin')
-    const plugin = conversationCapture()
-    apply(plugin.ctx as never)
-    expect(plugin.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
-    expect(plugin.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
+    expect(captured.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
+    expect(captured.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
+    expect(captured.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
   })
 
   it('mounts the custom Claude definitions through the Desktop conversation service', () => {

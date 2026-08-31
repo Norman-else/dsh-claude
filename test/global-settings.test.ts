@@ -63,7 +63,7 @@ describe('Claude Code global settings registry', () => {
     const paths = await fixture()
     const initial = await readGlobalSettings({ paths })
     expect(initial.settings.find(setting => setting.key === 'renderer')).toMatchObject({
-      kind: 'select', value: 'plugin', effect: 'restart',
+      kind: 'select', value: 'plugin', effect: 'next-turn',
     })
     expect(initial.settings.find(setting => setting.key === 'renderer')?.options).toEqual([
       { value: 'plugin', label: 'plugin', source: 'built-in' },

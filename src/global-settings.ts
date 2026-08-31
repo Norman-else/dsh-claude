@@ -27,7 +27,7 @@ const MAX_IDLE_TIMEOUT_MINUTES = 24 * 60
 const DEFAULT_LIMITS: SupervisorLimits = { maxProcesses: 4, idleTimeoutMs: 30 * 60_000 }
 
 type JsonObject = Record<string, unknown>
-export type GlobalSettingEffect = 'new-session' | 'next-worktree' | 'restart'
+export type GlobalSettingEffect = 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 
 export interface GlobalSettingOption {
   value: string
@@ -227,10 +227,10 @@ const RENDERER: SelectSettingDescriptor = {
   key: 'renderer',
   kind: 'select',
   document: 'plugin',
-  // The Client decides which conversation nodes to register once, at boot, and
-  // a turn already recorded keeps the renderer it was recorded with -- so the
-  // switch is honest only after both Host and Client reload.
-  effect: 'restart',
+  // The Host reads this per message and stamps every record it writes with the
+  // renderer that produced it, so the switch lands on the next turn and a turn
+  // already recorded keeps the renderer it was recorded with.
+  effect: 'next-turn',
   async options() {
     return CLAUDE_RENDER_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
   },

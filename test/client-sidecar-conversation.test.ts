@@ -14,6 +14,7 @@ import {
   claudeActiveTasksDefinition,
   claudeActivityStepDefinition,
   claudeTurnDefinition,
+  nativelyRenderedStep,
   selectClaudeTurn,
   transcriptItemsForStep,
 } from '../src/client/conversation-sidecar.ts'
@@ -940,5 +941,40 @@ describe('Claude sidecar conversation projection', () => {
       turn: { data: { get: () => ({ turn: 2 }) } },
     } as never)).toEqual({ turn: 2 })
     expect(selectClaudeTurn({ turn: { data: { get: () => undefined } } } as never)).toBeNull()
+  })
+})
+
+describe('renderer ownership per step', () => {
+  const step = (overrides: Partial<ClaudeActivityEvent>[]): ClaudeActivityEvent[] =>
+    overrides.map((item, index) => ({ turn: 1, step: 1, ordinal: index + 1, kind: 'text', ...item } as ClaudeActivityEvent))
+
+  it('draws nothing for a step the Host recorded under the native renderer', () => {
+    // The regression this guards: the Host switches renderer on the next turn
+    // while a running Client keeps whatever it decided at boot. If the Client
+    // decided from its own copy of the setting, the step would be drawn twice —
+    // once as mirrored native tool cards and assistant text, once here.
+    const native = step([
+      { kind: 'text', text: 'Here is the plan.', renderer: 'native' },
+      { kind: 'tool-call', ordinal: 2, toolUseId: 'tool-1', toolName: 'Bash', detail: '{"command":"ls"}', renderer: 'native' },
+    ])
+    expect(nativelyRenderedStep(native, 1, 1)).toBe(true)
+    expect(transcriptItemsForStep(native, 1, 1)).toEqual([])
+  })
+
+  it('keeps drawing a step recorded before the stamp existed or under the plugin renderer', () => {
+    const legacy = step([{ kind: 'text', text: 'Here is the plan.' }])
+    expect(nativelyRenderedStep(legacy, 1, 1)).toBe(false)
+    expect(transcriptItemsForStep(legacy, 1, 1)).toEqual([
+      { kind: 'text', ordinal: 1, text: 'Here is the plan.' },
+    ])
+  })
+
+  it('scopes the decision to the step, so history keeps the renderer it was recorded with', () => {
+    const mixed = [
+      ...step([{ kind: 'text', text: 'Older turn.' }]),
+      { turn: 2, step: 1, ordinal: 1, kind: 'text', text: 'Newer turn.', renderer: 'native' } as ClaudeActivityEvent,
+    ]
+    expect(transcriptItemsForStep(mixed, 1, 1)).toHaveLength(1)
+    expect(transcriptItemsForStep(mixed, 2, 1)).toEqual([])
   })
 })

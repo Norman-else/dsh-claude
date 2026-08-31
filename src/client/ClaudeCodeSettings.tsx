@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH, isClaudeRenderMode } from '../constants.ts'
+import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
 import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
-import { cacheClaudeRenderMode } from './render-mode.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
 import { PluginRequestError, pluginRead, pluginWrite } from './plugin-transport.ts'
 
@@ -50,13 +49,13 @@ export type GlobalSettingView = {
   kind: 'select'
   value: string
   options: readonly GlobalSettingOption[]
-  effect: 'new-session' | 'next-worktree' | 'restart'
+  effect: 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 } | {
   key: string
   kind: 'text'
   value: string
   maxLength: number
-  effect: 'new-session' | 'next-worktree' | 'restart'
+  effect: 'new-session' | 'next-turn' | 'next-worktree' | 'restart'
 }
 
 interface GlobalSettingsView {
@@ -71,7 +70,7 @@ export function isGlobalSettingsView(value: unknown): value is GlobalSettingsVie
     const item = setting as Record<string, unknown>
     if (typeof item.key !== 'string'
       || typeof item.value !== 'string'
-      || !['new-session', 'next-worktree', 'restart'].includes(String(item.effect))) return false
+      || !['new-session', 'next-turn', 'next-worktree', 'restart'].includes(String(item.effect))) return false
     if (item.kind === 'text') return typeof item.maxLength === 'number' && item.maxLength > 0
     return item.kind === 'select'
       && Array.isArray(item.options)
@@ -502,10 +501,6 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         : await pluginWrite(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast', undefined, { method: 'PATCH', json: { changes } })
       if (!isGlobalSettingsView(payload)) throw new Error('Invalid global settings response')
       setGlobalSettings(payload)
-      // Mirror the renderer for the next Client boot: `apply()` decides which
-      // conversation nodes to register before any fetch can answer.
-      const renderer = payload.settings.find(setting => setting.key === 'renderer')?.value
-      if (isClaudeRenderMode(renderer)) cacheClaudeRenderMode(renderer)
     } catch (cause) {
       setGlobalSettingsError(cardFailure(cause))
     } finally {

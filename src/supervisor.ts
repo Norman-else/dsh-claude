@@ -1299,6 +1299,7 @@ export class ClaudeSupervisor {
       // coalesced inside the repository and flushed at segment/turn edges.
       this.#sidecar.appendTranscriptText(active.agent.id as string, {
         text: active.transcriptText,
+        ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
         turn: active.cursor.turn,
         step: active.cursor.step,
         ordinal,
@@ -1322,6 +1323,10 @@ export class ClaudeSupervisor {
     const ordinal = active.cursor.nextOrdinal++
     await this.#sidecar.appendActivity(active.agent.id as string, {
       ...activity,
+      // Stamp the renderer this record was produced for. The Client reads it
+      // back per step, so a step drawn natively is never also drawn by the
+      // plugin transcript -- and history keeps whichever renderer produced it.
+      ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
       turn: active.cursor.turn,
       step: active.cursor.step,
       ordinal,

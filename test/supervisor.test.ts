@@ -1613,6 +1613,45 @@ describe('Claude native renderer mirroring', () => {
     await runtime.dispose()
   })
 
+  it('stamps every record it writes so the Client suppresses the plugin transcript per step', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'look around' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('Checking.'))
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    const activities = (await projection(runtime)).activities
+    // Prose included: a step whose only record is text must still declare its
+    // renderer, or the plugin transcript would redraw the natively streamed answer.
+    expect(activities.filter(activity => activity.kind === 'text').length).toBeGreaterThan(0)
+    expect(activities.every(activity => activity.renderer === 'native')).toBe(true)
+    await runtime.dispose()
+  })
+
+  it('leaves records unstamped under the plugin renderer', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'look around' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('Checking.'))
+    query.push(toolCallMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    const activities = (await projection(runtime)).activities
+    expect(activities.length).toBeGreaterThan(0)
+    expect(activities.some(activity => activity.renderer !== undefined)).toBe(false)
+    await runtime.dispose()
+  })
+
   it('forwards settled thinking on the stream so the native renderer can draw a reasoning block', async () => {
     const transport = factory()
     const owner = fakeAgent()
