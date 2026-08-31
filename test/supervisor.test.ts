@@ -1162,6 +1162,54 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('settles the tool calls a cancelled turn left in flight', async () => {
+    // Nothing will ever answer them: the turn is gone. Left open they render
+    // as a tool that is still running, for the life of the transcript.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const controller = new AbortController()
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    await vi.waitFor(async () => {
+      expect((await projection(runtime)).activities.some(activity => activity.kind === 'tool-call')).toBe(true)
+    })
+    controller.abort()
+    await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(async () => {
+      expect((await projection(runtime)).activities).toContainEqual(expect.objectContaining({
+        kind: 'tool-result',
+        toolUseId: 'tool-1',
+        phase: 'failed',
+        isError: true,
+      }))
+    })
+    await runtime.dispose()
+  })
+
+  it('leaves an answered tool call alone when the turn is cancelled after it', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const controller = new AbortController()
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task', signal: controller.signal })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    await vi.waitFor(async () => {
+      expect((await projection(runtime)).activities.some(activity => activity.kind === 'tool-result')).toBe(true)
+    })
+    controller.abort()
+    await expect(collect(output)).rejects.toMatchObject({ name: 'AbortError' })
+    const results = (await projection(runtime)).activities.filter(activity => activity.kind === 'tool-result')
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({ phase: 'completed' })
+    await runtime.dispose()
+  })
+
   it('queues the next turn until cancellation cleanup finishes', async () => {
     const transport = factory()
     const owner = fakeAgent()

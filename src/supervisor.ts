@@ -161,8 +161,10 @@ interface ActiveTurn {
   requestUsage: ClaudeUsage | undefined
   aborted: boolean
   deniedToolUseIds: Set<string>
-  /** Root call names by toolUseId; tool results carry none of their own. */
-  callNames: Map<string, string>
+  /** Root tool calls still waiting for their result, by toolUseId, with the
+   *  tool name a result carries none of. Emptied as results arrive, so what
+   *  remains when a turn ends is exactly what never got an answer. */
+  openCalls: Map<string, string>
   signal?: AbortSignal
   abortListener?: () => void
 }
@@ -454,7 +456,7 @@ export class ClaudeSupervisor {
       requestUsage: undefined,
       aborted: false,
       deniedToolUseIds: new Set(),
-      callNames: new Map(),
+      openCalls: new Map(),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
     entry.active = active
@@ -844,7 +846,7 @@ export class ClaudeSupervisor {
           detail: message.input,
         })
         if (message.parentToolUseId === undefined) {
-          active.callNames.set(message.toolUseId, message.toolName)
+          active.openCalls.set(message.toolUseId, message.toolName)
           // Only root calls are mirrored: a subagent's nested tools belong to
           // the Task card that dispatched them, and the native channel has no
           // nesting to hang them under.
@@ -855,6 +857,7 @@ export class ClaudeSupervisor {
         }
         return
       case 'tool-result':
+        active.openCalls.delete(message.toolUseId)
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-result' : 'subagent',
           phase: message.isError ? 'failed' : 'completed',
@@ -1188,6 +1191,7 @@ export class ClaudeSupervisor {
     if (active.aborted) {
       await this.#upsertTranscriptText(active)
       await this.#flushTranscript(active)
+      await this.#settleOpenCalls(active, 'Cancelled with the turn')
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'failed',
@@ -1365,6 +1369,37 @@ export class ClaudeSupervisor {
     return interruption
   }
 
+  /** Close out the root tool calls a turn is ending without answers for.
+   *
+   *  A tool result is the only thing that ever settles a call, and a turn that
+   *  is cancelled or disconnected produces none: the transcript would keep
+   *  drawing those calls as running for as long as the session lives, and no
+   *  later event would ever correct it. Written as the failures they are. */
+  async #settleOpenCalls(active: ActiveTurn, summary: string): Promise<void> {
+    const open = [...active.openCalls]
+    active.openCalls.clear()
+    for (const [toolUseId, toolName] of open) {
+      await this.#appendSafely(active, {
+        kind: 'tool-result',
+        phase: 'failed',
+        toolUseId,
+        toolName,
+        title: 'Tool cancelled',
+        summary,
+        isError: true,
+      })
+      // The native card has the same hole, and the same fix as a denied call.
+      if (this.#nativeRendering()) {
+        await this.#appendNativeToolResult(active, {
+          kind: 'tool-result',
+          toolUseId,
+          output: summary,
+          isError: true,
+        })
+      }
+    }
+  }
+
   async #interrupt(entry: SupervisorEntry): Promise<void> {
     const active = entry.active
     if (active === undefined || entry.state === 'interrupting') return
@@ -1382,6 +1417,7 @@ export class ClaudeSupervisor {
     } catch (error) {
       interruptError = error
     }
+    await this.#settleOpenCalls(active, 'Cancelled with the turn').catch(() => undefined)
     try {
       await this.#appendActivity(active, {
         kind: 'status',
@@ -1410,6 +1446,7 @@ export class ClaudeSupervisor {
       const failure = unknown
         ? new ClaudeOutcomeUnknownError(stderr === undefined || stderr.length === 0 ? undefined : `Claude Code exited after activity; outcome unknown. ${stderr}`)
         : new Error(stderr === undefined || stderr.length === 0 ? errorSummary(error) : stderr)
+      await this.#settleOpenCalls(active, 'Claude Code stopped before the tool answered').catch(() => undefined)
       await this.#appendSafely(active, {
         kind: 'error',
         phase: 'failed',
