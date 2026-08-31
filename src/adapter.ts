@@ -13,7 +13,7 @@ import {
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, DEFAULT_CLAUDE_RENDER_MODE, type ClaudeRenderMode } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
 import { formatReviewComments, type ReviewComment } from './review-comments.ts'
@@ -210,6 +210,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly #attachments: AttachmentReader
   readonly #presetIdFor: (agent: Agent) => string | undefined
   readonly #drainReviewComments: (sessionId: string) => readonly ReviewComment[]
+  readonly #renderMode: () => ClaudeRenderMode
 
   constructor(
     supervisor: ClaudeSupervisor,
@@ -217,6 +218,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     attachments: AttachmentReader,
     presetIdFor: (agent: Agent) => string | undefined,
     drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
+    renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
   ) {
     super()
     this.#supervisor = supervisor
@@ -224,6 +226,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.#attachments = attachments
     this.#presetIdFor = presetIdFor
     this.#drainReviewComments = drainReviewComments
+    this.#renderMode = renderMode
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -307,18 +310,52 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
 
+    // The plugin renderer draws the visible transcript from the sidecar, so
+    // prose and Claude tool groups share one exact ordinal stream and DSH
+    // receives only an empty assistant completion anchor plus usage/lifecycle
+    // metadata. The native renderer needs the opposite: every visible span
+    // arrives as ordinary DSH content blocks.
+    const native = this.#renderMode() === 'native'
     let pendingUsage: TokenUsage | undefined
     let completed = false
+    let blockIndex = 0
+    let text = ''
+    /** Settle the buffered prose as one text block. Each Claude result is one
+     *  block so tool activity stays ahead of the prose it explains and a
+     *  background-task report can follow in a block of its own. */
+    function* flushText(): Generator<StreamChunk> {
+      if (text.length === 0) return
+      const settled = text
+      text = ''
+      yield { type: 'block-start', index: blockIndex, blockType: 'text' }
+      yield { type: 'text-delta', index: blockIndex, text: settled }
+      yield { type: 'block-end', index: blockIndex, block: { type: 'text', text: settled } }
+      blockIndex += 1
+    }
     try {
       for await (const event of events) {
-        // The sidecar owns the complete visible transcript so prose and Claude
-        // tool groups can share one exact ordinal stream. DSH receives only an
-        // empty assistant completion anchor plus usage/lifecycle metadata.
-        if (event.type === 'text-delta' || event.type === 'segment-complete') continue
         if (event.type === 'usage') {
           pendingUsage = tokenUsage(event.usage)
           continue
         }
+        if (event.type === 'text-delta') {
+          if (native) text += event.text
+          continue
+        }
+        if (event.type === 'thinking') {
+          if (!native) continue
+          // Thinking settles before the prose it precedes, so nothing is
+          // buffered yet; flush anyway to keep block order faithful when a
+          // model interleaves the two.
+          yield* flushText()
+          yield { type: 'block-start', index: blockIndex, blockType: 'reasoning' }
+          yield { type: 'reasoning-delta', index: blockIndex, text: event.text }
+          yield { type: 'block-end', index: blockIndex, block: { type: 'reasoning', text: event.text } }
+          blockIndex += 1
+          continue
+        }
+        yield* flushText()
+        if (event.type === 'segment-complete') continue
         completed = true
         if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
         yield { type: 'finish', reason: { kind: 'stop' } }
@@ -326,6 +363,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         completed = true
+        yield* flushText()
         yield {
           type: 'finish',
           reason: {
@@ -347,6 +385,7 @@ export function createClaudeCodeAdapter(
   attachments: AttachmentReader,
   presetIdFor: (agent: Agent) => string | undefined,
   drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
+  renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode)
 }

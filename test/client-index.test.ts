@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.tsx'
+import { CLAUDE_RENDER_MODE_STORAGE_KEY } from '../src/client/render-mode.ts'
 
 const resizeLifecycle = vi.hoisted(() => ({
   events: [] as string[],
@@ -19,11 +20,76 @@ vi.mock('../src/client/details-resize.ts', () => ({
   },
 }))
 
+/** Boot the Client as if Settings had stored this renderer choice. */
+function selectRenderer(mode: string): void {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: { getItem: (key: string) => key === CLAUDE_RENDER_MODE_STORAGE_KEY ? mode : null, setItem: () => {} },
+    configurable: true,
+    writable: true,
+  })
+}
+
+function conversationCapture() {
+  const definitions: Array<{ kind?: string }> = []
+  const registrations: Array<{ readonly name: string; readonly key?: string }> = []
+  const dispose = (): void => {}
+  const uiConversation = {
+    events: {
+      register(definition: { kind?: string }) {
+        definitions.push(definition)
+        return dispose
+      },
+    },
+  }
+  const ctx = {
+    effect(register: () => unknown) { register() },
+    get(name: string) { return name === 'uiConversation' ? uiConversation : undefined },
+    inject() { throw new Error('legacy conversationEvents injection must not be used') },
+    locale: { register: () => dispose, bind: () => (key: string) => key },
+    inputTriggers: { registerSource: () => dispose },
+    slots: {
+      onEntryError: () => dispose,
+      inject(_name: string, register: () => unknown) { register() },
+      register(options: { readonly name: string; readonly key?: string }) {
+        registrations.push(options)
+        return dispose
+      },
+    },
+  }
+  return { ctx, definitions, registrations }
+}
+
 describe('Claude client slot registration', () => {
   beforeEach(() => {
     resizeLifecycle.events.length = 0
     resizeLifecycle.enable.mockClear()
     resizeLifecycle.dispose.mockClear()
+    // Every unmarked case boots on the default renderer.
+    Reflect.deleteProperty(globalThis, 'localStorage')
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+  })
+
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'localStorage')
+    vi.unstubAllGlobals()
+  })
+
+  it('withholds the plugin transcript when the native renderer is selected', () => {
+    selectRenderer('native')
+    const native = conversationCapture()
+    apply(native.ctx as never)
+
+    // The turn marker and the live task launcher have no native counterpart
+    // and stay; only the sidecar-backed transcript node steps aside.
+    expect(native.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-active-tasks'])
+    expect(native.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(false)
+    expect(native.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
+
+    selectRenderer('plugin')
+    const plugin = conversationCapture()
+    apply(plugin.ctx as never)
+    expect(plugin.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
+    expect(plugin.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
   })
 
   it('mounts the custom Claude definitions through the Desktop conversation service', () => {

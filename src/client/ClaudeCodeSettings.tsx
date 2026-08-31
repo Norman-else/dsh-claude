@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
+import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH, isClaudeRenderMode } from '../constants.ts'
 import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
+import { cacheClaudeRenderMode } from './render-mode.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
 import { PluginRequestError, pluginRead, pluginWrite } from './plugin-transport.ts'
 
@@ -93,6 +94,9 @@ interface GlobalSettingSelectProps {
   setting: Extract<GlobalSettingView, { kind: 'select' }>
   disabled: boolean
   onChange: (value: string) => void
+  /** Display text for one option. Server-discovered names (output styles) are
+   *  shown verbatim; a fixed vocabulary the plugin owns is translated. */
+  labelFor?: (option: GlobalSettingOption) => string
 }
 
 export function GlobalSettingText({ setting, disabled, onChange }: {
@@ -128,7 +132,7 @@ export function GlobalSettingText({ setting, disabled, onChange }: {
   )
 }
 
-export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSettingSelectProps) {
+export function GlobalSettingSelect({ setting, disabled, onChange, labelFor = option => option.label }: GlobalSettingSelectProps) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -203,7 +207,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSetti
           }
         }}
       >
-        <span style={styles.settingSelectValue}>{selectedOption?.label ?? setting.value}</span>
+        <span style={styles.settingSelectValue}>{selectedOption === undefined ? setting.value : labelFor(selectedOption)}</span>
         <span aria-hidden="true" style={{ ...styles.settingSelectChevron, ...(open ? styles.settingSelectChevronOpen : {}) }}>⌄</span>
       </button>
       {open ? (
@@ -224,7 +228,7 @@ export function GlobalSettingSelect({ setting, disabled, onChange }: GlobalSetti
                 onClick={() => choose(index)}
               >
                 <span style={styles.settingSelectCheck} aria-hidden="true">{selected ? '✓' : ''}</span>
-                <span>{option.label}</span>
+                <span>{labelFor(option)}</span>
               </button>
             )
           })}
@@ -242,9 +246,27 @@ const TRANSLATED_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_opus', 
  *  paragraph under the card; it now hangs off the label as a hover hint. */
 export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKey; hint: ClaudeCodeSettingsKey }>> = {
   outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
+  renderer: { label: 'renderer', hint: 'rendererEffect' },
   worktreeBranchPrefix: { label: 'worktreeBranchPrefix', hint: 'worktreeBranchPrefixEffect' },
   maxProcesses: { label: 'maxProcessesSetting', hint: 'maxProcessesEffect' },
   idleTimeoutMinutes: { label: 'idleTimeoutSetting', hint: 'idleTimeoutEffect' },
+}
+
+/** Translated display text for the option vocabularies this plugin owns,
+ *  keyed `<setting>:<option>`. Options discovered on the machine (output style
+ *  names) carry no entry and keep the label the route reported. */
+export const SETTING_OPTION_COPY: Readonly<Record<string, ClaudeCodeSettingsKey>> = {
+  'renderer:plugin': 'rendererPlugin',
+  'renderer:native': 'rendererNative',
+}
+
+export function settingOptionLabel(
+  settingKey: string,
+  option: GlobalSettingOption,
+  t: ClaudeCodeSettingsInjected['t'],
+): string {
+  const key = SETTING_OPTION_COPY[`${settingKey}:${option.value}`]
+  return key === undefined ? option.label : t(key)
 }
 
 /** '?' badge that reveals a setting's effect note on hover or keyboard focus. */
@@ -480,6 +502,10 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
         : await pluginWrite(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast', undefined, { method: 'PATCH', json: { changes } })
       if (!isGlobalSettingsView(payload)) throw new Error('Invalid global settings response')
       setGlobalSettings(payload)
+      // Mirror the renderer for the next Client boot: `apply()` decides which
+      // conversation nodes to register before any fetch can answer.
+      const renderer = payload.settings.find(setting => setting.key === 'renderer')?.value
+      if (isClaudeRenderMode(renderer)) cacheClaudeRenderMode(renderer)
     } catch (cause) {
       setGlobalSettingsError(cardFailure(cause))
     } finally {
@@ -564,6 +590,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
               <GlobalSettingSelect
                 setting={setting}
                 disabled={globalSettingsBusy}
+                labelFor={option => settingOptionLabel(setting.key, option, t)}
                 onChange={nextValue => { void requestGlobalSettings({ [setting.key]: nextValue }) }}
               />
             ) : (

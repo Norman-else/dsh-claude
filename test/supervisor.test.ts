@@ -13,6 +13,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AsyncQueue } from '../src/async-queue.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import type { ClaudeActivityInput } from '../src/events.ts'
+import type { ClaudeRenderMode } from '../src/constants.ts'
 import {
   CLAUDE_INTERRUPT_TIMEOUT_MS,
   CLAUDE_METADATA_TIMEOUT_MS,
@@ -121,6 +122,7 @@ function supervisor(
   maxProcesses = 4,
   idleTimeoutMs = 60_000,
   suppliedSidecar?: ClaudeSidecarRepository,
+  renderMode: ClaudeRenderMode = 'plugin',
 ) {
   const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
   sidecarRoots.push(root)
@@ -134,6 +136,7 @@ function supervisor(
       idleTimeoutMs,
       maxProcesses,
       defaultModel: 'default',
+      renderMode,
     },
     queryFactory: create,
     sidecar,
@@ -1492,6 +1495,161 @@ describe('Claude supervisor', () => {
     expect(transport.queries).toHaveLength(2)
     transport.queries[1]!.push(result('three'))
     await expect(collect(third)).resolves.toContainEqual({ type: 'complete', text: 'three' })
+    await runtime.dispose()
+  })
+})
+
+describe('Claude native renderer mirroring', () => {
+  const native = (create: ClaudeQueryFactory) => supervisor(create, 4, 60_000, undefined, 'native')
+
+  it('mirrors root Claude tools into the native tool channel while keeping the sidecar transcript', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'look around' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    const call = owner.events.find(event => event.type === 'tool/call')
+    expect(call?.data).toMatchObject({ turn: 1, step: 1, callId: 'tool-1', name: 'Bash' })
+    expect(JSON.parse((call?.data as { arguments: string }).arguments)).toEqual({ command: 'ls -la' })
+    const settled = owner.events.find(event => event.type === 'tool/result')
+    expect(settled).toBeDefined()
+    expect(JSON.stringify(settled?.data)).toContain('listed')
+    // The sidecar keeps its record either way: the diff column, tasks panel,
+    // and rewind all read it regardless of who paints the transcript.
+    await expect(projection(runtime)).resolves.toMatchObject({
+      activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'tool-call', toolUseId: 'tool-1', toolName: 'Bash' }),
+      ]),
+    })
+    await runtime.dispose()
+  })
+
+  it('mirrors Task dispatches the plugin renderer would have grouped into its own card', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'explore' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'task-1', name: 'Task', input: { description: 'Explore Navi module', prompt: 'survey' } }],
+      },
+    } as SDKMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    expect(owner.events.some(event => event.type === 'tool/call' && (event.data as { name: string }).name === 'Task')).toBe(true)
+    await runtime.dispose()
+  })
+
+  it('settles a denied call as a failed native result instead of leaving the card pending', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'pull latest' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(toolCallMessage)
+    query.push({
+      type: 'system',
+      subtype: 'permission_denied',
+      tool_use_id: 'tool-1',
+      tool_name: 'Bash',
+      message: 'The user rejected this action in DeepSeek Harness.',
+    } as SDKMessage)
+    query.push(result('not pulled'))
+    await collect(output)
+
+    const settled = owner.events.find(event => event.type === 'tool/result')
+    expect(settled).toBeDefined()
+    expect(JSON.stringify(settled?.data)).toContain('rejected')
+    await runtime.dispose()
+  })
+
+  it('registers dynamic presenters for runtime-discovered tool names and leaves nested calls alone', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'search the vault' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'mcp-1', name: 'mcp__obsidian__search_simple', input: { query: 'Navi' } },
+          { type: 'tool_use', id: 'mcp-2', name: 'mcp__obsidian__search_simple', input: { query: 'Slack' } },
+          { type: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'ls' } },
+        ],
+      },
+    } as SDKMessage)
+    query.push({
+      type: 'assistant',
+      parent_tool_use_id: 'parent-call',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'nested-1', name: 'Read', input: { file_path: 'README.md' } }],
+      },
+    } as SDKMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    // One mirror per unseen name; Bash is already in the static preset registry.
+    expect(owner.registeredTools).toEqual(['mcp__obsidian__search_simple'])
+    const mirrored = owner.events.filter(event => event.type === 'tool/call').map(event => (event.data as { callId: string }).callId)
+    // A subagent's nested tool belongs to the Task card that dispatched it and
+    // has nothing to nest under in the native channel.
+    expect(mirrored).toEqual(['mcp-1', 'mcp-2', 'bash-1'])
+    await runtime.dispose()
+  })
+
+  it('forwards settled thinking on the stream so the native renderer can draw a reasoning block', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = native(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'plan it' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Weighing the options.' }] },
+    } as SDKMessage)
+    query.push(result('done'))
+
+    await expect(collect(output)).resolves.toContainEqual({ type: 'thinking', text: 'Weighing the options.' })
+    await runtime.dispose()
+  })
+
+  it('keeps thinking off the stream for the plugin renderer, which reads it from the sidecar', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'plan it' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Weighing the options.' }] },
+    } as SDKMessage)
+    query.push(result('done'))
+
+    const events = await collect(output)
+    expect(events.some(event => event.type === 'thinking')).toBe(false)
+    await expect(projection(runtime)).resolves.toMatchObject({
+      activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'thinking', summary: 'Weighing the options.' }),
+      ]),
+    })
     await runtime.dispose()
   })
 })

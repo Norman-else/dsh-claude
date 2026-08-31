@@ -5,11 +5,13 @@ import {
   claudePresenterDefinitions,
   CLAUDE_PRESENTER_NAMES,
   diffCallView,
+  diffResultView,
   dynamicPresenterDefinition,
   fetchCallView,
   genericCallView,
   readCallView,
   searchCallView,
+  searchResultView,
   taskCallView,
   terminalResultView,
 } from '../src/presenters.ts'
@@ -77,12 +79,39 @@ describe('Claude presenter views', () => {
     expect(taskCallView({ description: 'Survey the repo' })).toMatchObject({ title: 'Survey the repo' })
   })
 
+  it('repeats a mutation diff on the completed card and yields to the error text on failure', () => {
+    const args = { file_path: 'src/index.ts', old_string: 'a', new_string: 'b' }
+    expect(diffResultView(args, toolResult('applied'))).toEqual({
+      card: 'diff',
+      diffs: [{ path: 'src/index.ts', oldText: 'a', newText: 'b' }],
+    })
+    // A completed card replaces the pending one, so a mutation with no result
+    // view would lose its diff to raw result text.
+    expect(diffResultView(args, toolResult('String to replace not found', true))).toBeUndefined()
+    expect(diffResultView({ command: 'ls' }, toolResult('applied'))).toBeUndefined()
+  })
+
+  it('projects Grep and Glob filename results as a search card that reports capping', () => {
+    expect(searchResultView({}, toolResult(JSON.stringify({ filenames: ['a.ts', 'b.ts'], numFiles: 5 })))).toEqual({
+      card: 'search',
+      shape: 'paths',
+      paths: ['a.ts', 'b.ts'],
+      truncated: true,
+      total: 5,
+    })
+    expect(searchResultView({}, toolResult(JSON.stringify({ filenames: ['a.ts'] })))).toMatchObject({ truncated: false, total: 1 })
+    // Grep's content mode returns formatted text; it keeps the raw result card
+    // rather than being re-parsed into invented match groups.
+    expect(searchResultView({}, toolResult('src/index.ts:12: match'))).toBeUndefined()
+    expect(searchResultView({}, toolResult(JSON.stringify({ filenames: ['a.ts'] }), true))).toBeUndefined()
+  })
+
   it('registers presenter-only mirrors that refuse execution', async () => {
     const definitions = claudePresenterDefinitions()
     expect(definitions.map(definition => definition.name)).toContain('Bash')
-    expect(definitions.length).toBe(12)
+    expect(definitions.length).toBe(13)
     expect(CLAUDE_PRESENTER_NAMES.has('Bash')).toBe(true)
-    expect(CLAUDE_PRESENTER_NAMES.size).toBe(12)
+    expect(CLAUDE_PRESENTER_NAMES.size).toBe(13)
     for (const definition of definitions) {
       expect(definition.output.render({}, null)).toEqual([])
       await expect(definition.execute({}, {} as never)).rejects.toThrow(/Claude Code owns execution/)

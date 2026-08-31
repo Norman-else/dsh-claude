@@ -30,6 +30,7 @@ import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './C
 import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
 import { DiffOpenStore } from './diff-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
+import { claudeRenderMode, refreshClaudeRenderMode } from './render-mode.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
@@ -113,6 +114,16 @@ export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sess
 export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
   const diagnostics = createClaudeDiagnosticsReporter()
+  // Which renderer draws Claude's output. 'plugin' keeps the sidecar-backed
+  // transcript below; 'native' withholds it so the Host's own conversation
+  // renderer draws the assistant text, reasoning, and tool cards the Host
+  // mirrors for a Claude turn. Everything else this package contributes — the
+  // task launcher, diff column, review comments, rewind — is a control
+  // surface with no native counterpart and stays mounted in both modes.
+  const renderMode = claudeRenderMode()
+  // Refresh the boot cache for the next reload; a Host that cannot answer
+  // leaves the previous choice in place rather than flipping the renderer.
+  void refreshClaudeRenderMode()
   // Assert the Host still matches this package's assumptions. The Desktop build
   // ships no type declarations, so tsc validates against whatever @deepseek-ai/*
   // happens to be installed rather than the Host this runs inside; drift is
@@ -168,14 +179,18 @@ export function apply(ctx: ClientContext): void {
   const uiConversation = ctx.get('uiConversation') as UiConversationFace | undefined
   if (uiConversation !== undefined) {
     ctx.effect(() => uiConversation.events.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
-    ctx.effect(() => uiConversation.events.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
+    if (renderMode === 'plugin') {
+      ctx.effect(() => uiConversation.events.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
+    }
     ctx.effect(() => uiConversation.events.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
   }
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'claude-activity-step',
-    locale: namespace,
-  }, ClaudeActivityNode))
+  if (renderMode === 'plugin') {
+    ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+      name: 'conversation.chat.node',
+      key: 'claude-activity-step',
+      locale: namespace,
+    }, ClaudeActivityNode))
+  }
   const layout = ctx.get('layout') as LayoutFace | undefined
   // Keep the plugin details registration mounted while its maximized overlay is
   // visible so its session-bound state survives the round trip.

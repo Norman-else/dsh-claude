@@ -78,6 +78,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Rewind** — Drops a message and everything after it: Claude resumes from the kept turn's transcript anchor and genuinely forgets the discarded turns, the discarded rows are hidden from the append-only DSH log, and the original text returns to the composer for editing and resending.
 - **Ask about a selection** — Answers a question about any selected text through a read-only side query limited to `Read`, `Grep`, and `Glob`, reusing the session's model and thinking mode, with the answer copyable or sendable into the main conversation.
 - **Redacted activity timeline** — Displays thinking summaries, tool calls and results, permission events, questions, status changes, usage, errors, and subagent activity without persisting credentials.
+- **Selectable AI output renderer** — Draws Claude's output either with this plugin's own transcript (interleaved prose, grouped tool cards, activity rows) or with DSH's native conversation renderer, where prose arrives as ordinary assistant text blocks, thinking as reasoning blocks, and root Claude tools as native tool cards (terminal, diff, search, read). Chosen in Settings; the plugin transcript remains the default.
 - **Background task tracking** — Shows running and completed Claude subagents or background tasks with task status, recent tools, and expandable activity.
 - **Context usage** — Tracks how much of the context window a session has consumed and surfaces it as a percentage in the conversation and on the session board.
 - **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, and handles Stop, cancellation, restart, and process-tree cleanup.
@@ -101,7 +102,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 
 ### 3.3 Diagnostics, settings, and updates
 
-- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, output style, worktree branch prefix, process limits, and authentication and handshake status.
+- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, output style, AI output renderer, worktree branch prefix, process limits, and authentication and handshake status.
 - **Plan usage** — Reports the signed-in subscription's utilization windows — five-hour, weekly across all models, and weekly per model — with reset countdowns, degrading to unavailable rather than failing on API-key, Bedrock, and Vertex sessions.
 - **Plugin updates** — Checks npm for new releases and updates in place, only when the installation is uniquely identified; local development links are never replaced.
 - **Managed preset compatibility** — Installs a guarded Claude preset whose route reuses the active profile package source, preserving discovery on DSH Desktop 2.0.4 without duplicate client-module Loaders or overwriting user changes.

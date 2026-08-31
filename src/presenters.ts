@@ -81,6 +81,42 @@ export function diffCallView(args: unknown): ToolCallView | undefined {
   return { card: 'diff', title: `${verb} ${path}`, diffs, locations: [{ path }] }
 }
 
+/** Edit / MultiEdit / Write results: the same diff, again.
+ *
+ *  A completed card replaces the pending one, so a mutation that returns no
+ *  result view loses its diff to the raw result text. The plugin transcript
+ *  drops the diff on failure and shows the error instead; mirror that. */
+export function diffResultView(args: unknown, result: ToolResult): ToolResultView | undefined {
+  if (result.isError) return undefined
+  const diffs = fileDiffs(args)
+  return diffs === undefined ? undefined : { card: 'diff', diffs }
+}
+
+function parsedResult(result: ToolResult): unknown {
+  const text = resultText(result)
+  if (text.length === 0) return undefined
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return text
+  }
+}
+
+/** Grep / Glob results: the discovered paths as a search card.
+ *
+ *  Only the structured `filenames` shape is projected. A text result (Grep's
+ *  content mode) carries its own formatting, so it falls through to the raw
+ *  result content rather than being re-parsed into fake match groups. */
+export function searchResultView(_args: unknown, result: ToolResult): ToolResultView | undefined {
+  if (result.isError) return undefined
+  const output = record(parsedResult(result))
+  if (!Array.isArray(output?.filenames)) return undefined
+  const paths = output.filenames.filter((item): item is string => typeof item === 'string')
+  const reported = output.numFiles
+  const total = typeof reported === 'number' && Number.isInteger(reported) && reported >= paths.length ? reported : paths.length
+  return { card: 'search', shape: 'paths', paths, truncated: total > paths.length, total }
+}
+
 /** Grep / Glob / WebSearch: search-category cards titled by the query. */
 export function searchCallView(args: unknown): ToolCallView | undefined {
   const arguments_ = record(args)
@@ -154,16 +190,19 @@ export function dynamicPresenterDefinition(name: string): ToolDefinition {
 export function claudePresenterDefinitions(): ToolDefinition[] {
   return [
     presenterDefinition('Bash', PRESENTATION_NOTE, bashCallView, terminalResultView),
+    // The plugin transcript gives PowerShell the same terminal treatment as
+    // Bash; without its own mirror the native card would fall back to generic.
+    presenterDefinition('PowerShell', PRESENTATION_NOTE, bashCallView, terminalResultView),
     presenterDefinition('Read', PRESENTATION_NOTE, readCallView),
-    presenterDefinition('Edit', PRESENTATION_NOTE, diffCallView),
-    presenterDefinition('MultiEdit', PRESENTATION_NOTE, diffCallView),
-    presenterDefinition('Write', PRESENTATION_NOTE, diffCallView),
+    presenterDefinition('Edit', PRESENTATION_NOTE, diffCallView, diffResultView),
+    presenterDefinition('MultiEdit', PRESENTATION_NOTE, diffCallView, diffResultView),
+    presenterDefinition('Write', PRESENTATION_NOTE, diffCallView, diffResultView),
     presenterDefinition('NotebookEdit', PRESENTATION_NOTE, args => {
       const path = str(record(args)?.notebook_path)
       return path === undefined ? undefined : genericTitle(`NotebookEdit ${path}`)
     }),
-    presenterDefinition('Grep', PRESENTATION_NOTE, searchCallView),
-    presenterDefinition('Glob', PRESENTATION_NOTE, searchCallView),
+    presenterDefinition('Grep', PRESENTATION_NOTE, searchCallView, searchResultView),
+    presenterDefinition('Glob', PRESENTATION_NOTE, searchCallView, searchResultView),
     presenterDefinition('WebSearch', PRESENTATION_NOTE, searchCallView),
     presenterDefinition('WebFetch', PRESENTATION_NOTE, fetchCallView),
     presenterDefinition('Task', PRESENTATION_NOTE, taskCallView),

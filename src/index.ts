@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, DEFAULT_CLAUDE_RENDER_MODE } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
@@ -39,7 +39,7 @@ import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
-import { readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -226,17 +226,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const supervisorConfig = {
     executablePath: '',
     defaultModel: config.model ?? 'default',
+    renderMode: DEFAULT_CLAUDE_RENDER_MODE,
     ...defaultLimits,
   }
   // Settings overrides win over the plugin config; the supervisor reads the
-  // shared config object on every admission and idle schedule, so updates
-  // take effect without a restart.
-  const applyLimitOverrides = async (): Promise<void> => {
+  // shared config object on every admission, idle schedule, and rendered
+  // message, so updates take effect without a restart. The Client still
+  // decides its own conversation nodes at boot, which is why the renderer
+  // setting is declared as restart-scoped.
+  const applySettingsOverrides = async (): Promise<void> => {
     const overrides = await readSupervisorLimitOverrides()
     supervisorConfig.idleTimeoutMs = overrides.idleTimeoutMs ?? defaultLimits.idleTimeoutMs
     supervisorConfig.maxProcesses = overrides.maxProcesses ?? defaultLimits.maxProcesses
+    supervisorConfig.renderMode = await readRenderMode()
   }
-  await applyLimitOverrides()
+  await applySettingsOverrides()
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
   const repositorySetup = new RepositorySetupService(ctx.subprocess, { branchPrefix: () => readWorktreeBranchPrefix() })
@@ -261,7 +265,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId)),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => supervisorConfig.renderMode),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
@@ -378,7 +382,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ? { requestRestart: desktopActions.requestRestart.bind(desktopActions) }
         : {}),
     })
-    registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applyLimitOverrides })
+    registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applySettingsOverrides })
     registerRepositorySetupRoute(webCtx, repositorySetup)
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)

@@ -159,17 +159,40 @@ Auxiliary DSH calls (`purpose: 'compaction' | 'session-title'`) are not routed t
 
 ### 3.4 Output mapping
 
-Map Claude partial output to DSH `StreamChunk`:
+One `renderer` setting selects who draws a Claude turn. It is plugin state, not
+Claude Code state, and defaults to `plugin` so an install that never touches it
+behaves exactly as before. The Host reads it per message, so a change lands on
+the next turn; the Client decides its conversation nodes once at boot, so the
+setting is declared restart-scoped and a turn already recorded keeps the
+renderer it was recorded with.
 
-- first visible text -> `block-start` for text index 0
-- visible text delta -> `text-delta`
-- completion -> `block-end` with assembled text
+Under `plugin`, the sidecar owns the complete visible transcript so prose and
+Claude tool groups share one exact ordinal stream, and DSH receives only an
+empty assistant completion anchor plus usage and lifecycle metadata.
+
+Under `native`, map Claude partial output to DSH `StreamChunk`:
+
+- visible text delta -> buffered, then settled per Claude result as one
+  `block-start` / `text-delta` / `block-end` text block
+- settled thinking block -> `block-start` / `reasoning-delta` / `block-end`
+  reasoning block, emitted ahead of the prose it precedes
 - Claude result usage -> DSH `usage`
 - successful result -> `finish: stop`
-- cancellation -> `finish: aborted`
+- cancellation -> the delivered prefix settles, then `finish: aborted`
 - normalized failure -> throw/finish through DSH LLM error normalization
 
-Claude internal tool calls are not emitted as DSH `tool-call` chunks.
+Claude internal tool calls are never emitted as DSH `tool-call` chunks in
+either mode: Claude Code owns execution. Under `native` each ROOT Claude tool
+call and result is instead mirrored into the durable `tool/call` /
+`tool/result` channel, and a denied call is settled there as a failed result so
+its card cannot stay pending. A subagent's nested calls are not mirrored: they
+belong to the Task card that dispatched them and have nothing to nest under.
+Tool names outside the static presenter registry (MCP tools, new built-ins) get
+an agent-scoped presenter mirror registered on first sight. Mirroring is
+best-effort and never unsettles a Claude turn.
+
+The sidecar is written identically in both modes: the diff column, task board,
+rewind, and side queries read it regardless of who paints the transcript.
 
 ### 3.5 Plugin-owned sidecar
 
@@ -230,6 +253,15 @@ A lightweight `ConversationNodeDefinition` starts exactly once at each standard 
 
 ### 5.2 Activity card
 
+The activity card is the `plugin` renderer's contribution and is registered
+only when that renderer is selected. Under `native` the Client withholds the
+step transcript node and lets DSH draw the assistant message, reasoning, and
+mirrored tool cards; the turn marker, the live task launcher, and every other
+control surface this package contributes stay mounted in both modes because
+they have no native counterpart. Compaction boundaries and non-tool activity
+rows (status, warning) have no native equivalent either and remain sidecar-only
+under `native`.
+
 The activity card shows:
 
 - running/completed/error status
@@ -273,6 +305,13 @@ Add a settings section with:
 - npm release discovery and an in-place update action for uniquely identified registry installations
 
 Persist plugin runtime settings through the plugin's own settings namespace if the DSH public settings seam supports out-of-tree schemas. If not, keep runtime configuration in the bundle row; do not invent an unmanaged credentials file. The settings menu may expose selected Claude Code user settings through one extensible global-settings registry and a trusted same-origin API. Every field requires an explicit descriptor, validation, effect scope, and bounded public metadata; the browser must never receive or write arbitrary settings JSON.
+
+The `renderer` field selects the AI output renderer (`plugin` or `native`, see
+3.4). It is stored in the plugin's own settings document, never in
+`~/.claude/settings.json`, and an unknown or malformed value reads back as
+`plugin`. The Client mirrors the chosen value into Web Storage because
+`apply()` must decide which conversation nodes to register before any route can
+answer; an unreadable mirror keeps the plugin transcript.
 
 The initial global field is `outputStyle`. Read its current value from `~/.claude/settings.json`, enumerate built-in styles plus bounded names from `~/.claude/output-styles/*.md`, and update only that field while preserving all unknown settings. Selecting Default removes the override. Serialize updates, reject malformed or unlisted values, limit settings/style/request sizes, and replace the settings file atomically with user-only permissions. Never return style prompt bodies or unrelated settings. Output-style changes apply only to newly created Claude sessions.
 
