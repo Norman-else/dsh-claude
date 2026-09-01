@@ -9,9 +9,16 @@ import {
 const services = ['slots', 'uiConversation'] as const
 
 describe('Claude client boot check', () => {
-  it('reports nothing when every declared service resolves', () => {
-    const findings = claudeBootCheckFindings({ services, resolve: () => ({}) })
+  it('reports nothing when every declared service resolves with the methods it is called on', () => {
+    const findings = claudeBootCheckFindings({ services, resolve: () => ({ binding: () => undefined }) })
     expect(findings).toEqual([])
+  })
+
+  // The drift that broke the worktree flow: the service still resolved, so the
+  // feature registered itself and only failed once a user ran it.
+  it('names a method a resolving service no longer provides', () => {
+    const findings = claudeBootCheckFindings({ services, resolve: () => ({}) })
+    expect(findings).toEqual(['service "uiConversation" no longer provides binding(); the features calling it are broken'])
   })
 
   it('names each declared service the Host does not provide', () => {

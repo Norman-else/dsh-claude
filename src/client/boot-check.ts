@@ -28,18 +28,44 @@ export const CLAUDE_SCOPED_CSS_VARIABLES: readonly string[] = [
 /** Marks the bar the scoped-property probe measures. */
 export const CLAUDE_COMPOSER_BAR_ATTRIBUTE = 'data-dsh-claude-composer-bar'
 
+/** Methods this plugin calls on the Host services it injects.
+ *
+ *  A service that still resolves but has lost a method is the drift the
+ *  service list above cannot see: Desktop 0.1.2 moved `connectWorkspace` off
+ *  `workspaces` onto a new service, and the worktree flow went on registering
+ *  itself and only broke once a user ran it. Naming the methods here turns
+ *  that into a boot-time line. Methods with a runtime fallback stay out. */
+export const CLAUDE_REQUIRED_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = {
+  sessions: ['scope', 'open', 'binding'],
+  workspaces: ['create', 'delete', 'archiveSession'],
+  uiConversation: ['binding'],
+  uiSession: ['provide'],
+  inputTriggers: ['registerSource'],
+}
+
 export interface ClaudeBootCheckInput {
   /** Service names the plugin declares in `export const inject`. */
   services: readonly string[]
   resolve(name: string): unknown
 }
 
-/** One line per service the Host no longer provides; empty when all resolve. */
-export function claudeBootCheckFindings(input: ClaudeBootCheckInput): string[] {
+/** One line per service the Host no longer provides, or provides without a
+ *  method this plugin calls on it; empty when everything resolves. */
+export function claudeBootCheckFindings(
+  input: ClaudeBootCheckInput,
+  methods: Readonly<Record<string, readonly string[]>> = CLAUDE_REQUIRED_SERVICE_METHODS,
+): string[] {
   const findings: string[] = []
   for (const name of input.services) {
-    if (input.resolve(name) === undefined) {
+    const service = input.resolve(name)
+    if (service === undefined) {
       findings.push(`service "${name}" is declared in inject but the Host does not provide it`)
+      continue
+    }
+    for (const method of methods[name] ?? []) {
+      if (typeof (service as Record<string, unknown>)[method] !== 'function') {
+        findings.push(`service "${name}" no longer provides ${method}(); the features calling it are broken`)
+      }
     }
   }
   return findings

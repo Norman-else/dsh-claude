@@ -151,6 +151,14 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
+  // Desktop 0.1.2 split the Workspace runtime in two: the `workspaces`
+  // controller kept create/delete/list, while `connectWorkspace` moved to a
+  // new `uiWorkspace` service. Resolve whichever half this Host ships rather
+  // than trusting the installed type declarations, which describe neither.
+  const uiWorkspace = ctx.get('uiWorkspace') as Partial<Pick<IWorkspaces, 'connectWorkspace'>> | undefined
+  const connectWorkspace: IWorkspaces['connectWorkspace'] | undefined
+    = uiWorkspace?.connectWorkspace?.bind(uiWorkspace)
+    ?? (typeof workspaces?.connectWorkspace === 'function' ? workspaces.connectWorkspace.bind(workspaces) : undefined)
   const conversation = ctx.get('conversation') as IConversation | undefined
   const connection = ctx.get('connection') as ConnectionHandle | undefined
   const remote = ctx.get('remote') as RemoteFace | undefined
@@ -586,7 +594,7 @@ ${error.stack ?? ''}`
       },
     }, ClaudeQueueDock))
   }
-  if (sessions !== undefined && workspaces !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
+  if (sessions !== undefined && workspaces !== undefined && connectWorkspace !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
     /** Attach a prepared worktree to its session without blocking the flow. */
     const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
       if (leaseId === undefined) return
@@ -629,12 +637,12 @@ ${error.stack ?? ''}`
           onProgress('creating-workspace')
           const workspace = await workspaces.create({ path: prepared.path })
           onProgress('starting-session')
-          const targetSessionId = await workspaces.connectWorkspace(workspace.workspaceId)
+          const targetSessionId = await connectWorkspace(workspace.workspaceId)
           const targetScope = sessions.scope(targetSessionId)
           if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
           const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
           if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-          sessions.noteAgentPreset(targetSessionId, presetResponse.value)
+          sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
           const targetInput = conversation.input.for(targetScope)
           onProgress('transferring-draft')
           if (imageIds.length > 0 && !targetInput.addImages(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
@@ -671,12 +679,12 @@ ${error.stack ?? ''}`
               report('creating-workspace')
               const workspace = await workspaces.create({ path: prepared.path })
               report('starting-session')
-              const targetSessionId = await workspaces.connectWorkspace(workspace.workspaceId)
+              const targetSessionId = await connectWorkspace(workspace.workspaceId)
               const targetScope = sessions.scope(targetSessionId)
               if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
               const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
               if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-              sessions.noteAgentPreset(targetSessionId, presetResponse.value)
+              sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
               const targetInput = conversation.input.for(targetScope)
               report('transferring-draft')
               targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
