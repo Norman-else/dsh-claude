@@ -13,14 +13,34 @@ function directChildContaining(parent: Element, descendant: Element): Element | 
   return Array.from(parent.children).find(child => child === descendant || child.contains(descendant))
 }
 
-/** Locate rc.8's hero preset seat without relying on hashed CSS module names. */
-export function locateClaudePresetSeat(root: ParentNode = document): { hero: HTMLElement; seat: Element } | undefined {
+/** The hero's preset buttons: menu buttons without an `aria-label`, which is
+ *  what separates the preset seat from the labelled workspace picker. */
+function heroPresetButtons(root: ParentNode): { hero: HTMLElement; presets: HTMLButtonElement[] } | undefined {
   const heroes = Array.from(root.querySelectorAll<HTMLElement>(HERO_SELECTOR))
   if (heroes.length !== 1) return undefined
   const hero = heroes[0]
   if (hero === undefined) return undefined
   const menuButtons = Array.from(hero.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]'))
-  const presetButtons = menuButtons.filter(button => button.getAttribute('aria-label') === null && isClaudePresetText(normalizedText(button)))
+  return { hero, presets: menuButtons.filter(button => button.getAttribute('aria-label') === null) }
+}
+
+/** True once the hero has settled on a preset that is not Claude.
+ *  `locateClaudePresetSeat` reports that the same way it reports a hero
+ *  mid-render -- by missing -- so without this the retention rule below reads a
+ *  deliberate switch away from Claude as a re-render and leaves the controls up. */
+export function showsOtherPresetSeat(root: ParentNode = document): boolean {
+  const found = heroPresetButtons(root)
+  if (found === undefined || found.presets.length !== 1) return false
+  const preset = found.presets[0]
+  return preset !== undefined && !isClaudePresetText(normalizedText(preset))
+}
+
+/** Locate rc.8's hero preset seat without relying on hashed CSS module names. */
+export function locateClaudePresetSeat(root: ParentNode = document): { hero: HTMLElement; seat: Element } | undefined {
+  const found = heroPresetButtons(root)
+  if (found === undefined) return undefined
+  const { hero } = found
+  const presetButtons = found.presets.filter(button => isClaudePresetText(normalizedText(button)))
   if (presetButtons.length !== 1) return undefined
   const preset = presetButtons[0]
   if (preset === undefined) return undefined

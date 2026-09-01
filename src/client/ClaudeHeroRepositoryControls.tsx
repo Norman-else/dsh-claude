@@ -4,7 +4,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconRefreshOutline14, IconSearchOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
-import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal } from './hero-dom-bridge.ts'
+import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal, showsOtherPresetSeat } from './hero-dom-bridge.ts'
 import { menuNavigationIndex as branchMenuNavigationIndex } from './menu-navigation.ts'
 import { loadRepositoryBranches, refreshRepositoryBranches, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { JiraClientError, loadJiraStatus, searchJiraTickets, type JiraTicket } from './jira-api.ts'
@@ -419,7 +419,8 @@ export function ClaudeHeroRepositoryControls({
       scheduled = false
       const target = locateClaudePresetSeat()
       if (target === undefined) {
-        if (retainsClaudeHeroPortal(current)) return
+        // A hero showing another preset is a switch, not a re-render: retire.
+        if (retainsClaudeHeroPortal(current) && !showsOtherPresetSeat()) return
         current = undefined
         removeClaudeHeroPortals()
         setPortal(undefined)
