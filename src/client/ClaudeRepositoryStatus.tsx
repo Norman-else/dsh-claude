@@ -593,7 +593,9 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           : <button type="button" style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}), ...styles.repositoryPrIconButton }} aria-label={t('overviewOpen')} title={t('overviewOpen')} onClick={openOverview}><PullRequestIcon merged={merged} /></button>}
         <PullRequestLink repository={repository} t={t} />
         {repository.remote === undefined ? null : <span style={styles.repositoryRemote}>{repositoryName(repository.remote)}</span>}
-        <span style={styles.repositoryBranch}>{branch}</span>
+        <Tooltip label={branch} side="top" delayMs={250} maxWidth={420}>
+          <span style={styles.repositoryBranch}>{branch}</span>
+        </Tooltip>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
         <span style={styles.repositoryStatusItems}>
           {hasDiff || pushable ? (
