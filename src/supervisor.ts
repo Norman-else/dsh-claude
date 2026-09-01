@@ -57,6 +57,9 @@ export interface ClaudeSupervisorConfig {
   /** Which renderer the visible turn is produced for; read per message so a
    *  Settings change lands on the next turn without a Host restart. */
   renderMode?: ClaudeRenderMode
+  /** DSH permission preset name -> the Claude Code permission mode it selects,
+   *  for presets whose sandbox knob does not say which one is meant. */
+  permissionModes?: Readonly<Record<string, PermissionMode>>
 }
 
 export type ClaudeTurnStreamEvent =
@@ -78,17 +81,39 @@ const CLAUDE_MODE_BY_SANDBOX: Readonly<Record<DshSandboxMode, PermissionMode>> =
   'danger-full-access': 'bypassPermissions',
 }
 
-/** Fold DSH's native access selector into Claude Code's closest permission mode. */
-export function claudePermissionMode(events: readonly { type: string; data: unknown }[]): PermissionMode {
+/** Claude Code's own permission modes, as this SDK accepts them: `default`
+ *  prompts, `plan` never executes, `acceptEdits` auto-accepts edits,
+ *  `bypassPermissions` skips every check, `dontAsk` denies whatever is not
+ *  pre-approved without prompting, and `auto` lets a model classifier answer
+ *  the prompts. */
+export const CLAUDE_PERMISSION_MODES = ['default', 'plan', 'acceptEdits', 'bypassPermissions', 'dontAsk', 'auto'] as const
+
+function lastEventData(events: readonly { type: string; data: unknown }[], type: string): Record<string, unknown> | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
-    if (event?.type !== 'sandbox/mode') continue
-    const mode = (event.data as { mode?: unknown }).mode
-    return typeof mode === 'string' && mode in CLAUDE_MODE_BY_SANDBOX
-      ? CLAUDE_MODE_BY_SANDBOX[mode as DshSandboxMode]
-      : 'plan'
+    if (event?.type === type) return event.data as Record<string, unknown>
   }
-  return 'plan'
+  return undefined
+}
+
+/** Fold DSH's access selector into a Claude Code permission mode.
+ *
+ *  The sandbox knob spans only three of Claude's four modes -- `default`, the
+ *  one that asks before every tool, answers to no sandbox value -- so a
+ *  permission preset may claim a mode of its own through `modeByPreset`. The
+ *  newest selection answers even when it claims nothing: an older preset's
+ *  claim died with the switch away from it. */
+export function claudePermissionMode(
+  events: readonly { type: string; data: unknown }[],
+  modeByPreset: Readonly<Record<string, PermissionMode>> = {},
+): PermissionMode {
+  const preset = lastEventData(events, 'permission/preset')?.preset
+  const claimed = typeof preset === 'string' ? modeByPreset[preset] : undefined
+  if (claimed !== undefined) return claimed
+  const sandbox = lastEventData(events, 'sandbox/mode')?.mode
+  return typeof sandbox === 'string' && sandbox in CLAUDE_MODE_BY_SANDBOX
+    ? CLAUDE_MODE_BY_SANDBOX[sandbox as DshSandboxMode]
+    : 'plan'
 }
 
 export interface ClaudeTurnRequest {
@@ -581,7 +606,7 @@ export class ClaudeSupervisor {
   }
 
   async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
-    const mode = claudePermissionMode(entry.ownerAgent.session.events)
+    const mode = claudePermissionMode(entry.ownerAgent.session.events, this.#config.permissionModes ?? {})
     if (mode === entry.permissionMode) return
     await this.#control(entry, entry.query.setPermissionMode(mode), 'Claude Code permission mode switch')
     entry.permissionMode = mode
@@ -626,7 +651,7 @@ export class ClaudeSupervisor {
     const pendingRewind = projection.rewind?.pending
     const forkAt = pendingRewind !== undefined && 'resumeAt' in pendingRewind ? pendingRewind.resumeAt : undefined
     const startFresh = pendingRewind !== undefined && 'fresh' in pendingRewind
-    const permissionMode = claudePermissionMode(agent.session.events)
+    const permissionMode = claudePermissionMode(agent.session.events, this.#config.permissionModes ?? {})
     const entry = {
       sessionId,
       ownerAgent: agent,
