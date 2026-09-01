@@ -39,10 +39,15 @@ type StandardProps = PropsRuntime<'conversation.input.dock'>
 
 export interface ClaudeHeroRepositoryControlsProps extends StandardProps, ClaudeHeroRepositoryControlsInjected {}
 
-function shouldInterceptKey(event: KeyboardEvent): boolean {
+/** The host composer was a textarea through rc.8 and is a Lexical
+ *  contenteditable from 0.1.2 on, so match the composer seat rather than the
+ *  element type: an element-type check silently stops intercepting Enter, and
+ *  the capsule's branch and Worktree choices go nowhere. */
+export function shouldInterceptKey(event: KeyboardEvent): boolean {
   if (event.key !== 'Enter' || event.shiftKey || event.repeat || event.isComposing) return false
   const target = event.target
-  return target instanceof HTMLTextAreaElement && target.closest('[data-phase="hero"]') !== null
+  if (!(target instanceof Element)) return false
+  return target.closest('textarea, [data-composer-input]') !== null && target.closest('[data-phase="hero"]') !== null
 }
 
 function shouldInterceptClick(event: MouseEvent): boolean {

@@ -16,7 +16,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
   }
 })
 
-import { ClaudeHeroRepositoryCapsule } from '../src/client/ClaudeHeroRepositoryControls.tsx'
+import { ClaudeHeroRepositoryCapsule, shouldInterceptKey } from '../src/client/ClaudeHeroRepositoryControls.tsx'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -88,5 +88,35 @@ describe('branch menu refresh control', () => {
     act(() => { button.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
 
     expect(button.getAttribute('style')).not.toBe(resting)
+  })
+})
+
+describe('hero submit interception', () => {
+  function heroComposer(input: string): Element {
+    const hero = document.createElement('div')
+    hero.setAttribute('data-phase', 'hero')
+    hero.innerHTML = `<div data-composer-card>${input}</div>`
+    document.body.append(hero)
+    return hero.firstElementChild?.firstElementChild as Element
+  }
+
+  it('intercepts Enter from the contenteditable composer the host ships now', () => {
+    const target = heroComposer('<div data-composer-input role="textbox" data-phase="idle"></div>')
+
+    expect(shouldInterceptKey({ key: 'Enter', shiftKey: false, repeat: false, isComposing: false, target } as unknown as KeyboardEvent)).toBe(true)
+  })
+
+  it('still intercepts the older textarea composer and ignores Shift+Enter', () => {
+    const target = heroComposer('<textarea></textarea>')
+    expect(shouldInterceptKey({ key: 'Enter', shiftKey: false, repeat: false, isComposing: false, target } as unknown as KeyboardEvent)).toBe(true)
+    expect(shouldInterceptKey({ key: 'Enter', shiftKey: true, repeat: false, isComposing: false, target } as unknown as KeyboardEvent)).toBe(false)
+  })
+
+  it('leaves Enter alone outside the hero composer', () => {
+    const outside = document.createElement('div')
+    outside.setAttribute('data-composer-input', '')
+    document.body.append(outside)
+
+    expect(shouldInterceptKey({ key: 'Enter', shiftKey: false, repeat: false, isComposing: false, target: outside } as unknown as KeyboardEvent)).toBe(false)
   })
 })
