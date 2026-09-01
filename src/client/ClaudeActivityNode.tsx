@@ -250,6 +250,39 @@ function filenameList(value: unknown): readonly string[] {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
+/** The diff card's chrome, which primitives 0.1.2 moved onto the caller.
+ *
+ *  The Host reads `labels.copy` while it builds the card, so a 0.1.2 Host given
+ *  no labels throws mid-render -- and React answers by tearing down the whole
+ *  conversation, not the one tool row. This repository develops against 0.1.1,
+ *  whose declaration does not know the prop yet and whose build ignores it, so
+ *  the labels travel as a spread that both versions accept.
+ *
+ *  The aria strings deliberately repeat the visible ones: both already say
+ *  exactly what the control does. */
+interface DiffCardLabels {
+  copy: string
+  copied: string
+  collapse: string
+  collapseAria: string
+  expand: (hidden: number) => string
+  expandAria: (hidden: number) => string
+  files: (count: number) => string
+}
+
+export function diffBlockLabels(t: Translate): DiffCardLabels {
+  const expand = (hidden: number): string => t('diffCardExpand', { count: hidden })
+  return {
+    copy: t('markdownCopy'),
+    copied: t('markdownCopied'),
+    collapse: t('diffCardCollapse'),
+    collapseAria: t('diffCardCollapse'),
+    expand,
+    expandAria: expand,
+    files: count => t('diffCardFiles', { count }),
+  }
+}
+
 function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translate }) {
   const inputValue = parsedValue(tool.input)
   const outputValue = parsedValue(tool.output)
@@ -258,7 +291,8 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
   const outputTitle = tool.isError === true ? t('toolError') : t('toolOutput')
 
   if (tool.diffs !== undefined) {
-    return <><DiffBlock diffs={[...tool.diffs]} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
+    const diffProps = { diffs: [...tool.diffs], labels: diffBlockLabels(t) }
+    return <><DiffBlock {...diffProps} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
   }
 
   if (tool.toolName === 'Read') {
