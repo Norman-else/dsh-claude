@@ -14,14 +14,18 @@ function directChildContaining(parent: Element, descendant: Element): Element | 
 }
 
 /** The hero's preset buttons: menu buttons without an `aria-label`, which is
- *  what separates the preset seat from the labelled workspace picker. */
+ *  what separates the preset seat from the labelled workspace picker. The
+ *  portal's own branch trigger answers that description too, so it is excluded
+ *  -- counting it made the row look like it held two staged presets from the
+ *  moment these controls mounted. */
 function heroPresetButtons(root: ParentNode): { hero: HTMLElement; presets: HTMLButtonElement[] } | undefined {
   const heroes = Array.from(root.querySelectorAll<HTMLElement>(HERO_SELECTOR))
   if (heroes.length !== 1) return undefined
   const hero = heroes[0]
   if (hero === undefined) return undefined
   const menuButtons = Array.from(hero.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]'))
-  return { hero, presets: menuButtons.filter(button => button.getAttribute('aria-label') === null) }
+  const presets = menuButtons.filter(button => button.getAttribute('aria-label') === null && button.closest(`[${PORTAL_ATTRIBUTE}]`) === null)
+  return { hero, presets }
 }
 
 /** True once the hero has settled on a preset that is not Claude.
