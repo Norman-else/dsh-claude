@@ -18,7 +18,8 @@ import { ensureManagedPreset, ManagedPresetConflictError } from './preset-instal
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { RepositoryStatusService } from './repository-status.ts'
-import { RepositorySetupService } from './repository-setup.ts'
+import { comparablePath, RepositorySetupService } from './repository-setup.ts'
+import { summarizeBranchSlug } from './branch-name.ts'
 import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
@@ -243,7 +244,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   await applySettingsOverrides()
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
-  const repositorySetup = new RepositorySetupService(ctx.subprocess, { branchPrefix: () => readWorktreeBranchPrefix() })
+  const repositorySetup = new RepositorySetupService(ctx.subprocess, {
+    branchPrefix: () => readWorktreeBranchPrefix(),
+    // Read at call time: the executable is resolved after this service exists.
+    summarizeBranch: intent => summarizeBranchSlug(supervisorConfig.executablePath, intent),
+  })
   const reviewComments = new ReviewCommentStore()
   const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
   const supervisor = new ClaudeSupervisor({
@@ -352,13 +357,35 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // so older Hosts without the service simply never start the sweep.
   const injectWorkspaceRegistry = ctx.inject as unknown as (
     deps: readonly string[],
-    callback: (sweepCtx: Context & { workspaceRegistry: { list(): readonly { readonly path: string }[] } }) => void,
+    callback: (sweepCtx: Context & {
+      workspaceRegistry: {
+        list(): readonly { readonly path: string }[]
+        archiveSession(sessionId: string): Promise<void>
+      }
+    }) => void,
   ) => void
   injectWorkspaceRegistry(['workspaceRegistry'], sweepCtx => {
+    // Deleting a workspace only drops its registration: the Host keeps every
+    // session log, and rebuilds the workspace from those headers on the next
+    // boot. Archiving the sessions that lived in the worktree is what makes
+    // the deletion stick. Resolved per sweep rather than injected so a Host
+    // without the service still gets worktree cleanup.
+    const archiveSessions = async (worktreePath: string): Promise<void> => {
+      const persistence = sweepCtx.get('sessionPersistence') as {
+        list(): Promise<readonly { readonly id?: unknown; readonly cwd?: unknown }[]>
+      } | undefined
+      if (persistence === undefined) return
+      const target = comparablePath(worktreePath)
+      for (const header of await persistence.list()) {
+        if (typeof header.id !== 'string' || typeof header.cwd !== 'string') continue
+        if (comparablePath(header.cwd) !== target) continue
+        await sweepCtx.workspaceRegistry.archiveSession(header.id).catch(() => undefined)
+      }
+    }
     const sweep = (): void => {
       try {
         const paths = sweepCtx.workspaceRegistry.list().map(workspace => workspace.path)
-        void repositorySetup.cleanupOrphans(paths).catch(() => undefined)
+        void repositorySetup.cleanupOrphans(paths, archiveSessions).catch(() => undefined)
       } catch {
         // The registry can be mid-teardown; skip this pass.
       }

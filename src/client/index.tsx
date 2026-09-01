@@ -621,7 +621,8 @@ ${error.stack ?? ''}`
             ? rawDraft
             : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
           const imageIds = sourceInput.state.getSnapshot().imageIds
-          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress)
+          // No ticket to name the branch after: let the draft name it instead.
+          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress, ticket === undefined ? draft : undefined)
           // The workspace is ready: take the ticket. Best-effort so a Jira
           // hiccup never blocks the session from starting.
           if (ticket !== undefined) {
