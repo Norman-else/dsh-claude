@@ -392,7 +392,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     sweepCtx.effect(() => {
       sweep()
-      const timer = setInterval(sweep, 60_000)
+      // The registry publishes no deletion event, so this poll IS the latency
+      // the user feels between deleting a workspace and its worktree going.
+      // A pass with nothing to reconcile is one small file read.
+      const timer = setInterval(sweep, 15_000)
       timer.unref?.()
       return () => clearInterval(timer)
     }, 'dsh-claude: worktree reconciliation')

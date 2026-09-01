@@ -354,7 +354,7 @@ export class RepositorySetupService {
         }
       }
       if (changed) await this.#writeLeases(retained)
-      await this.#removeUnleasedDirectories(retained, active, now)
+      await this.#removeUnleasedDirectories(retained, active, now, archiveSessions)
     })
   }
 
@@ -367,6 +367,7 @@ export class RepositorySetupService {
     retained: readonly WorktreeLease[],
     active: ReadonlySet<string>,
     now: number,
+    archiveSessions?: (worktreePath: string) => Promise<void>,
   ): Promise<void> {
     const leased = new Set(retained.map(item => comparablePath(item.path)))
     let entries: string[]
@@ -387,6 +388,10 @@ export class RepositorySetupService {
         // fraction, so a directory created moments ago can read as newer than
         // the clock; clamp rather than let that skip a sweep.
         if (Math.max(0, now - created) < this.#cleanupGraceMs) continue
+        // A lost lease is still the user's deleted workspace: its sessions
+        // have to be archived here too, or the Host rebuilds the workspace
+        // from their headers on the next boot.
+        await archiveSessions?.(path).catch(() => undefined)
         await rm(path, { recursive: true, force: true })
       } catch {
         // A directory that vanished under us, or one we may not remove; the

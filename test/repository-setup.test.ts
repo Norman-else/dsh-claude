@@ -430,9 +430,9 @@ describe('repository setup service', () => {
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true)
     await mkdir(result.path, { recursive: true })
-    const removedBeforeArchive: string[][] = []
+    const removedAtArchive: string[][][] = []
     const archive = vi.fn(async (path: string) => {
-      removedBeforeArchive.push(...fake.spawn.mock.calls.map(call => call[0].argv).filter(argv => argv.includes('remove')))
+      removedAtArchive.push(fake.spawn.mock.calls.map(call => call[0].argv).filter(argv => argv.includes('remove')))
       expect(path).toBe(result.path)
     })
 
@@ -441,7 +441,7 @@ describe('repository setup service', () => {
     expect(archive).toHaveBeenCalledWith(result.path)
     // The Host rebuilds a deleted workspace from session headers, so archiving
     // has to land before the directory does.
-    expect(removedBeforeArchive).toEqual([])
+    expect(removedAtArchive[0]).toEqual([])
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
   })
 
@@ -458,6 +458,20 @@ describe('repository setup service', () => {
     expect(existsSync(stranded)).toBe(false)
     expect(existsSync(claimed)).toBe(true)
     expect(root.length).toBeGreaterThan(0)
+  })
+
+  it('archives the sessions of a swept directory whose lease is gone', async () => {
+    const { leasePath, worktreeRoot } = await roots()
+    const stranded = join(worktreeRoot, 'premier-store-os-20260828T063549Z-288afc2b')
+    await mkdir(stranded, { recursive: true })
+    const archive = vi.fn(async () => {})
+
+    await new RepositorySetupService(runtime([]), { leasePath, worktreeRoot, cleanupGraceMs: 0 })
+      .cleanupOrphans([], archive)
+
+    // Without this the directory goes and its sessions stay in the sidebar.
+    expect(archive).toHaveBeenCalledWith(stranded)
+    expect(existsSync(stranded)).toBe(false)
   })
 
   it('keeps a directory whose lease has not been written yet', async () => {
