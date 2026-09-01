@@ -9,7 +9,9 @@
  */
 export interface SessionPresetRow {
   readonly agentPreset?: string
-  readonly projectionValues?: { readonly agentPreset?: string }
+  // The projection column reports "no preset" as an explicit null, not by
+  // leaving the field out.
+  readonly projectionValues?: { readonly agentPreset?: string | null }
 }
 
 /**
@@ -18,5 +20,5 @@ export interface SessionPresetRow {
  * @returns the preset id, or undefined when neither source carries one.
  */
 export function sessionRowPreset(row: SessionPresetRow | undefined): string | undefined {
-  return row?.agentPreset ?? row?.projectionValues?.agentPreset
+  return row?.agentPreset ?? row?.projectionValues?.agentPreset ?? undefined
 }

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { uniqueBranchName } from './branch-name.ts'
 
 const MAX_OUTPUT_BYTES = 128 * 1024
 const GIT_TIMEOUT_MS = 10_000
@@ -31,7 +32,7 @@ export interface RepositoryBranchList {
   readonly remoteBranches: readonly string[]
 }
 
-export type RepositorySetupStage = 'inspecting' | 'fetching' | 'creating-worktree' | 'saving-worktree' | 'switching-branch'
+export type RepositorySetupStage = 'inspecting' | 'fetching' | 'summarizing' | 'creating-worktree' | 'saving-worktree' | 'switching-branch'
 export type RepositorySetupProgress = (stage: RepositorySetupStage) => void
 
 export interface RepositorySetupResult {
@@ -68,6 +69,9 @@ export interface RepositorySetupServiceOptions {
   readonly worktreeRoot?: string
   readonly branchPrefix?: () => Promise<string>
   readonly cleanupGraceMs?: number
+  /** Compress the composer draft into a branch slug; `undefined` result (or an
+   *  omitted option) falls back to the timestamped name. */
+  readonly summarizeBranch?: (intent: string) => Promise<string | undefined>
 }
 
 export class RepositorySetupError extends Error {
@@ -130,7 +134,7 @@ function slug(value: string, fallback: string): string {
 
 /** Comparable form for path identity: resolved, forward slashes, case-folded
  *  so Windows drive-letter or case spelling differences cannot hide a match. */
-function comparablePath(value: string): string {
+export function comparablePath(value: string): string {
   return resolve(value).replaceAll('\\', '/').toLocaleLowerCase('en-US')
 }
 
@@ -161,6 +165,7 @@ export class RepositorySetupService {
   readonly #leasePath: string
   readonly #worktreeRoot: string
   readonly #branchPrefix: () => Promise<string>
+  readonly #summarizeBranch: (intent: string) => Promise<string | undefined>
   readonly #cleanupGraceMs: number
   #gitPath: Promise<string> | undefined
   #pending: Promise<unknown> = Promise.resolve()
@@ -170,6 +175,7 @@ export class RepositorySetupService {
     this.#leasePath = options.leasePath ?? dshHomePath('plugins', 'dsh-claude', 'worktrees.json')
     this.#worktreeRoot = options.worktreeRoot ?? dshHomePath('plugins', 'dsh-claude', 'worktrees')
     this.#branchPrefix = options.branchPrefix ?? (async () => 'claude')
+    this.#summarizeBranch = options.summarizeBranch ?? (async () => undefined)
     this.#cleanupGraceMs = options.cleanupGraceMs ?? CLEANUP_GRACE_MS
   }
 
@@ -222,6 +228,7 @@ export class RepositorySetupService {
     useWorktree: boolean,
     explicitBranchName?: string,
     progress: RepositorySetupProgress = () => {},
+    intent?: string,
   ): Promise<RepositorySetupResult> {
     progress('inspecting')
     const branch = safeBranch(branchValue)
@@ -234,12 +241,13 @@ export class RepositorySetupService {
     const requestedBranch = explicitBranchName === undefined ? undefined : safeBranch(explicitBranchName)
     if (useWorktree) {
       return this.#createWorktree(
-        info.root,
+        info,
         branch,
         local ? `refs/heads/${branch}` : `refs/remotes/${branch}`,
         requestedBranch,
         requestedBranch !== undefined && info.branches.includes(requestedBranch),
         progress,
+        intent,
       )
     }
     progress('switching-branch')
@@ -294,11 +302,20 @@ export class RepositorySetupService {
   }
 
   /** Reconcile leases against the set of directories still referenced by a
-   *  workspace: an unreferenced lease's clean worktree is removed. Fresh
-   *  leases are retained for a grace period so a worktree created moments ago
-   *  cannot be swept before its workspace registration lands, and dirty
-   *  worktrees are always retained to avoid losing uncommitted work. */
-  cleanupOrphans(activePaths: readonly string[]): Promise<void> {
+   *  workspace. Deleting a workspace is the user saying they are done with it,
+   *  so an unreferenced worktree goes even with uncommitted changes; its
+   *  sessions are archived first, through `archiveSessions`, or the Host
+   *  rebuilds the deleted workspace from their headers on the next boot.
+   *  Fresh leases are retained for a grace period so a worktree created
+   *  moments ago cannot be swept before its workspace registration lands.
+   *
+   *  Every command runs from the repository root, never from the worktree
+   *  being removed: spawning in a directory that is already gone throws
+   *  ENOENT, which used to strand the lease forever. */
+  cleanupOrphans(
+    activePaths: readonly string[],
+    archiveSessions?: (worktreePath: string) => Promise<void>,
+  ): Promise<void> {
     const active = new Set(activePaths.map(comparablePath))
     return this.#serialize(async () => {
       const leases = await this.#readLeases()
@@ -313,26 +330,19 @@ export class RepositorySetupService {
           continue
         }
         try {
-          const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], item.path)
-          if (status.exitCode !== 0 || status.lossy) {
-            if (await pathExists(item.path)) {
+          // Best effort: a Host that cannot archive must not strand the lease,
+          // and the worktree removal below is what the user asked for.
+          await archiveSessions?.(item.path).catch(() => undefined)
+          if (await pathExists(item.path)) {
+            const removed = await this.#run(git, ['worktree', 'remove', '--force', '--', item.path], item.root)
+            if (removed.exitCode !== 0) {
               retained.push(item)
-            } else {
-              // The directory is already gone; drop the lease and let Git
-              // forget the stale worktree registration.
-              await this.#run(git, ['worktree', 'prune'], item.root).catch(() => undefined)
-              changed = true
+              continue
             }
-            continue
-          }
-          if (status.stdout.trim().length > 0) {
-            retained.push(item)
-            continue
-          }
-          const removed = await this.#run(git, ['worktree', 'remove', '--', item.path], item.root)
-          if (removed.exitCode !== 0) {
-            retained.push(item)
-            continue
+          } else {
+            // The directory is already gone; let Git forget the stale
+            // worktree registration before the lease follows it.
+            await this.#run(git, ['worktree', 'prune'], item.root).catch(() => undefined)
           }
           if (item.pluginGeneratedBranch) {
             await this.#run(git, ['branch', '-D', '--', item.branch], item.root).catch(() => undefined)
@@ -344,7 +354,45 @@ export class RepositorySetupService {
         }
       }
       if (changed) await this.#writeLeases(retained)
+      await this.#removeUnleasedDirectories(retained, active, now)
     })
+  }
+
+  /** Remove directories under the plugin's own worktree root that no lease and
+   *  no workspace claims. A lease file lost to a crash, or a worktree whose
+   *  lease write failed, otherwise leaves a directory nothing will ever sweep.
+   *  The grace period covers the gap between `worktree add` and the lease
+   *  write, so a worktree being created right now is never taken. */
+  async #removeUnleasedDirectories(
+    retained: readonly WorktreeLease[],
+    active: ReadonlySet<string>,
+    now: number,
+  ): Promise<void> {
+    const leased = new Set(retained.map(item => comparablePath(item.path)))
+    let entries: string[]
+    try {
+      entries = await readdir(this.#worktreeRoot)
+    } catch {
+      return // no worktree root yet, or it is unreadable; nothing to sweep
+    }
+    for (const entry of entries) {
+      const path = join(this.#worktreeRoot, entry)
+      const key = comparablePath(path)
+      if (leased.has(key) || active.has(key)) continue
+      try {
+        const info = await stat(path)
+        if (!info.isDirectory()) continue
+        const created = info.birthtimeMs > 0 ? info.birthtimeMs : info.mtimeMs
+        // Date.now() truncates to whole milliseconds while birthtime carries a
+        // fraction, so a directory created moments ago can read as newer than
+        // the clock; clamp rather than let that skip a sweep.
+        if (Math.max(0, now - created) < this.#cleanupGraceMs) continue
+        await rm(path, { recursive: true, force: true })
+      } catch {
+        // A directory that vanished under us, or one we may not remove; the
+        // next pass sees it again.
+      }
+    }
   }
 
   async #checkoutRemote(info: RepositoryBranchList, remoteBranch: string): Promise<RepositorySetupResult> {
@@ -400,19 +448,21 @@ export class RepositorySetupService {
   }
 
   async #createWorktree(
-    root: string,
+    info: RepositoryBranchList,
     baseBranch: string,
     baseRef: string,
     explicitBranchName: string | undefined,
     reuseExistingBranch: boolean,
     progress: RepositorySetupProgress,
+    intent: string | undefined,
   ): Promise<RepositorySetupResult> {
+    const { root } = info
     const git = await this.#git()
     progress('fetching')
     await this.#fetchRemotes(git, root)
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
-    const branch = explicitBranchName ?? `${safeBranch(await this.#branchPrefix())}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
+    const branch = explicitBranchName ?? await this.#generatedBranch(info, baseBranch, intent, stamp, suffix, progress)
     const path = join(this.#worktreeRoot, `${slug(basename(root), 'repository')}-${stamp}-${suffix}`)
     progress('creating-worktree')
     await mkdir(this.#worktreeRoot, { recursive: true })
@@ -448,6 +498,27 @@ export class RepositorySetupService {
       throw error
     }
     return { mode: 'worktree', root, path, branch, leaseId: item.id }
+  }
+
+  /** `<prefix>/<what the draft is about>`, falling back to
+   *  `<prefix>/<base branch>-<stamp>-<random>` whenever the summary is missing
+   *  or unusable. The prefix and the fallback shape are unchanged. */
+  async #generatedBranch(
+    info: RepositoryBranchList,
+    baseBranch: string,
+    intent: string | undefined,
+    stamp: string,
+    suffix: string,
+    progress: RepositorySetupProgress,
+  ): Promise<string> {
+    const prefix = safeBranch(await this.#branchPrefix())
+    if (intent !== undefined && intent.trim().length > 0) {
+      progress('summarizing')
+      // The summary is a convenience, never a reason to fail the worktree.
+      const summary = await this.#summarizeBranch(intent).catch(() => undefined)
+      if (summary !== undefined) return uniqueBranchName(`${prefix}/${summary}`, info.branches)
+    }
+    return `${prefix}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
   }
 
   async #repositoryRoot(git: string, cwd: string): Promise<string> {

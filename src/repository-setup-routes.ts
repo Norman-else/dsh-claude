@@ -74,6 +74,7 @@ async function streamSetup(
       input.worktree as boolean,
       optionalString(input, 'branchName'),
       (stage: RepositorySetupStage) => { if (!ended) ndjson(res, { type: 'progress', stage }) },
+      optionalString(input, 'intent'),
     )
     ndjson(res, { type: 'complete', result })
   } catch (error) {

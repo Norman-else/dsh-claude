@@ -10,8 +10,12 @@ export type RepositoryPreparationStage = RepositorySetupStage
   | 'submitting'
 
 const HOST_STAGES = new Set<RepositorySetupStage>([
-  'inspecting', 'fetching', 'creating-worktree', 'saving-worktree', 'switching-branch',
+  'inspecting', 'fetching', 'summarizing', 'creating-worktree', 'saving-worktree', 'switching-branch',
 ])
+
+/** The draft only has to describe the work; the host truncates it again before
+ *  summarizing, and the setup route caps the whole body at 16 KiB. */
+const MAX_INTENT_CHARS = 2_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -69,6 +73,9 @@ export async function prepareRepository(
   worktree: boolean,
   branchName?: string,
   onProgress: (stage: RepositoryPreparationStage) => void = () => {},
+  /** Composer draft to name a generated worktree branch after; ignored when
+   *  `branchName` already fixes the name. */
+  intent?: string,
 ): Promise<RepositorySetupResult> {
   // The stream lane holds its permit for the life of the response and gives it
   // back when this signal aborts, so every exit from the read aborts it.
@@ -76,7 +83,13 @@ export async function prepareRepository(
   try {
     const reader = await pluginNdjson(CLAUDE_REPOSITORY_SETUP_PATH, carrier.signal, {
       method: 'POST',
-      json: { cwd, branch, worktree, ...(branchName === undefined ? {} : { branchName }) },
+      json: {
+        cwd,
+        branch,
+        worktree,
+        ...(branchName === undefined ? {} : { branchName }),
+        ...(intent === undefined || intent.trim().length === 0 ? {} : { intent: intent.slice(0, MAX_INTENT_CHARS) }),
+      },
     })
     const decoder = new TextDecoder()
     let buffer = ''

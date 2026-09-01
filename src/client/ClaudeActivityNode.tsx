@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import {
   DiffBlock,
+  type DiffBlockLabels,
   DisclosureRow,
   IconApiOutline14,
   IconThinkOutline14,
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
@@ -250,6 +251,27 @@ function filenameList(value: unknown): readonly string[] {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
+/** The diff card's chrome, which primitives 0.1.2 moved onto the caller.
+ *
+ *  The card reads `labels.copy` while it builds, so omitting them throws
+ *  mid-render -- and React answers by tearing down the whole conversation, not
+ *  the one tool row.
+ *
+ *  The aria strings deliberately repeat the visible ones: both already say
+ *  exactly what the control does. */
+export function diffBlockLabels(t: Translate): DiffBlockLabels {
+  const expand = (hidden: number): string => t('diffCardExpand', { count: hidden })
+  return {
+    copy: t('markdownCopy'),
+    copied: t('markdownCopied'),
+    collapse: t('diffCardCollapse'),
+    collapseAria: t('diffCardCollapse'),
+    expand,
+    expandAria: expand,
+    files: count => t('diffCardFiles', { count }),
+  }
+}
+
 function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translate }) {
   const inputValue = parsedValue(tool.input)
   const outputValue = parsedValue(tool.output)
@@ -258,7 +280,7 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
   const outputTitle = tool.isError === true ? t('toolError') : t('toolOutput')
 
   if (tool.diffs !== undefined) {
-    return <><DiffBlock diffs={[...tool.diffs]} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
+    return <><DiffBlock diffs={[...tool.diffs]} labels={diffBlockLabels(t)} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
   }
 
   if (tool.toolName === 'Read') {

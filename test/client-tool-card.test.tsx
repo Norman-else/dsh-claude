@@ -47,4 +47,15 @@ describe('ClaudeTranscriptToolItem', () => {
     expect(markup).toContain('hello')
     expect(markup).not.toContain('dsh-claude-tool-terminal')
   })
+
+  it('still draws an edit as a diff card', () => {
+    const markup = card({
+      toolName: 'Edit',
+      description: 'Edited /tmp/x',
+      diffs: [{ path: '/tmp/x', oldText: 'before\n', newText: 'after\n' }],
+    })
+
+    expect(markup).toContain('data-diff')
+    expect(markup).toContain('after')
+  })
 })

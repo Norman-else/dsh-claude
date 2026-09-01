@@ -1,7 +1,14 @@
 import { useSyncExternalStore } from 'react'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
+
+/** What `sessions.scope()` hands back; see {@link sessionInput}. */
+type SessionScope = NonNullable<ReturnType<ISessions['scope']>>
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
@@ -113,6 +120,18 @@ function MaximizedDiff({
 export const name = 'dsh-claude-client'
 export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection']
 
+/** Resolve one session's composer facade.
+ *
+ *  `sessions.scope()` returns the client runtime's AgentContext, and the
+ *  conversation package -- a release ahead of the runtime in the graph the Host
+ *  itself ships -- types `input.for` against a Context whose `remote` has since
+ *  gained `$stream` and `$host`. It is the same object at runtime; only the two
+ *  declarations disagree, and they disagree inside the Host too, so the cast
+ *  lives here once instead of at all nine call sites. */
+function sessionInput(conversation: IConversation, scope: SessionScope): SessionInput {
+  return conversation.input.for(scope as never)
+}
+
 export function apply(ctx: ClientContext): void {
   const namespace = 'settings.claude-code'
   const diagnostics = createClaudeDiagnosticsReporter()
@@ -170,7 +189,7 @@ export function apply(ctx: ClientContext): void {
     return (draft, mode = 'append') => {
       const scope = sessions.scope(sessionId as SessionId)
       if (scope === undefined) return false
-      const input = conversation.input.for(scope)
+      const input = sessionInput(conversation, scope)
       const current = input.state.getSnapshot().draft
       if (current.trim() === '') input.setDraft(draft)
       else if (mode === 'append') input.setDraft(`${current}\n\n${draft}`)
@@ -441,7 +460,7 @@ ${error.stack ?? ''}`
         submitWith: (fallbackDraft: string) => {
           const scope = sessions.scope(sessionId as SessionId)
           if (scope === undefined) return
-          const input = conversation.input.for(scope)
+          const input = sessionInput(conversation, scope)
           if (input.state.getSnapshot().draft.trim() === '') input.setDraft(fallbackDraft)
           input.submit()
         },
@@ -491,7 +510,7 @@ ${error.stack ?? ''}`
       insertIntoChat: (sessionId: string, text: string) => {
         const scope = sessions.scope(sessionId as SessionId)
         if (scope === undefined) return
-        const input = conversation.input.for(scope)
+        const input = sessionInput(conversation, scope)
         const current = input.state.getSnapshot().draft
         input.setDraft(current.trim() === '' ? text : `${current}\n\n${text}`)
       },
@@ -561,7 +580,7 @@ ${error.stack ?? ''}`
         setDraft: (sessionId: string, text: string) => {
           const scope = sessions.scope(sessionId as SessionId)
           if (scope === undefined) return
-          conversation.input.for(scope).setDraft(text)
+          sessionInput(conversation, scope).setDraft(text)
         },
       }),
     }
@@ -589,7 +608,7 @@ ${error.stack ?? ''}`
         return {
           t,
           updateQueue: (itemId, action) => target.updateQueue(itemId as never, action as never),
-          notify: (level, text) => { if (scope !== undefined) conversation.input.for(scope).notify(level, text) },
+          notify: (level, text) => { if (scope !== undefined) sessionInput(conversation, scope).notify(level, text) },
         }
       },
     }, ClaudeQueueDock))
@@ -612,7 +631,7 @@ ${error.stack ?? ''}`
         prepare: async (cwd, branch, useWorktree, onProgress, ticket) => {
           const sourceScope = sessions.scope(sourceSessionId)
           if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const sourceInput = conversation.input.for(sourceScope)
+          const sourceInput = sessionInput(conversation, sourceScope)
           const rawDraft = sourceInput.state.getSnapshot().draft
           // Starting from a ticket seeds an empty composer with the ticket
           // brief; a written draft keeps the user's words and gets the ticket
@@ -621,7 +640,8 @@ ${error.stack ?? ''}`
             ? rawDraft
             : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
           const imageIds = sourceInput.state.getSnapshot().imageIds
-          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress)
+          // No ticket to name the branch after: let the draft name it instead.
+          const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress, ticket === undefined ? draft : undefined)
           // The workspace is ready: take the ticket. Best-effort so a Jira
           // hiccup never blocks the session from starting.
           if (ticket !== undefined) {
@@ -643,7 +663,7 @@ ${error.stack ?? ''}`
           const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
           if (!presetResponse.ok) throw new Error(presetResponse.error.message)
           sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
-          const targetInput = conversation.input.for(targetScope)
+          const targetInput = sessionInput(conversation, targetScope)
           onProgress('transferring-draft')
           if (imageIds.length > 0 && !targetInput.addImages(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
           if (draft !== '') targetInput.setDraft(draft)
@@ -661,7 +681,7 @@ ${error.stack ?? ''}`
         prepareMany: async (cwd, branch, tickets, onProgress) => {
           const sourceScope = sessions.scope(sourceSessionId)
           if (sourceScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const sourceInput = conversation.input.for(sourceScope)
+          const sourceInput = sessionInput(conversation, sourceScope)
           // One shared draft applies to every ticket; images stay behind
           // because a single attachment cannot be split across sessions.
           const rawDraft = sourceInput.state.getSnapshot().draft
@@ -685,7 +705,7 @@ ${error.stack ?? ''}`
               const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
               if (!presetResponse.ok) throw new Error(presetResponse.error.message)
               sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
-              const targetInput = conversation.input.for(targetScope)
+              const targetInput = sessionInput(conversation, targetScope)
               report('transferring-draft')
               targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
               bindLease(prepared.leaseId, targetSessionId)

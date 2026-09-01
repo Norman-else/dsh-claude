@@ -105,6 +105,7 @@ const BRANCH_LOAD_RETRY_MS = 1_000
 export const WORKTREE_PROGRESS_STAGES: readonly RepositoryPreparationStage[] = [
   'inspecting',
   'fetching',
+  'summarizing',
   'creating-worktree',
   'saving-worktree',
   'creating-workspace',
@@ -116,6 +117,7 @@ export const WORKTREE_PROGRESS_STAGES: readonly RepositoryPreparationStage[] = [
 const PROGRESS_LABEL_KEYS: Record<RepositoryPreparationStage, ClaudeCodeSettingsKey> = {
   inspecting: 'repositoryProgress_inspecting',
   fetching: 'repositoryProgress_fetching',
+  summarizing: 'repositoryProgress_summarizing',
   'creating-worktree': 'repositoryProgress_creating-worktree',
   'saving-worktree': 'repositoryProgress_saving-worktree',
   'switching-branch': 'repositoryProgress_switching-branch',

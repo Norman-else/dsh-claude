@@ -88,11 +88,11 @@ describe('repository setup route', () => {
 
     const setup = response()
     await ctx.handler(request('POST', CLAUDE_REPOSITORY_SETUP_PATH, {
-      cwd: '/repo', branch: 'main', worktree: true, branchName: 'feature/exact-name',
+      cwd: '/repo', branch: 'main', worktree: true, branchName: 'feature/exact-name', intent: 'rename worktree branches',
     }), setup)
     expect(setup.statusCode).toBe(200)
     expect(setup.flushed).toBe(true)
-    expect(service.setup).toHaveBeenCalledWith('/repo', 'main', true, 'feature/exact-name', expect.any(Function))
+    expect(service.setup).toHaveBeenCalledWith('/repo', 'main', true, 'feature/exact-name', expect.any(Function), 'rename worktree branches')
     expect(events(setup)).toEqual([
       { type: 'progress', stage: 'inspecting' },
       { type: 'progress', stage: 'fetching' },

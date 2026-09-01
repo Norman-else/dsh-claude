@@ -78,6 +78,10 @@ function CommentChip({ comment, t, onRemove }: {
         </span>
       }
       openDelayMs={250}
+      // Required since primitives 0.1.2; this card passes no copyText, so the
+      // copy affordance they name never appears.
+      copyLabel={t('markdownCopy')}
+      copiedLabel={t('markdownCopied')}
     />
   )
 }
