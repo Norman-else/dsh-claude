@@ -27,6 +27,8 @@ const ACTIVITY_CSS = [
   '.dsh-claude-transcript-text{color:var(--dsw-alias-label-primary);font-size:15px;line-height:24px;overflow-wrap:anywhere}',
   '.dsh-claude-tool-group-native{overflow:visible}',
   '.dsh-claude-tool-group-native>.dsh-claude-flow-row{padding:0}',
+  // DisclosureRow butts its collapsed content against the title; the row's own tool list already spaces its stats with a gap.
+  '.dsh-claude-tool-group-native>.dsh-claude-flow-row .dsh-claude-tool-stats{margin-left:8px}',
   '.dsh-claude-tool-list{max-height:min(420px,calc(100vh - 320px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;margin-top:4px;border:1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent));border-radius:10px;scrollbar-gutter:stable}',
   '.dsh-claude-tool-item{border-top:1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))}',
   '.dsh-claude-tool-item:first-child{border-top:0}',
