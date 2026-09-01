@@ -43,7 +43,7 @@ import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
-import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, type RepositoryPreparationStage } from './repository-setup-api.ts'
+import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
@@ -178,6 +178,21 @@ export function apply(ctx: ClientContext): void {
   const connectWorkspace: IWorkspaces['connectWorkspace'] | undefined
     = uiWorkspace?.connectWorkspace?.bind(uiWorkspace)
     ?? (typeof workspaces?.connectWorkspace === 'function' ? workspaces.connectWorkspace.bind(workspaces) : undefined)
+  // Deleting a workspace only mutates the durable registry -- no agent edge,
+  // no server-side event -- so the Host would never tell the plugin its
+  // worktree is now unclaimed. Watching the list here is the only place that
+  // knows, and the kick spares the user the sweep interval.
+  if (workspaces !== undefined) {
+    ctx.effect(() => {
+      let known = new Set(workspaces.list.getSnapshot().items.map(item => item.workspaceId))
+      return workspaces.list.subscribe(() => {
+        const next = new Set(workspaces.list.getSnapshot().items.map(item => item.workspaceId))
+        const removed = [...known].some(id => !next.has(id))
+        known = next
+        if (removed) void sweepWorktrees().catch(() => undefined)
+      })
+    }, 'dsh-claude: worktree sweep on workspace deletion')
+  }
   const conversation = ctx.get('conversation') as IConversation | undefined
   const connection = ctx.get('connection') as ConnectionHandle | undefined
   const remote = ctx.get('remote') as RemoteFace | undefined

@@ -131,6 +131,13 @@ export async function cleanupMergedRepository(path: string, baseBranch: string):
   return body as unknown as RepositoryCleanupResult
 }
 
+/** Ask the Host to reconcile worktrees against the workspace registry now.
+ *  Deleting a workspace only touches the registry, so this kick is what makes
+ *  the worktree and its sessions go without waiting out the sweep interval. */
+export async function sweepWorktrees(): Promise<void> {
+  await pluginWrite(`${CLAUDE_REPOSITORY_SETUP_PATH}/sweep`, 'fast')
+}
+
 /** Lines [from, to] of a working-tree file plus its total line count, for expanding unmodified diff context. */
 export async function loadRepositoryFileLines(cwd: string, path: string, from: number, to: number, signal?: AbortSignal): Promise<{ lines: readonly string[]; total: number }> {
   const body = await pluginRead<Record<string, unknown>>(CLAUDE_REPOSITORY_FILE_PATH, 'git', signal, {

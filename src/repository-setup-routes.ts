@@ -95,7 +95,12 @@ async function streamSetup(
  *  The prefix is registered as a stream because the setup POST holds its
  *  connection open for the whole worktree build; the short sibling paths ride
  *  the same registration and answer with `json` before releasing it. */
-export function registerRepositorySetupRoute(ctx: Context, service: RepositorySetupService): void {
+export function registerRepositorySetupRoute(
+  ctx: Context,
+  service: RepositorySetupService,
+  /** Kick the worktree/workspace reconciliation, when the Host exposes one. */
+  sweep?: () => void,
+): void {
   registerPluginRoute(ctx, {
     mode: 'stream',
     kind: 'prefix',
@@ -132,6 +137,14 @@ export function registerRepositorySetupRoute(ctx: Context, service: RepositorySe
           if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
           const input = await readJson(io)
           return json(res, 200, await service.cleanupMerged(string(input, 'path'), string(input, 'baseBranch')))
+        }
+        // The Host's own workspace deletion publishes no server-side event, so
+        // the Client kicks the sweep the moment a workspace leaves its list.
+        // Carries no payload: the sweep re-reads the registry itself.
+        if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/sweep`) {
+          if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          sweep?.()
+          return json(res, 200, { ok: true })
         }
         if (pathname === `${CLAUDE_REPOSITORY_SETUP_PATH}/bind`) {
           if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })

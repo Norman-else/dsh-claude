@@ -349,12 +349,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     reviewComments.disposeSession(agent.id as string)
     await supervisor.disposeSession(agent.id as string)
   })
+  // Set once the reconciliation below is wired; the Client's sweep route kicks
+  // it so a deleted workspace does not wait out the interval.
+  let sweepWorktrees: (() => void) | undefined
   // Deleting a workspace from the sidebar is a durable-registry mutation with
   // no agent lifecycle edge, so worktree cleanup reconciles leases against
   // the workspace registry instead: unreferenced clean worktrees are removed
-  // on boot and on a slow interval. workspaceRegistry is not part of this
-  // plugin's typed host surface yet; inject through an untyped escape hatch
-  // so older Hosts without the service simply never start the sweep.
+  // on boot, on the Client's deletion kick, and on a slow interval.
+  // workspaceRegistry is not part of this plugin's typed host surface yet;
+  // inject through an untyped escape hatch so older Hosts without the service
+  // simply never start the sweep.
   const injectWorkspaceRegistry = ctx.inject as unknown as (
     deps: readonly string[],
     callback: (sweepCtx: Context & {
@@ -392,12 +396,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     sweepCtx.effect(() => {
       sweep()
-      // The registry publishes no deletion event, so this poll IS the latency
-      // the user feels between deleting a workspace and its worktree going.
-      // A pass with nothing to reconcile is one small file read.
-      const timer = setInterval(sweep, 15_000)
+      sweepWorktrees = sweep
+      // The kick covers the deletion the user is watching; this poll is the
+      // backstop for a Client that never sent one. A pass with nothing to
+      // reconcile is one small file read.
+      const timer = setInterval(sweep, 60_000)
       timer.unref?.()
-      return () => clearInterval(timer)
+      return () => {
+        sweepWorktrees = undefined
+        clearInterval(timer)
+      }
     }, 'dsh-claude: worktree reconciliation')
   })
   ctx.effect(() => () => reviewComments.dispose(), 'dsh-claude: review comments store')
@@ -413,7 +421,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         : {}),
     })
     registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applySettingsOverrides })
-    registerRepositorySetupRoute(webCtx, repositorySetup)
+    registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.())
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())

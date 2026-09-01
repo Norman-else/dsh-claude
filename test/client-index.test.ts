@@ -164,6 +164,7 @@ describe('Claude client slot registration', () => {
     const workspaces = {
       list: {
         getSnapshot: () => ({ items: [{ workspaceId: 'workspace-1', sessionIds: ['session-1', 'session-2'] }] }),
+        subscribe: () => () => {},
       },
       archiveSession: (id: string) => {
         calls.push(`archive:${id}`)

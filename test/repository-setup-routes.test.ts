@@ -176,4 +176,21 @@ describe('repository setup cleanup route', () => {
     expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main')
     expect(JSON.parse(cleanup.body)).toMatchObject({ mode: 'worktree', branch: 'PSOS-1' })
   })
+
+  it('kicks the worktree sweep the Client asks for, and answers without one', async () => {
+    const sweep = vi.fn()
+    const kicked = context()
+    registerRepositorySetupRoute(kicked, {} as unknown as RepositorySetupService, sweep)
+    const res = response()
+    await kicked.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/sweep`, {}), res)
+    expect(res.statusCode).toBe(200)
+    expect(sweep).toHaveBeenCalledOnce()
+    // A Host without the workspace registry has no sweep to kick; the route
+    // still answers rather than failing the Client's deletion.
+    const hostless = context()
+    registerRepositorySetupRoute(hostless, {} as unknown as RepositorySetupService)
+    const quiet = response()
+    await hostless.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/sweep`, {}), quiet)
+    expect(quiet.statusCode).toBe(200)
+  })
 })
