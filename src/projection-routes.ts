@@ -93,15 +93,20 @@ export function registerClaudeProjectionRoute(
     ctx.logger?.info?.(message)
   }
 
-  const assembleMeta = async (sessionId: string): Promise<ProjectionMeta> => {
+  /** Everything the host already knows, without touching the repository. */
+  const localMeta = (sessionId: string): ProjectionMeta => {
     const owned = ownsSession(sessionId)
-    const repository = owned ? await repositoryForSession(sessionId) : undefined
     return {
       owned,
       commands: commandsForSession(sessionId),
-      ...(repository === undefined ? {} : { repository }),
       reviewComments: owned ? reviewCommentsForSession(sessionId) : [],
     }
+  }
+
+  const assembleMeta = async (sessionId: string): Promise<ProjectionMeta> => {
+    const meta = localMeta(sessionId)
+    const repository = meta.owned ? await repositoryForSession(sessionId) : undefined
+    return { ...meta, ...(repository === undefined ? {} : { repository }) }
   }
 
   const streamMulti = async (res: ServerResponse, io: PluginRouteIo, sessionIds: readonly string[]): Promise<void> => {
@@ -129,12 +134,30 @@ export function registerClaudeProjectionRoute(
       }
     }
     const metas = new Map<string, ProjectionMeta>()
+    const writeMeta = (sessionId: string, meta: ProjectionMeta): void => {
+      metas.set(sessionId, meta)
+      writeLine({
+        type: 'meta',
+        session: sessionId,
+        owned: meta.owned,
+        commands: meta.commands,
+        ...(meta.repository === undefined ? {} : { repository: meta.repository }),
+        reviewComments: meta.reviewComments,
+      })
+    }
     const writeSnapshot = async (sessionId: string): Promise<void> => {
-      const [projection, meta] = await Promise.all([sidecar.read(sessionId), assembleMeta(sessionId)])
+      const projection = await sidecar.read(sessionId)
+      // The repository probe runs a chain of git commands and a `gh pr view`
+      // over the network -- seconds, where the transcript is already in
+      // memory. It rides a later meta line so the prose paints first.
+      const meta = metas.get(sessionId) ?? localMeta(sessionId)
       metas.set(sessionId, meta)
       // Where the notification stream stands as of this read, so the first
       // delta after this line has a number to be contiguous with.
       writeLine({ type: 'snapshot', session: sessionId, seq: sidecar.sequence(sessionId), ...envelope(projection, meta) })
+      const probed = await assembleMeta(sessionId)
+      if (closed || JSON.stringify(probed) === JSON.stringify(metas.get(sessionId))) return
+      writeMeta(sessionId, probed)
     }
     // Subscribe every lane synchronously, before the first await: a delta that
     // lands while the snapshots are still assembling belongs to this carrier.
@@ -189,15 +212,7 @@ export function registerClaudeProjectionRoute(
           const next = await assembleMeta(sessionId)
           if (closed) return
           if (JSON.stringify(next) === JSON.stringify(metas.get(sessionId))) continue
-          metas.set(sessionId, next)
-          writeLine({
-            type: 'meta',
-            session: sessionId,
-            owned: next.owned,
-            commands: next.commands,
-            ...(next.repository === undefined ? {} : { repository: next.repository }),
-            reviewComments: next.reviewComments,
-          })
+          writeMeta(sessionId, next)
         }
         writeLine({ type: 'ping' })
       })().catch(() => undefined)

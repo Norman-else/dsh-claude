@@ -216,7 +216,7 @@ describe('Claude sidecar projection route', () => {
     await pending
   })
 
-  it('paints the carrier before any repository probe, so one wedged session cannot block the rest', async () => {
+  it('paints every lane before its repository probe, and follows with the probed meta', async () => {
     const ctx = context()
     const sidecar = {
       read: async () => ({ schemaVersion: 1 as const, revision: 5, activities: [] }),
@@ -241,10 +241,15 @@ describe('Claude sidecar projection route', () => {
     expect(res.headers['cache-control']).toContain('no-store')
     expect(res.flushed).toBe(true)
     await settled()
-    // The wedged session owes its own lane a snapshot and nobody else's.
+    // Both lanes paint from memory; the repository rides a later meta line, so
+    // a wedged probe costs its lane a status bar, never its transcript.
     expect(lines(res)).toEqual([
+      expect.objectContaining({ type: 'snapshot', session: 'wedged', revision: 5 }),
       expect.objectContaining({ type: 'snapshot', session: 'healthy', revision: 5 }),
+      expect.objectContaining({ type: 'meta', session: 'healthy', repository: expect.objectContaining({ branch: 'main' }) }),
     ])
+    expect(lines(res)[0]).not.toHaveProperty('repository')
+    expect(lines(res)[1]).not.toHaveProperty('repository')
     for (const callback of res.closeHandlers) callback()
     await pending
   })
