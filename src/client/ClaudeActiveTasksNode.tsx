@@ -1,4 +1,4 @@
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { ClaudeTaskLauncher } from './ClaudeActivityTail.tsx'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 

@@ -2,7 +2,7 @@ import type {
   ChatConversationViewNode,
   ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeUsage } from '../events.ts'
 import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
 import { isProjectedTaskActivity } from './task-projection.ts'
@@ -78,13 +78,13 @@ interface ClaudeTurnProjectionState extends ClaudeTurnMarker {
   readonly claude: boolean
 }
 
-declare module '@deepseek-ai/dsh-client-runtime/client' {
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ConversationTurnDataMap {
     claudeCode: ClaudeTurnMarker
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'claude-activity-step': ClaudeActivityStepMarker
     'claude-active-tasks': ClaudeActiveTasksMarker

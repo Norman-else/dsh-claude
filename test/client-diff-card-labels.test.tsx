@@ -3,9 +3,8 @@
  *  Primitives 0.1.2 moved the card's copy/fold/footer strings onto the caller
  *  and reads them while it builds, so a Host on that build blew up mid-render
  *  on the plugin's label-less `<DiffBlock>` — and React answered by unmounting
- *  the whole conversation. This repository still develops against 0.1.1, whose
- *  DiffBlock ignores the prop, so the installed build cannot catch a regression
- *  here: the stub below stands in for the 0.1.2 contract instead. */
+ *  the whole conversation. The declaration now demands the prop, but only the
+ *  stub below proves every label survives the trip as a usable string. */
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 

@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import {
   DiffBlock,
+  type DiffBlockLabels,
   DisclosureRow,
   IconApiOutline14,
   IconThinkOutline14,
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
@@ -252,25 +253,13 @@ function filenameList(value: unknown): readonly string[] {
 
 /** The diff card's chrome, which primitives 0.1.2 moved onto the caller.
  *
- *  The Host reads `labels.copy` while it builds the card, so a 0.1.2 Host given
- *  no labels throws mid-render -- and React answers by tearing down the whole
- *  conversation, not the one tool row. This repository develops against 0.1.1,
- *  whose declaration does not know the prop yet and whose build ignores it, so
- *  the labels travel as a spread that both versions accept.
+ *  The card reads `labels.copy` while it builds, so omitting them throws
+ *  mid-render -- and React answers by tearing down the whole conversation, not
+ *  the one tool row.
  *
  *  The aria strings deliberately repeat the visible ones: both already say
  *  exactly what the control does. */
-interface DiffCardLabels {
-  copy: string
-  copied: string
-  collapse: string
-  collapseAria: string
-  expand: (hidden: number) => string
-  expandAria: (hidden: number) => string
-  files: (count: number) => string
-}
-
-export function diffBlockLabels(t: Translate): DiffCardLabels {
+export function diffBlockLabels(t: Translate): DiffBlockLabels {
   const expand = (hidden: number): string => t('diffCardExpand', { count: hidden })
   return {
     copy: t('markdownCopy'),
@@ -291,8 +280,7 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
   const outputTitle = tool.isError === true ? t('toolError') : t('toolOutput')
 
   if (tool.diffs !== undefined) {
-    const diffProps = { diffs: [...tool.diffs], labels: diffBlockLabels(t) }
-    return <><DiffBlock {...diffProps} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
+    return <><DiffBlock diffs={[...tool.diffs]} labels={diffBlockLabels(t)} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
   }
 
   if (tool.toolName === 'Read') {

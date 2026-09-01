@@ -12,7 +12,7 @@ import {
   type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
@@ -993,7 +993,7 @@ export class ClaudeSupervisor {
       await active.agent.session.append('tool/call', {
         turn: active.cursor.turn,
         step: active.cursor.step,
-        callId: CallId(message.toolUseId),
+        callId: ToolCallId(message.toolUseId),
         name: message.toolName,
         arguments: safeDetail(message.input) ?? '{}',
       })
@@ -1012,7 +1012,7 @@ export class ClaudeSupervisor {
         turn: active.cursor.turn,
         step: active.cursor.step,
         message: createToolResultMessage({
-          callId: CallId(message.toolUseId),
+          callId: ToolCallId(message.toolUseId),
           content: [{ type: 'text', text }],
           isError: message.isError,
         }),

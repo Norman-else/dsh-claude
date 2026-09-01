@@ -41,8 +41,15 @@ describe('published package contract', () => {
       .map(([, version]) => version)
     expect(packageJson.peerDependencies['@deepseek-ai/dsh-attachment']).toBe('*')
     expect(dshDevelopmentVersions.length).toBeGreaterThan(0)
-    expect(new Set(dshDevelopmentVersions)).toEqual(new Set(['0.1.1-rc.2']))
-    expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.1-rc.2")
+    // The Desktop 2.0 graph is 0.1.2-alpha.3 except for the two packages that
+    // never got that release; the Host ships the same pair, so a stray third
+    // version is the drift this guard is here to catch.
+    expect(new Set(dshDevelopmentVersions)).toEqual(new Set(['0.1.2-alpha.3', '0.1.1-rc.2']))
+    expect(Object.entries(packageJson.devDependencies)
+      .filter(([, version]) => version === '0.1.1-rc.2')
+      .map(([name]) => name)
+      .sort()).toEqual(['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-host-apiproxy'])
+    expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.2-alpha.3")
     expect(host).toContain("'attachments'")
     expect(host).toContain('ctx.attachments')
   })
