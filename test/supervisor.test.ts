@@ -226,23 +226,6 @@ describe('DSH access mode mapping', () => {
       { type: 'sandbox/mode', data: { mode: 'invalid' } },
     ])).toBe('plan')
   })
-
-  it('lets a preset claim a Claude mode the sandbox knob cannot express', () => {
-    // The preset switch writes its knobs after the preset event, so the claim
-    // has to outrank a sandbox value that is newer than it.
-    const events = [
-      { type: 'permission/preset', data: { preset: 'claude-ask' } },
-      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
-      { type: 'approval/policy', data: { policy: 'ask' } },
-    ]
-    expect(claudePermissionMode(events, { 'claude-ask': 'default' })).toBe('default')
-    // Unmapped presets, and a switch away from a claiming one, keep folding.
-    expect(claudePermissionMode(events)).toBe('acceptEdits')
-    expect(claudePermissionMode([
-      ...events,
-      { type: 'permission/preset', data: { preset: 'workspace-write' } },
-    ], { 'claude-ask': 'default' })).toBe('acceptEdits')
-  })
 })
 
 describe('Claude supervisor', () => {

@@ -12,8 +12,7 @@ import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, DEFAULT_CLAUDE_RENDER_
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
-import { CLAUDE_PERMISSION_MODES, ClaudeSupervisor } from './supervisor.ts'
-import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk'
+import { ClaudeSupervisor } from './supervisor.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
@@ -51,9 +50,6 @@ export interface Config {
   model?: string
   idleTimeoutMs?: number
   maxProcesses?: number
-  /** DSH permission preset name -> the Claude Code permission mode it selects.
-   *  A preset absent here folds its sandbox knob the way it always has. */
-  permissionModes?: Record<string, PermissionMode>
 }
 
 export const Config: z<Config> = z.object({
@@ -61,14 +57,6 @@ export const Config: z<Config> = z.object({
   model: z.string().default('default'),
   idleTimeoutMs: z.number().min(1_000).max(2_147_483_647).default(30 * 60 * 1_000),
   maxProcesses: z.number().step(1).min(1).default(4),
-  // The claims for the presets this package's cordis.patch.yml adds, so a
-  // deployment that takes the preset table without the plugin config still
-  // gets the modes those presets are named for.
-  permissionModes: z.dict(z.union(CLAUDE_PERMISSION_MODES)).default({
-    'claude-ask': 'default',
-    'claude-auto': 'auto',
-    'claude-dont-ask': 'dontAsk',
-  }),
 })
 
 const CLAUDE_SCOPE_UNAVAILABLE_MESSAGE = 'agent command scope unavailable (preset route not mounted?)'
@@ -240,7 +228,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     executablePath: '',
     defaultModel: config.model ?? 'default',
     renderMode: DEFAULT_CLAUDE_RENDER_MODE,
-    permissionModes: config.permissionModes ?? {},
     ...defaultLimits,
   }
   // Settings overrides win over the plugin config; the supervisor reads the
