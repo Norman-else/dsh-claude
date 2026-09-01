@@ -329,6 +329,16 @@ interface UpdateDialogState {
   readonly conflicts?: readonly string[]
 }
 
+/** The trigger only shows on a clean branch that is behind its base -- but a
+ *  conflicted rebase leaves the tree dirty on a detached HEAD, so an open
+ *  dialog (and its resolve button) has to outlive that. */
+export function updateBranchMounted(repository: RepositoryStatus, dialogOpen: boolean): boolean {
+  const pullRequest = repository.pullRequest
+  if (pullRequest?.baseBranch === undefined) return false
+  return dialogOpen || (pullRequest.state === 'open' && repository.detached !== true
+    && repository.dirty !== true && (repository.baseBehind ?? 0) > 0)
+}
+
 export function UpdateBranchControl({ sessionId, repository, t, report, submitPrompt }: {
   sessionId: string
   repository: RepositoryStatus
@@ -343,8 +353,8 @@ export function UpdateBranchControl({ sessionId, repository, t, report, submitPr
   const base = pullRequest?.baseBranch
   const behind = repository.baseBehind ?? 0
   useEffect(() => () => controller.current?.abort(), [])
-  if (pullRequest === undefined || pullRequest.state !== 'open' || base === undefined
-    || repository.detached === true || repository.dirty === true || behind <= 0) return null
+  if (pullRequest === undefined || base === undefined) return null
+  if (!updateBranchMounted(repository, dialog !== undefined)) return null
   const openDialog = (): void => {
     controller.current?.abort()
     setDialog({ loading: true, submitting: false })

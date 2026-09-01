@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { composeConflictsPrompt } from '../src/client/pr-feedback-api.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeDiffPanel, actionLabel, expandDiffRows, numberDiffLines, parseUnifiedDiff, rangeCommentAnchor, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
-import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary } from '../src/client/ClaudeRepositoryStatus.tsx'
+import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary, updateBranchMounted } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { nextActionToast } from '../src/client/action-toast.tsx'
 import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
@@ -550,6 +550,22 @@ describe('pull request merge control', () => {
     expect(render({ ...repository.pullRequest, draft: true })).not.toContain('aria-label="Open merge options"')
     expect(render({ ...repository.pullRequest, state: 'merged' as never })).not.toContain('aria-label="Open merge options"')
     expect(render(undefined)).not.toContain('aria-label="Open merge options"')
+  })
+})
+
+describe('update branch control', () => {
+  const clean = { ...repository, dirty: false, baseBehind: 2 }
+
+  it('shows the trigger only on a clean branch behind its base', () => {
+    expect(updateBranchMounted(clean, false)).toBe(true)
+    expect(updateBranchMounted({ ...clean, baseBehind: 0 }, false)).toBe(false)
+    expect(updateBranchMounted(repository as never, false)).toBe(false)
+  })
+
+  it('keeps the dialog mounted through the conflicted rebase it produces', () => {
+    // A conflicted rebase leaves the tree dirty on a detached HEAD.
+    expect(updateBranchMounted({ ...clean, dirty: true, detached: true }, false)).toBe(false)
+    expect(updateBranchMounted({ ...clean, dirty: true, detached: true }, true)).toBe(true)
   })
 })
 
