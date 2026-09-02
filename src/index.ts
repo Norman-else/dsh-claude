@@ -20,6 +20,7 @@ import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { RepositoryStatusService } from './repository-status.ts'
 import { comparablePath, RepositorySetupService } from './repository-setup.ts'
 import { summarizeBranchSlug } from './branch-name.ts'
+import { summarizeSessionTitle } from './session-title.ts'
 import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
@@ -271,7 +272,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => supervisorConfig.renderMode),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => supervisorConfig.renderMode, request => summarizeSessionTitle(supervisorConfig.executablePath, request)),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()

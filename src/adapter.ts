@@ -18,6 +18,7 @@ import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
 import { claudeModelRow, latestClaudeModels } from './model-catalog.ts'
 import { formatReviewComments, type ReviewComment } from './review-comments.ts'
+import { summarizeSessionTitle, type SessionTitleRequest } from './session-title.ts'
 
 const THINKING_MODES = [
   { id: 'off', name: 'Off', description: 'No extended thinking.' },
@@ -187,6 +188,17 @@ function tokenUsage(usage: ClaudeUsage): TokenUsage {
   return normalized
 }
 
+/** Flatten a hand-built auxiliary request to text. Unlike a conversation turn
+ *  it has no images and no human-sourced message to single out: every message
+ *  in it was assembled by the plugin that asked the question. */
+function auxiliaryText(messages: GenerateOptions['messages']): string {
+  return messages
+    .flatMap(message => message.content
+      .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
+      .map(block => block.text))
+    .join('\n')
+}
+
 function resolveAgent(agents: Pick<AgentRegistry, 'currentInitiator' | 'get'>, options: GenerateOptions): Agent {
   const initiator = agents.currentInitiator()
   if (initiator !== undefined) return initiator
@@ -204,6 +216,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly #presetIdFor: (agent: Agent) => string | undefined
   readonly #drainReviewComments: (sessionId: string) => readonly ReviewComment[]
   readonly #renderMode: () => ClaudeRenderMode
+  readonly #summarizeTitle: (request: SessionTitleRequest) => Promise<string>
 
   constructor(
     supervisor: ClaudeSupervisor,
@@ -212,6 +225,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     presetIdFor: (agent: Agent) => string | undefined,
     drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
     renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
+    summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
   ) {
     super()
     this.#supervisor = supervisor
@@ -220,6 +234,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.#presetIdFor = presetIdFor
     this.#drainReviewComments = drainReviewComments
     this.#renderMode = renderMode
+    this.#summarizeTitle = summarizeTitle
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -271,8 +286,33 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** Title the session from its own provider without touching its process.
+   *
+   *  DSH routes the title request at the session's model, which is this
+   *  adapter; a deployment with no second provider configured would otherwise
+   *  never get a title at all and keep the first five words of the first
+   *  message. A throwaway Haiku turn answers it, so the session's transcript,
+   *  context, and permission bridge stay out of it. */
+  async *#titleStream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const title = await this.#summarizeTitle({
+      ...(options.system === undefined ? {} : { system: options.system }),
+      input: auxiliaryText(options.messages),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: title }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: title } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.purpose === 'session-title') {
+      yield* this.#titleStream(options)
+      return
+    }
     if (options.purpose !== undefined) {
+      // Compaction stays out: Claude Code compacts its own context, and a DSH
+      // summary of a transcript it does not own would be replayed at nobody.
       throw new Error(`dsh-claude: auxiliary ${options.purpose} calls are not routed into the Claude session`)
     }
     const agent = resolveAgent(this.#agents, options)
@@ -378,6 +418,7 @@ export function createClaudeCodeAdapter(
   presetIdFor: (agent: Agent) => string | undefined,
   drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
   renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
+  summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle)
 }
