@@ -131,6 +131,41 @@ describe('DSH approval bridge', () => {
     expect(state.events.at(-1)?.data).toMatchObject({ phase: 'completed', summary: 'Allowed by Full access in DeepSeek Harness' })
   })
 
+  it('asks for a plan even under Full access', async () => {
+    const state = active()
+    const request = vi.fn(async () => 'allowed-once' as const)
+    const hasFullAccess = vi.fn(async () => true)
+    const canUseTool = createPermissionBridge({ request }, () => ({ ...state, hasFullAccess }))
+
+    await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    // A plan is the decision the user asked for; Full access waives actions,
+    // not decisions.
+    expect(request).toHaveBeenCalledOnce()
+    expect(state.events.at(-1)?.data).toMatchObject({ phase: 'completed', summary: 'Allowed once in DeepSeek Harness' })
+    // Everything else still short-circuits.
+    request.mockClear()
+    await expect(canUseTool('Bash', { command: 'ls' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('keeps a rejected plan rejected when Full access lands mid-read', async () => {
+    const state = active()
+    let fullAccess = false
+    // The user switches to Full access while the plan is on screen, then
+    // rejects it. The rejection is the answer; the switch is not.
+    const request = vi.fn(async () => {
+      fullAccess = true
+      return 'rejected' as const
+    })
+    const canUseTool = createPermissionBridge({ request }, () => ({
+      ...state,
+      hasFullAccess: async () => fullAccess,
+    }))
+
+    await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'deny' })
+    expect(state.events.at(-1)?.data).toMatchObject({ phase: 'denied' })
+  })
+
   it('fails closed when the approval service rejects', async () => {
     const state = active()
     const canUseTool = createPermissionBridge({ request: async () => { throw new Error('audit failed') } }, () => state)

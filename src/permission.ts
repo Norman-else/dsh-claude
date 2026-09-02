@@ -133,7 +133,14 @@ export function createPermissionBridge(
         // The plan panel reads this; see planText.
         ...(plan === undefined ? {} : { text: plan }),
       })
-      const alreadyFullAccess = await active.hasFullAccess?.() === true
+      // Full access says "stop asking me before you act". A plan is not an
+      // action: it is the decision the user asked Claude to bring back, and
+      // answering it on their behalf hands the plan straight back to Claude
+      // before anyone has read it. So it is the one approval Full access does
+      // not stand in for — a user who wanted the plan waived would not have
+      // asked for a plan.
+      const userDecides = plan !== undefined
+      const alreadyFullAccess = !userDecides && await active.hasFullAccess?.() === true
       const outcome = alreadyFullAccess
         ? 'allowed-once'
         : await approval.request({
@@ -145,7 +152,9 @@ export function createPermissionBridge(
       // The access selector can change while the approval UI is open. Re-read
       // its durable state so an explicit Full access choice wins over the stale
       // request being closed as rejected/cancelled by that mode transition.
-      const fullAccess = alreadyFullAccess || await active.hasFullAccess?.() === true
+      // Not for a plan: there the user's answer IS the decision, and a Full
+      // access switch mid-read must not overturn a rejection they just made.
+      const fullAccess = alreadyFullAccess || (!userDecides && await active.hasFullAccess?.() === true)
       const effectiveOutcome = fullAccess ? 'allowed-once' : outcome
       const result = mapApprovalOutcome(effectiveOutcome, input, options.toolUseID)
       if (result.behavior === 'deny') active.recordDenial?.(options.toolUseID)
