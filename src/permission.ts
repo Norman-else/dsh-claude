@@ -31,14 +31,25 @@ function denialMessage(outcome: ApprovalOutcome): string {
   }
 }
 
+/** Claude leaving plan mode is not an ordinary tool call: its argument is the
+ *  plan, written for the user, and the approval that follows is the user
+ *  agreeing to it. Everything else reads better as a prompt plus its input. */
+const PLAN_TOOL = 'ExitPlanMode'
+/** A plan is the one approval whose body is meant to be read in full. */
+const MAX_PLAN_CHARS = 8_000
+const MAX_REASON_CHARS = 1_200
+
 export function permissionReason(
   toolName: string,
   input: Readonly<Record<string, unknown>>,
   options: Parameters<CanUseTool>[2],
 ): string {
+  if (toolName === PLAN_TOOL && typeof input.plan === 'string' && input.plan.length > 0) {
+    return boundText(input.plan, MAX_PLAN_CHARS)
+  }
   const prompt = options.title ?? options.description ?? options.decisionReason ?? `Claude Code wants to use ${toolName}.`
   const detail = safeDetail(input)
-  return boundText(detail === undefined ? prompt : `${prompt}\nInput: ${detail}`, 1_200)
+  return boundText(detail === undefined ? prompt : `${prompt}\nInput: ${detail}`, MAX_REASON_CHARS)
 }
 
 export function mapApprovalOutcome(

@@ -109,13 +109,25 @@ describe('Claude presenter views', () => {
   it('registers presenter-only mirrors that refuse execution', async () => {
     const definitions = claudePresenterDefinitions()
     expect(definitions.map(definition => definition.name)).toContain('Bash')
-    expect(definitions.length).toBe(13)
+    expect(definitions.length).toBe(14)
     expect(CLAUDE_PRESENTER_NAMES.has('Bash')).toBe(true)
-    expect(CLAUDE_PRESENTER_NAMES.size).toBe(13)
+    expect(CLAUDE_PRESENTER_NAMES.size).toBe(14)
     for (const definition of definitions) {
       expect(definition.output.render({}, null)).toEqual([])
       await expect(definition.execute({}, {} as never)).rejects.toThrow(/Claude Code owns execution/)
     }
+  })
+
+  it('renders a plan as the card body rather than as tool arguments', () => {
+    const definition = claudePresenterDefinitions().find(item => item.name === 'ExitPlanMode')
+    expect(definition).toBeDefined()
+    expect(definition?.presentCall?.({ plan: '## Steps\n\n1. Do the thing' })).toEqual({
+      card: 'generic',
+      kind: 'other',
+      title: 'Plan ready for review',
+      content: [{ type: 'text', text: '## Steps\n\n1. Do the thing' }],
+    })
+    expect(definition?.presentCall?.({})).toBeUndefined()
   })
 
   it('builds dynamic mirrors for runtime-discovered tool names', async () => {

@@ -39,6 +39,20 @@ describe('permission result mapping', () => {
     expect(reason).toContain('[REDACTED]')
     expect(reason).not.toContain('nope')
   })
+
+  it('hands the plan itself to the approval surface', () => {
+    const plan = `## Plan\n\n1. Read ${'the supervisor '.repeat(200)}\n2. Ship it`
+    const reason = permissionReason('ExitPlanMode', { plan }, toolOptions())
+    // The plan is prose the user is being asked to agree to, so it arrives as
+    // prose rather than as `Input: {"plan":"..."}`.
+    expect(reason.startsWith('## Plan')).toBe(true)
+    expect(reason).not.toContain('Input: ')
+    // Long enough to hold a real plan, still bounded.
+    expect(reason.length).toBeGreaterThan(1_200)
+    expect(reason.length).toBeLessThanOrEqual(8_000)
+    // An empty or missing plan falls back to the ordinary prompt.
+    expect(permissionReason('ExitPlanMode', { plan: '' }, toolOptions())).toContain('Input: ')
+  })
 })
 
 describe('DSH approval bridge', () => {

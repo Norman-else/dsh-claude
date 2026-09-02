@@ -324,6 +324,12 @@ function toolDescription(toolName: string, input: Record<string, unknown> | unde
       failedAction = description === undefined ? `run ${command}` : description
       break
     }
+    // Leaving plan mode is Claude handing over a plan for approval, not a tool
+    // acting on anything; the raw name says neither.
+    case 'ExitPlanMode':
+      completed = 'Proposed a plan'
+      failedAction = 'propose a plan'
+      break
     default:
       completed = description ?? `${toolName}${target === undefined ? '' : ` ${target}`}`
       failedAction = completed.charAt(0).toLowerCase() + completed.slice(1)

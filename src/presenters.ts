@@ -138,6 +138,22 @@ export function fetchCallView(args: unknown): ToolCallView | undefined {
   return { card: 'generic', kind: 'fetch', title: url, rawInput: args }
 }
 
+/** ExitPlanMode: the plan itself, as prose rather than as tool arguments.
+ *
+ *  This is the one built-in tool whose whole payload is written for the user
+ *  to read: Claude asks to leave plan mode and the approval that follows is
+ *  the user agreeing to the plan. Rendering it as `Input: {"plan":"..."}`
+ *  buries the only thing worth reading, so the plan becomes the card body. */
+export function planCallView(args: unknown): ToolCallView | undefined {
+  const plan = str(record(args)?.plan)
+  return plan === undefined ? undefined : {
+    card: 'generic',
+    kind: 'other',
+    title: 'Plan ready for review',
+    content: [{ type: 'text', text: plan }],
+  }
+}
+
 /** Task: a subagent card titled by Claude's task description. */
 export function taskCallView(args: unknown): ToolCallView | undefined {
   const arguments_ = record(args)
@@ -206,6 +222,7 @@ export function claudePresenterDefinitions(): ToolDefinition[] {
     presenterDefinition('WebSearch', PRESENTATION_NOTE, searchCallView),
     presenterDefinition('WebFetch', PRESENTATION_NOTE, fetchCallView),
     presenterDefinition('Task', PRESENTATION_NOTE, taskCallView),
+    presenterDefinition('ExitPlanMode', PRESENTATION_NOTE, planCallView),
     presenterDefinition('TodoWrite', PRESENTATION_NOTE, () => genericTitle('Update todos')),
   ]
 }
