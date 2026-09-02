@@ -3,7 +3,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REWIND_PATH } from './constants.ts'
 import { registerPluginRoute, type PluginRouteIo } from './http.ts'
-import { EMPTY_REWIND_STATE, planRewind, rewindRestoreTree } from './rewind.ts'
+import { EMPTY_REWIND_STATE, planRewind, rewindRestoreTree, turnAtOrAfter } from './rewind.ts'
 import type { ClaudeSidecarRepository } from './sidecar.ts'
 
 const MAX_BODY_BYTES = 4 * 1024
@@ -73,7 +73,10 @@ export function registerClaudeRewindRoute(
         const planned = planRewind(current, events, seq)
         if (planned === undefined) return { status: 409, value: { error: 'seq-unavailable' } }
         const tree = input?.restoreFiles === true ? rewindRestoreTree(current, events, seq) : undefined
-        await sidecar.writeRewind(sessionId, planned)
+        // The first turn the rewind discards, so the projection drops its
+        // activity alongside the hidden seq ranges. Undefined when the cut
+        // lands past the last turn, which discards no turn at all.
+        await sidecar.writeRewind(sessionId, planned, turnAtOrAfter(events, seq))
         await access.reset(sessionId)
         const filesRestored = tree === undefined || access.restoreFiles === undefined
           ? false

@@ -426,9 +426,22 @@ export class ClaudeSidecarRepository {
   }
 
   /** Land one planned rewind: hidden ranges, surviving anchors, and the fork
-   *  target the next Claude spawn consumes. */
-  writeRewind(sessionId: string, value: ClaudeRewindState): Promise<ClaudeSidecarProjection> {
-    return this.#update(sessionId, current => ({ ...current, rewind: value }), false, { kind: 'sync' })
+   *  target the next Claude spawn consumes.
+   *
+   *  `droppedFromTurn` also drops the discarded turns' activity. The hidden
+   *  ranges are surface seqs and activity records carry none, so a reader that
+   *  works in turns — the plan panel, the task board — has nothing to filter
+   *  on and would go on showing a plan the session no longer contains. This
+   *  projection is rebuildable from the session log, so trimming it is not
+   *  losing anything the log still holds. */
+  writeRewind(sessionId: string, value: ClaudeRewindState, droppedFromTurn?: number): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => ({
+      ...current,
+      rewind: value,
+      ...(droppedFromTurn === undefined ? {} : {
+        activities: current.activities.filter(activity => activity.turn < droppedFromTurn),
+      }),
+    }), false, { kind: 'sync' })
   }
 
   /** Remember where Claude's chain ended for one completed DSH turn. */

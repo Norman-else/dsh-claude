@@ -124,4 +124,25 @@ describe('rewind persistence', () => {
     expect(reread.rewind?.pending).toBeUndefined()
     expect(reread.rewind?.ranges).toEqual([{ start: 4, end: 6 }])
   })
+
+  it('drops the discarded turns\' activity along with their surface rows', async () => {
+    const store = await repository()
+    await store.appendActivity('session', { turn: 1, step: 0, ordinal: 0, kind: 'text', text: 'kept' })
+    await store.appendActivity('session', { turn: 2, step: 0, ordinal: 0, kind: 'text', text: 'discarded' })
+    const planned = planRewind(EMPTY_REWIND_STATE, log(), 4)
+    // Turn 2 is the first turn the cut at seq 4 discards.
+    await store.writeRewind('session', planned as NonNullable<typeof planned>, 2)
+    // Hidden ranges are surface seqs; a reader that works in turns has nothing
+    // to filter on, so the projection must not still carry the records.
+    const stored = await new ClaudeSidecarRepository({ root: store.root }).read('session')
+    expect(stored.activities.map(activity => activity.text)).toEqual(['kept'])
+  })
+
+  it('keeps every activity when the cut discards no turn', async () => {
+    const store = await repository()
+    await store.appendActivity('session', { turn: 1, step: 0, ordinal: 0, kind: 'text', text: 'kept' })
+    const planned = planRewind(EMPTY_REWIND_STATE, log(), 6)
+    await store.writeRewind('session', planned as NonNullable<typeof planned>, undefined)
+    expect((await store.read('session')).activities).toHaveLength(1)
+  })
 })

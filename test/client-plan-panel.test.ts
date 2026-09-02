@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { latestPlanReview, parsePlanReviewKey, planReviewKey } from '../src/client/ClaudePlanPanel.tsx'
+import { latestPlanReview, parsePlanReviewKey, planReviewKey, planReviews, planTitle } from '../src/client/ClaudePlanPanel.tsx'
 
 let ordinal = 0
 function permission(fields: Partial<ClaudeActivityEvent>): ClaudeActivityEvent {
@@ -71,5 +71,59 @@ describe('plan review key', () => {
     expect(planReviewKey([])).toBe('')
     expect(parsePlanReviewKey('')).toBeUndefined()
     expect(parsePlanReviewKey('nonsense:plan-1')).toBeUndefined()
+  })
+})
+
+describe('every plan in a session', () => {
+  it('keeps each proposal with its own decision, oldest first', () => {
+    const reviews = planReviews([
+      permission({ phase: 'started', toolUseId: 'plan-1', text: '# First' }),
+      permission({ phase: 'denied', toolUseId: 'plan-1' }),
+      permission({ phase: 'started', toolUseId: 'plan-2', text: '# Second' }),
+      permission({ phase: 'completed', toolUseId: 'plan-2' }),
+      permission({ phase: 'started', toolUseId: 'plan-3', text: '# Third' }),
+    ])
+    expect(reviews).toEqual([
+      { toolUseId: 'plan-1', plan: '# First', state: 'rejected' },
+      { toolUseId: 'plan-2', plan: '# Second', state: 'approved' },
+      { toolUseId: 'plan-3', plan: '# Third', state: 'pending' },
+    ])
+    // The panel's default and the header dot both read the newest.
+    expect(latestPlanReview([
+      permission({ phase: 'started', toolUseId: 'plan-1', text: '# First' }),
+      permission({ phase: 'started', toolUseId: 'plan-2', text: '# Second' }),
+    ])?.toolUseId).toBe('plan-2')
+  })
+
+  it('does not let another tool\'s decision settle a plan', () => {
+    const reviews = planReviews([
+      permission({ phase: 'started', toolUseId: 'plan-1', text: '# Plan' }),
+      permission({ phase: 'completed', toolUseId: 'bash-1', toolName: 'Bash' }),
+    ])
+    expect(reviews).toEqual([{ toolUseId: 'plan-1', plan: '# Plan', state: 'pending' }])
+  })
+
+  it('reads no plans as an empty list', () => {
+    expect(planReviews([])).toEqual([])
+    expect(planReviews([permission({ phase: 'started', toolUseId: 'bash-1', toolName: 'Bash', text: 'ls' })])).toEqual([])
+  })
+})
+
+describe('plan titles', () => {
+  it('names a plan by its first heading', () => {
+    expect(planTitle('# 模拟 Plan：给面板加大纲\n\nbody')).toBe('模拟 Plan：给面板加大纲')
+    expect(planTitle('\n\n## Second level\n')).toBe('Second level')
+    // Closing hashes are decoration, not part of the name.
+    expect(planTitle('### Trimmed ###')).toBe('Trimmed')
+  })
+
+  it('falls back to the opening line when a plan has no heading', () => {
+    expect(planTitle('Just a sentence.\n# Later heading')).toBe('Just a sentence.')
+    expect(planTitle('')).toBe('')
+    expect(planTitle('   \n  \n')).toBe('')
+  })
+
+  it('bounds a title that would push the picker wide', () => {
+    expect(planTitle(`# ${'long '.repeat(40)}`).length).toBeLessThanOrEqual(80)
   })
 })

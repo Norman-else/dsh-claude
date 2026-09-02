@@ -523,6 +523,15 @@ export const planHeaderStart: CSSProperties = {
   minWidth: 0,
 }
 
+/** "2 / 5" next to the title when the session has proposed more than one. */
+export const planCount: CSSProperties = {
+  flex: 'none',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 12,
+  lineHeight: '17px',
+  fontVariantNumeric: 'tabular-nums',
+}
+
 /** Maximize and close: the control group at the header's right end. */
 export const planHeaderEnd: CSSProperties = {
   flex: 'none',
