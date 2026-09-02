@@ -567,6 +567,10 @@ export class ClaudeProjectionStore {
   readonly #report: (kind: string, detail: string) => void
   readonly #resyncCooldownMs: number
   #resyncedAt = 0
+  /** Whether the carrier is in a run of failures. One report per outage: the
+   *  retry loop runs every couple of seconds and a beacon per attempt would
+   *  be the plugin reporting its own noise. */
+  #carrierFailing = false
   #controller: AbortController | undefined
   #settle: ReturnType<typeof setTimeout> | undefined
   #running = false
@@ -677,6 +681,7 @@ export class ClaudeProjectionStore {
             `${CLAUDE_PROJECTION_PATH}/multi?sessions=${lanes.map(encodeURIComponent).join(',')}`,
             controller.signal,
           )
+          this.#carrierFailing = false
           // A reopen has to interrupt the read, not wait for the next byte:
           // the carrier can sit silent for a long time between turns, and a
           // resync that lands after the next delta is no resync at all.
@@ -702,6 +707,13 @@ export class ClaudeProjectionStore {
             // A deliberate reopen; the loop re-reads the current lane set.
             if (this.#controller !== controller) continue
             return
+          }
+          // Everything else used to be swallowed here, and the loop went on
+          // retrying every couple of seconds with nothing on screen and
+          // nothing in the log to say why the transcript had stopped.
+          if (!this.#carrierFailing) {
+            this.#carrierFailing = true
+            this.#report('projection-carrier-unavailable', error instanceof Error ? error.message : String(error))
           }
         } finally {
           if (this.#controller === controller) this.#controller = undefined

@@ -292,6 +292,27 @@ describe('Claude client sidecar projection', () => {
     store.dispose()
   })
 
+  it('reports a carrier it cannot open instead of retrying in silence', async () => {
+    // A carrier that never opens is a blank transcript, and the retry loop
+    // used to swallow the reason forever: sixteen minutes of an empty session
+    // with one stale line in the Host log to explain it.
+    vi.useFakeTimers()
+    const reported: string[] = []
+    const store = new ClaudeProjectionStore({
+      report: (kind, detail) => { reported.push(`${kind}: ${detail}`) },
+      open: async () => { throw new Error('the projection carrier is already open') },
+      retryDelayMs: RETRY_MS,
+      settleMs: 0,
+    })
+    const unsubscribe = store.source('session/a').subscribe(() => {})
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+
+    expect(reported.join(' ')).toContain('projection-carrier-unavailable')
+    unsubscribe()
+    store.dispose()
+  })
+
   it('carries the rewind ranges from the snapshot line into the published projection', async () => {
     vi.useFakeTimers()
     const stream = carrier()
