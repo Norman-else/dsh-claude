@@ -70,10 +70,10 @@ function supervisorEvents(events: ClaudeTurnStreamEvent[], error?: unknown, cont
 }
 
 function capturingSupervisor(events: ClaudeTurnStreamEvent[] = [{ type: 'complete', text: 'ok' }]) {
-  const calls: Array<{ prompt: unknown; model?: string; thinkingMode?: string }> = []
+  const calls: Array<{ prompt: unknown; model?: string; thinkingMode?: string; renderMode?: string }> = []
   const supervisor = {
     contextWindow: () => undefined,
-    runTurn: (request: { prompt: string; model?: string; thinkingMode?: string }) => {
+    runTurn: (request: { prompt: string; model?: string; thinkingMode?: string; renderMode?: string }) => {
       calls.push(request)
       return (async function* () {
         for (const event of events) yield event
@@ -223,6 +223,26 @@ describe('DSH stream mapping', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ prompt: 'hello', model: 'default' })
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
+  it('reads the renderer setting once per turn and pins it to that turn', async () => {
+    // Read per turn, not cached: a copy held in memory goes stale the moment
+    // the settings file is edited outside the Settings dialog. Read once, not
+    // per record: both halves of a turn -- the records the supervisor stamps
+    // and the blocks streamed here -- have to agree about who is drawing it.
+    const { supervisor, calls } = capturingSupervisor()
+    const modes = ['plugin', 'native'] as const
+    let reads = 0
+    const adapter = new ClaudeCodeAdapter(supervisor, {
+      currentInitiator: () => agent,
+      get: () => agent,
+    }, attachmentStore(), claudePreset, () => [], async () => modes[reads++] ?? 'plugin')
+
+    for await (const _chunk of adapter.stream(options())) { /* drain */ }
+    for await (const _chunk of adapter.stream(options())) { /* drain */ }
+
+    expect(reads).toBe(2)
+    expect(calls.map(call => call.renderMode)).toEqual(['plugin', 'native'])
   })
 
   it('emits only usage and an empty assistant completion anchor while sidecar owns visible text', async () => {

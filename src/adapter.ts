@@ -215,7 +215,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly #attachments: AttachmentReader
   readonly #presetIdFor: (agent: Agent) => string | undefined
   readonly #drainReviewComments: (sessionId: string) => readonly ReviewComment[]
-  readonly #renderMode: () => ClaudeRenderMode
+  /** The renderer setting, read from its file at the start of each turn. A
+   *  cached copy would go stale whenever the file is edited outside the
+   *  Settings dialog, and the read is dwarfed by the process the turn spawns. */
+  readonly #renderMode: () => Promise<ClaudeRenderMode>
   readonly #summarizeTitle: (request: SessionTitleRequest) => Promise<string>
 
   constructor(
@@ -224,7 +227,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     attachments: AttachmentReader,
     presetIdFor: (agent: Agent) => string | undefined,
     drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
-    renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
+    renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
     summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
   ) {
     super()
@@ -344,7 +347,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // the two halves of a turn must agree. Deciding separately let a switch
     // mid-turn leave the prose buffered for a renderer that was no longer
     // drawing it, so the turn finished with nothing on screen.
-    const renderMode = this.#renderMode()
+    const renderMode = await this.#renderMode()
     const native = renderMode === 'native'
     const events = await this.#supervisor.runTurn({
       agent,
@@ -423,7 +426,7 @@ export function createClaudeCodeAdapter(
   attachments: AttachmentReader,
   presetIdFor: (agent: Agent) => string | undefined,
   drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
-  renderMode: () => ClaudeRenderMode = () => DEFAULT_CLAUDE_RENDER_MODE,
+  renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
   summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
 ): ClaudeCodeAdapter {
   return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle)

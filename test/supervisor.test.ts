@@ -1757,6 +1757,40 @@ describe('Claude native renderer mirroring', () => {
     await runtime.dispose()
   })
 
+  it('lands a switch on the next turn without restamping the turn before it', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'look around', renderMode: 'plugin' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('Checking.'))
+    query.push(toolCallMessage)
+    query.push(result('done'))
+    await collect(first)
+
+    configs.get(runtime)!.renderMode = 'native'
+    // The Host opens the next DSH step; the cursor a turn records under is read
+    // back from it.
+    await owner.agent.session.append('turn/start', { turn: 2 })
+    await owner.agent.session.append('step/start', { turn: 2, step: 1 })
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'again', renderMode: 'native' })
+    query.push(delta('Checked.'))
+    query.push(result('done'))
+    await collect(second)
+
+    const activities = (await projection(runtime)).activities
+    const turnOne = activities.filter(activity => activity.turn === 1)
+    const turnTwo = activities.filter(activity => activity.turn === 2)
+    expect(turnOne.length).toBeGreaterThan(0)
+    expect(turnTwo.length).toBeGreaterThan(0)
+    // The turn already on screen keeps the renderer that drew it, or the Client
+    // would fold a step it had already painted; only the new turn switches.
+    expect(turnOne.some(activity => activity.renderer !== undefined)).toBe(false)
+    expect(turnTwo.every(activity => activity.renderer === 'native')).toBe(true)
+    await runtime.dispose()
+  })
+
   it('leaves records unstamped under the plugin renderer', async () => {
     const transport = factory()
     const owner = fakeAgent()

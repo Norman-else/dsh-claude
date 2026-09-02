@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, DEFAULT_CLAUDE_RENDER_MODE } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
@@ -230,20 +230,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const supervisorConfig = {
     executablePath: '',
     defaultModel: config.model ?? 'default',
-    renderMode: DEFAULT_CLAUDE_RENDER_MODE,
     ...defaultLimits,
   }
   // Settings overrides win over the plugin config; the supervisor reads the
   // shared config object on every admission and idle schedule, so updates take
-  // effect without a restart. The renderer is the exception: the adapter reads
-  // it once per turn and pins it to that turn, because both halves of a turn
-  // -- the records the supervisor stamps and the blocks the adapter streams --
-  // have to agree about who is drawing it.
+  // effect without a restart. The renderer is not kept here: the adapter reads
+  // its file at the start of each turn and pins the answer to that turn, so
+  // both halves of a turn -- the records the supervisor stamps and the blocks
+  // the adapter streams -- agree about who is drawing it, and a settings file
+  // edited outside the Settings dialog lands on the next turn all the same.
   const applySettingsOverrides = async (): Promise<void> => {
     const overrides = await readSupervisorLimitOverrides()
     supervisorConfig.idleTimeoutMs = overrides.idleTimeoutMs ?? defaultLimits.idleTimeoutMs
     supervisorConfig.maxProcesses = overrides.maxProcesses ?? defaultLimits.maxProcesses
-    supervisorConfig.renderMode = await readRenderMode()
   }
   await applySettingsOverrides()
   const sidecar = new ClaudeSidecarRepository()
@@ -274,7 +273,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => supervisorConfig.renderMode, request => summarizeSessionTitle(supervisorConfig.executablePath, request)),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request)),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
