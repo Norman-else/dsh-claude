@@ -897,7 +897,9 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('passes the default alias explicitly when switching an existing Query back to Default', async () => {
+  it('rebuilds the query when the model changes and resumes the bound session', async () => {
+    // A live setModel would keep the CLI's frozen system prompt, so the turn
+    // answers as the old model; only a fresh process picks the new one up.
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -913,46 +915,14 @@ describe('Claude supervisor', () => {
       { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
     )
     const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two', model: 'default' })
-    expect(query.setModel).toHaveBeenCalledWith('default')
-    query.push(result('two'))
+    expect(query.setModel).not.toHaveBeenCalled()
+    const next = transport.queries[1]!
+    expect(next.options).toMatchObject({ model: 'default', resume: 'claude-session-1' })
+    next.push(init())
+    next.push(result('two'))
     await collect(second)
+    expect(runtime.snapshots()[0]).toMatchObject({ model: 'default' })
     await runtime.dispose()
-  })
-
-  it('discards a process whose model switch never answers instead of stalling admission', async () => {
-    vi.useFakeTimers()
-    try {
-      const transport = factory()
-      const owner = fakeAgent()
-      const runtime = supervisor(transport.create)
-      const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one', model: 'fable' })
-      const query = transport.queries[0]!
-      query.push(init())
-      query.push(result('one'))
-      await collect(first)
-
-      owner.events.push(
-        { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
-        { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
-      )
-      query.setModel.mockReturnValueOnce(new Promise<undefined>(() => {}))
-      const wedged = runtime.runTurn({ agent: owner.agent, prompt: 'two', model: 'default' })
-      const settled = expect(wedged).rejects.toThrow('timed out')
-      await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
-      await settled
-      // The wedged process is gone, so the next turn is admitted on a fresh one.
-      expect(runtime.snapshots()).toHaveLength(0)
-      const third = runtime.runTurn({ agent: owner.agent, prompt: 'three', model: 'default' })
-      await vi.advanceTimersByTimeAsync(0)
-      const next = transport.queries[1]
-      expect(next).toBeDefined()
-      next!.push(init())
-      next!.push(result('three'))
-      await collect(await third)
-      await runtime.dispose()
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('reuses one streaming query for multiple turns', async () => {

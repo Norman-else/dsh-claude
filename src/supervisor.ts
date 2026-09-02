@@ -424,8 +424,12 @@ export class ClaudeSupervisor {
       entry.idleTimer = undefined
     }
     const model = request.model ?? this.#config.defaultModel
-    if (request.thinkingMode !== entry.thinkingMode) {
-      // The SDK only accepts effort/thinking at query start, so rebuild the
+    if (request.thinkingMode !== entry.thinkingMode || model !== entry.model) {
+      // The SDK only accepts effort/thinking at query start, and a live
+      // setModel is not enough for the model either: the CLI freezes its
+      // system prompt (including the "you are powered by" line) at the first
+      // context-usage request, which the metadata refresh issues on every new
+      // process, so a switched session answers as the old model. Rebuild the
       // query; the persisted Claude session binding keeps the context.
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
@@ -434,10 +438,6 @@ export class ClaudeSupervisor {
       await entry.sdkInitialization
     } else {
       await this.#syncPermissionMode(entry)
-      if (model !== entry.model) {
-        await this.#control(entry, entry.query.setModel(model), 'Claude Code model switch')
-        entry.model = model
-      }
     }
 
     const promptUuid = randomUUID()
