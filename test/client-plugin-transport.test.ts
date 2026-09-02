@@ -3,6 +3,8 @@ import {
   PluginRequestError,
   __resetPluginTransport,
   __setPluginFetch,
+  pluginNdjson,
+  pluginProjectionStream,
   pluginRead,
   pluginWrite,
 } from '../src/client/plugin-transport.ts'
@@ -124,4 +126,90 @@ describe('plugin transport connection budget', () => {
     await expect(failure.then(error => error.reason)).resolves.toBe('timeout')
     expect(caller.signal.aborted).toBe(false)
   }, clientBudgetMs('fast') + 5_000)
+})
+
+/** A stream whose body ends the way a server closing the response looks from
+ *  here: the reader reports done, and nothing aborts. */
+function streamEnding(): typeof fetch {
+  return ((): Promise<Response> => Promise.resolve({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({ start: controller => { controller.close() } }),
+  } as unknown as Response)) as unknown as typeof fetch
+}
+
+/** A stream whose body fails part-way, the other ending the caller does not
+ *  cause. */
+function streamFailing(): typeof fetch {
+  return ((): Promise<Response> => Promise.resolve({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({ start: controller => { controller.error(new Error('connection reset')) } }),
+  } as unknown as Response)) as unknown as typeof fetch
+}
+
+/** A body that stays open, so the permit is held until something ends it. */
+function streamOpen(): typeof fetch {
+  return ((): Promise<Response> => Promise.resolve({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({ start: () => {} }),
+  } as unknown as Response)) as unknown as typeof fetch
+}
+
+describe('stream permits outlive nothing', () => {
+  // The carrier permit used to be released only by the caller's abort. A
+  // server that closed the response, or a body that failed mid-read, left it
+  // held for the life of the page: every reopen answered `starved`, and the
+  // transcript stopped updating until the app was restarted.
+  it('gives the carrier permit back when the stream ends on its own', async () => {
+    __setPluginFetch(streamEnding())
+    const first = new AbortController()
+    const reader = await pluginProjectionStream('/p/multi?sessions=a', first.signal)
+    expect((await reader.read()).done).toBe(true)
+
+    const second = new AbortController()
+    await expect(pluginProjectionStream('/p/multi?sessions=a', second.signal)).resolves.toBeDefined()
+  })
+
+  it('gives the carrier permit back when the stream fails mid-read', async () => {
+    __setPluginFetch(streamFailing())
+    const first = new AbortController()
+    const reader = await pluginProjectionStream('/p/multi?sessions=a', first.signal)
+    await expect(reader.read()).rejects.toThrow()
+
+    const second = new AbortController()
+    await expect(pluginProjectionStream('/p/multi?sessions=a', second.signal)).resolves.toBeDefined()
+  })
+
+  it('gives the carrier permit back when the reader is cancelled', async () => {
+    __setPluginFetch(streamOpen())
+    const first = new AbortController()
+    const reader = await pluginProjectionStream('/p/multi?sessions=a', first.signal)
+    await reader.cancel()
+
+    const second = new AbortController()
+    await expect(pluginProjectionStream('/p/multi?sessions=a', second.signal)).resolves.toBeDefined()
+  })
+
+  it('gives a counted stream permit back when the stream ends on its own', async () => {
+    // The same defect on the lane every other NDJSON route shares.
+    __setPluginFetch(streamEnding())
+    const first = new AbortController()
+    const reader = await pluginNdjson('/ask', first.signal)
+    expect((await reader.read()).done).toBe(true)
+
+    const second = new AbortController()
+    await expect(pluginNdjson('/ask', second.signal)).resolves.toBeDefined()
+  })
+
+  it('still gives the carrier permit back on abort', async () => {
+    __setPluginFetch(streamOpen())
+    const first = new AbortController()
+    await pluginProjectionStream('/p/multi?sessions=a', first.signal)
+    first.abort()
+
+    const second = new AbortController()
+    await expect(pluginProjectionStream('/p/multi?sessions=a', second.signal)).resolves.toBeDefined()
+  })
 })

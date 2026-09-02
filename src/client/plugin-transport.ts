@@ -117,6 +117,17 @@ function release(lane: PluginLane): void {
   pump()
 }
 
+/** Runs at most once, so a release can be wired to every ending of a stream
+ *  without any of them having to know about the others. */
+function once(action: () => void): () => void {
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    action()
+  }
+}
+
 function acquire(lane: PluginLane): Promise<() => void> {
   let released = false
   const releaseOnce = (): void => {
@@ -252,6 +263,52 @@ function nextWriteId(): number {
   return writeId
 }
 
+/**
+ * A reader that gives its permit back however the stream ends.
+ *
+ * The permit used to be released by one event only -- the caller's abort --
+ * and a stream has three endings, two of which the caller does not cause: the
+ * server closing the response, and the body failing mid-read. Either one left
+ * the permit held. For the reserved carrier that permit is a single boolean,
+ * so one such ending closed the transcript stream for the life of the page and
+ * every reopen answered `starved`, silently, forever.
+ *
+ * Binding the release to the reader rather than to the signal is what makes
+ * that unrepresentable: a caller cannot hold the permit past the stream it is
+ * reading, because every way of leaving the read passes through here. `free`
+ * is idempotent, so the abort listener below stays as the belt to this brace.
+ */
+function releasingReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  free: () => void,
+): ReadableStreamDefaultReader<Uint8Array> {
+  return {
+    get closed() {
+      return reader.closed
+    },
+    read: async () => {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) free()
+        return chunk
+      } catch (error) {
+        free()
+        throw error
+      }
+    },
+    cancel: async (reason?: unknown) => {
+      try {
+        await reader.cancel(reason)
+      } finally {
+        free()
+      }
+    },
+    releaseLock: () => {
+      reader.releaseLock()
+    },
+  }
+}
+
 async function openStream(
   lane: PluginLane,
   path: string,
@@ -260,7 +317,7 @@ async function openStream(
   reserved: boolean,
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   const url = withQuery(path, options?.query)
-  const free = reserved ? () => { projectionHeld = false } : await acquire(lane)
+  const free = reserved ? once(() => { projectionHeld = false }) : await acquire(lane)
   try {
     const response = await send(url, {
       method: options?.method ?? 'GET',
@@ -277,9 +334,10 @@ async function openStream(
       throw new PluginRequestError('http', `HTTP ${response.status}`, response.status)
     }
     // The permit is held for the life of the response, not the life of this
-    // call: the reader releases it when the caller's signal aborts.
+    // call. The reader releases it on every ending of the stream; the signal
+    // is the extra path for a caller that walks away without reading on.
     cancel.addEventListener('abort', free, { once: true })
-    return response.body.getReader()
+    return releasingReader(response.body.getReader(), free)
   } catch (error) {
     free()
     throw failureOf(error, cancel)
