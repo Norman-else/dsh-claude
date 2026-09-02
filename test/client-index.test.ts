@@ -324,5 +324,42 @@ describe('Claude client slot registration', () => {
     expect(crashDetails?.active).toBe(true)
     expect(resizeLifecycle.events.slice(-2)).toEqual(['layout-open', 'resize-enable'])
     crashActions.closeDetails()
+
+    // The plan panel maximizes through the same overlay under its own id, and
+    // closing the details column has to take that overlay down with it — a
+    // missed teardown leaves an overlay covering the app with no way back.
+    const planHeader = registrations.find(entry => entry.id === 'claude-plan')
+    const planActions = planHeader?.inject?.('session-1') as { togglePlan(): void }
+    planActions.togglePlan()
+    const planDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
+    const planPanel = planDetails?.inject?.() as { toggleMaximized(): void; closeDetails(): void }
+    planPanel.toggleMaximized()
+    const planOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
+    expect(planOverlay).toMatchObject({ id: 'claude-plan-overlay' })
+
+    // Escape out of the overlay and back into the column.
+    const planOverlayElement = planOverlay?.component?.() as ReactElement<{ restore(): void }>
+    planOverlayElement.props.restore()
+    expect(planOverlay?.active).toBe(false)
+    expect(planDetails?.active).toBe(true)
+
+    // Maximize again, then close from the overlay: both registrations go.
+    planPanel.toggleMaximized()
+    const reopenedPlanOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
+    expect(reopenedPlanOverlay).toMatchObject({ id: 'claude-plan-overlay' })
+    planPanel.closeDetails()
+    expect(reopenedPlanOverlay?.active).toBe(false)
+    expect(planDetails?.active).toBe(false)
+
+    // A crashed plan overlay puts the column back, like the diff one.
+    planActions.togglePlan()
+    const crashPlanDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
+    const crashPlanPanel = crashPlanDetails?.inject?.() as { toggleMaximized(): void; closeDetails(): void }
+    crashPlanPanel.toggleMaximized()
+    const crashedPlanOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
+    reportEntryError?.('shell.overlay', { options: { id: 'claude-plan-overlay' } })
+    expect(crashedPlanOverlay?.active).toBe(false)
+    expect(crashPlanDetails?.active).toBe(true)
+    crashPlanPanel.closeDetails()
   })
 })

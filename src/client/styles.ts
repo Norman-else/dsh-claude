@@ -515,11 +515,20 @@ export const tasksGroupEmpty: CSSProperties = {
   lineHeight: '18px',
 }
 
-/** Status chip and close button share the header's right end. */
-export const planHeaderEnd: CSSProperties = {
+/** Title and state chip: one phrase at the header's left end. */
+export const planHeaderStart: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
+  minWidth: 0,
+}
+
+/** Maximize and close: the control group at the header's right end. */
+export const planHeaderEnd: CSSProperties = {
+  flex: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 2,
 }
 
 export const planBadge: CSSProperties = {

@@ -28,7 +28,7 @@ import { ClaudePlanHeaderAction, type ClaudePlanHeaderActionInjected } from './C
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
-import { ClaudeDiffOverlay } from './ClaudeDiffOverlay.tsx'
+import { ClaudePanelOverlay } from './ClaudePanelOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
@@ -109,7 +109,7 @@ function MaximizedDiff({
 }) {
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
-  return <ClaudeDiffOverlay onRestore={restore}><ClaudeDiffPanel
+  return <ClaudePanelOverlay onRestore={restore}><ClaudeDiffPanel
     useClaudeProjection={useClaudeProjection}
     t={t}
     sessionId={sessionId}
@@ -117,10 +117,27 @@ function MaximizedDiff({
     closeDetails={closeDetails}
     toggleMaximized={restore}
     {...(submitPrompt === undefined ? {} : { submitPrompt })}
-  /></ClaudeDiffOverlay>
+  /></ClaudePanelOverlay>
 }
 
 export const name = 'dsh-claude-client'
+function MaximizedPlan({ source, t, closeDetails, restore }: {
+  source: ClaudeProjectionSource
+  t: ClaudePlanPanelInjected['t']
+  closeDetails: () => void
+  restore: () => void
+}) {
+  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
+  return <ClaudePanelOverlay onRestore={restore}><ClaudePlanPanel
+    useClaudeProjection={useClaudeProjection}
+    t={t}
+    maximized
+    closeDetails={closeDetails}
+    toggleMaximized={restore}
+  /></ClaudePanelOverlay>
+}
+
 export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection']
 
 /** Resolve one session's composer facade.
@@ -267,6 +284,7 @@ export function apply(ctx: ClientContext): void {
   // visible so its session-bound state survives the round trip.
   let disposePluginDetails: (() => void) | undefined
   let disposeDiffOverlay: (() => void) | undefined
+  let disposePlanOverlay: (() => void) | undefined
   let disposeExpandedDetailsResize: (() => void) | undefined
   let detailsSessionId: string | undefined
   const diffOpen = new PanelOpenStore()
@@ -278,10 +296,19 @@ export function apply(ctx: ClientContext): void {
     layout?.openDetails()
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
+  const restorePlan = (): void => {
+    if (disposePlanOverlay === undefined) return
+    disposePlanOverlay()
+    disposePlanOverlay = undefined
+    layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  }
   const closePluginDetails = (): void => {
-    if (disposePluginDetails === undefined && disposeDiffOverlay === undefined && disposeExpandedDetailsResize === undefined && detailsSessionId === undefined) return
+    if (disposePluginDetails === undefined && disposeDiffOverlay === undefined && disposePlanOverlay === undefined && disposeExpandedDetailsResize === undefined && detailsSessionId === undefined) return
     disposeDiffOverlay?.()
     disposeDiffOverlay = undefined
+    disposePlanOverlay?.()
+    disposePlanOverlay = undefined
     disposeExpandedDetailsResize?.()
     disposeExpandedDetailsResize = undefined
     disposePluginDetails?.()
@@ -303,6 +330,7 @@ ${error.stack ?? ''}`
       : String(error)
     diagnostics.report('slot-entry-crashed', `slot "${key}"${id}: ${message}`)
     if (key === 'shell.overlay' && entry.options.id === 'claude-diff-overlay') restoreDiff()
+    if (key === 'shell.overlay' && entry.options.id === 'claude-plan-overlay') restorePlan()
   }), 'dsh-claude: Slot entry failure reporting')
   const openTasksPanel = (sessionId: string, turn: number): void => {
     closePluginDetails()
@@ -322,12 +350,44 @@ ${error.stack ?? ''}`
   }
   const openPlanPanel = (sessionId: string): void => {
     closePluginDetails()
+    // Declared before the registration that closes over it; a plan is only
+    // ever maximized by a press, which cannot land before this assignment.
+    const maximizePlan = (): void => {
+      if (disposePlanOverlay !== undefined) {
+        restorePlan()
+        return
+      }
+      disposeExpandedDetailsResize?.()
+      disposeExpandedDetailsResize = undefined
+      layout?.closeDetails()
+      try {
+        disposePlanOverlay = ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'claude-plan-overlay',
+          locale: namespace,
+        }, () => <MaximizedPlan
+          source={projections.source(sessionId)}
+          t={t}
+          closeDetails={closePluginDetails}
+          restore={restorePlan}
+        />)
+      } catch {
+        disposePlanOverlay = undefined
+        layout?.openDetails()
+        disposeExpandedDetailsResize = enableExpandedDetailsResize()
+      }
+    }
     try {
       disposePluginDetails = ctx.slots.register({
         name: 'details',
         priority: -10,
         locale: namespace,
-        inject: (): ClaudePlanPanelInjected => ({ t, closeDetails: closePluginDetails }),
+        inject: (): ClaudePlanPanelInjected => ({
+          t,
+          closeDetails: closePluginDetails,
+          maximized: false,
+          toggleMaximized: maximizePlan,
+        }),
       }, ClaudePlanPanel)
     } catch {
       return
@@ -425,7 +485,7 @@ ${error.stack ?? ''}`
   ctx.effect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closePluginDetails()
     const observer = new MutationObserver(() => {
-      if (detailsSessionId !== undefined && disposeDiffOverlay === undefined && document.querySelector('[data-details-collapsed]') !== null) {
+      if (detailsSessionId !== undefined && disposeDiffOverlay === undefined && disposePlanOverlay === undefined && document.querySelector('[data-details-collapsed]') !== null) {
         closePluginDetails()
       }
     })

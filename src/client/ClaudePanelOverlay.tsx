@@ -62,7 +62,7 @@ export function observeWorkspaceBounds(overlay: HTMLElement, listener: (bounds: 
   }
 }
 
-export function ClaudeDiffOverlay({ children, onRestore }: { children: ReactNode; onRestore: () => void }) {
+export function ClaudePanelOverlay({ children, onRestore }: { children: ReactNode; onRestore: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [bounds, setBounds] = useState<OverlayBounds>()
   useClientLayoutEffect(() => {
@@ -82,7 +82,7 @@ export function ClaudeDiffOverlay({ children, onRestore }: { children: ReactNode
     return () => window.removeEventListener('keydown', escape)
   }, [onRestore])
   return (
-    <div ref={ref} data-dsh-claude-diff-overlay style={{
+    <div ref={ref} data-dsh-claude-panel-overlay style={{
       position: 'absolute',
       left: bounds?.left ?? 0,
       top: bounds?.top ?? 0,
