@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
 import { ClaudeCodeAdapter, resolveDirectUserPrompt } from '../src/adapter.ts'
 import { CLAUDE_CODE_PROVIDER_IDS } from '../src/constants.ts'
+import { recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 import type { ClaudeSupervisor, ClaudeTurnStreamEvent } from '../src/supervisor.ts'
 
 const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
@@ -327,24 +328,35 @@ describe('DSH stream mapping', () => {
 })
 
 describe('Claude Code model catalog', () => {
+  afterEach(() => { resetClaudeModels() })
+
   it('registers only the current Claude provider in the model selector', () => {
     expect(CLAUDE_CODE_PROVIDER_IDS).toEqual(['claude'])
   })
 
-  it('advertises the five native Claude Code choices and aliases in CLI order', async () => {
+  it('advertises whichever lineup the running CLI reported, in its order', async () => {
+    // The point of the catalog: a model Claude Code ships after this release
+    // reaches the selector without an edit here.
+    recordClaudeModels([
+      { value: 'default', resolvedModel: 'claude-opus-5[1m]', displayName: 'Default (recommended)', description: 'Opus 5 with 1M context' },
+      { value: 'claude-nextthing-9', displayName: 'Nextthing', description: 'Ships after this plugin release' },
+    ])
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     const models = await adapter.listModels('claude')
     expect(models.every(model => model.inputModalities?.join(',') === 'text,image')).toBe(true)
     expect(models.map(model => ({ id: model.id, name: model.name }))).toEqual([
       { id: 'default', name: 'Default (recommended)' },
-      { id: 'opus[1m]', name: 'Opus (1M context)' },
-      { id: 'fable', name: 'Fable' },
-      { id: 'sonnet', name: 'Sonnet' },
-      { id: 'haiku', name: 'Haiku' },
+      { id: 'claude-nextthing-9', name: 'Nextthing' },
     ])
   })
 
-  it('publishes the explicit 1M alias capacity through the native DSH model contract', async () => {
+  it('falls back to the always-valid default alias before any session reports', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default'])
+  })
+
+  it('publishes the 1M capacity spelled in a route id through the native DSH model contract', async () => {
+    recordClaudeModels([{ value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: '' }])
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     await expect(adapter.resolveModel('claude', 'opus[1m]')).resolves.toMatchObject({
       context: { contextWindow: 1_000_000 },

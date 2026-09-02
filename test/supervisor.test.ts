@@ -5,12 +5,14 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   Options as ClaudeOptions,
+  ModelInfo,
   Query,
   SDKMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AsyncQueue } from '../src/async-queue.ts'
+import { latestClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import type { ClaudeActivityInput } from '../src/events.ts'
 import type { ClaudeRenderMode } from '../src/constants.ts'
@@ -35,7 +37,7 @@ class FakeQuery extends AsyncQueue<SDKMessage> {
     agents: [],
     output_style: 'default',
     available_output_styles: [],
-    models: [],
+    models: this.models,
     account: {},
   }))
   readonly supportedCommands = vi.fn(async () => [
@@ -58,17 +60,17 @@ class FakeQuery extends AsyncQueue<SDKMessage> {
   readonly options: ClaudeOptions
   readonly input: AsyncIterable<SDKUserMessage>
 
-  constructor(input: AsyncIterable<SDKUserMessage>, options: ClaudeOptions) {
+  constructor(input: AsyncIterable<SDKUserMessage>, options: ClaudeOptions, readonly models: ModelInfo[] = []) {
     super()
     this.input = input
     this.options = options
   }
 }
 
-function factory() {
+function factory(models: ModelInfo[] = []) {
   const queries: FakeQuery[] = []
   const create: ClaudeQueryFactory = ({ prompt, options }) => {
-    const fake = new FakeQuery(prompt, options)
+    const fake = new FakeQuery(prompt, options, models)
     queries.push(fake)
     return fake as unknown as Query
   }
@@ -113,6 +115,7 @@ const sidecarRoots: string[] = []
 const sidecars = new WeakMap<ClaudeSupervisor, ClaudeSidecarRepository>()
 
 afterEach(async () => {
+  resetClaudeModels()
   // Sidecar appends can still be landing when a test ends; let rm retry ENOTEMPTY.
   await Promise.all(sidecarRoots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })))
 })
@@ -852,6 +855,25 @@ describe('Claude supervisor', () => {
     query.push(result('hel'))
     await expect(collect(output)).resolves.toContainEqual({ type: 'complete', text: 'hel' })
     expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle', claudeSessionId: 'claude-session-1' })
+    await runtime.dispose()
+  })
+
+  it('learns the model lineup from the CLI, so a model shipped after this release still reaches the selector', async () => {
+    // The lineup rides on the initialize response every session already awaits;
+    // nothing here enumerates model ids, which is the whole point.
+    const transport = factory([
+      { value: 'claude-nextthing-9[1m]', resolvedModel: 'claude-nextthing-9[1m]', displayName: 'Nextthing', description: 'Ships between plugin releases' },
+    ])
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: fakeAgent().agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(result())
+    await collect(output)
+
+    expect(latestClaudeModels()).toEqual([
+      { id: 'claude-nextthing-9[1m]', name: 'Nextthing', description: 'Ships between plugin releases', contextWindow: 1_000_000 },
+    ])
     await runtime.dispose()
   })
 

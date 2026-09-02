@@ -16,15 +16,8 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, DEFAULT_CLAUDE_RENDER_MODE, type ClaudeRenderMode } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
+import { claudeModelRow, latestClaudeModels } from './model-catalog.ts'
 import { formatReviewComments, type ReviewComment } from './review-comments.ts'
-
-const MODELS = [
-  { id: 'default', name: 'Default (recommended)', description: '' },
-  { id: 'opus[1m]', name: 'Opus (1M context)', description: '', contextWindow: 1_000_000 },
-  { id: 'fable', name: 'Fable', description: '' },
-  { id: 'sonnet', name: 'Sonnet', description: '' },
-  { id: 'haiku', name: 'Haiku', description: '' },
-] as const
 
 const THINKING_MODES = [
   { id: 'off', name: 'Off', description: 'No extended thinking.' },
@@ -238,7 +231,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return MODELS.map(model => ({
+    return latestClaudeModels().map(model => ({
       provider,
       id: model.id,
       name: model.name,
@@ -248,9 +241,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
-    const known = MODELS.find(item => item.id === model)
-    const observedContextWindow = this.#supervisor.contextWindow(model)
-    const contextWindow = observedContextWindow ?? (known !== undefined && 'contextWindow' in known ? known.contextWindow : undefined)
+    const known = claudeModelRow(model)
+    const contextWindow = this.#supervisor.contextWindow(model) ?? known?.contextWindow
     return {
       provider,
       id: model,

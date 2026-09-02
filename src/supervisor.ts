@@ -32,6 +32,7 @@ import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
+import { recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 
@@ -698,7 +699,11 @@ export class ClaudeSupervisor {
       entry.query.initializationResult(),
       CLAUDE_INITIALIZATION_TIMEOUT_MS,
       'Claude SDK initialization',
-    ).then(() => {
+    ).then((initialization) => {
+      // The CLI's own /model lineup rides along on initialize, so the selector
+      // tracks whatever Claude Code ships without a table in this plugin and
+      // without a control request of its own.
+      recordClaudeModels(initialization.models)
       if (entry.state === 'starting') entry.state = 'idle'
     })
     void entry.sdkInitialization.catch(error => this.#handleDisconnect(entry, error))
