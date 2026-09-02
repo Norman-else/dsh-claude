@@ -350,9 +350,10 @@ describe('Claude Code model catalog', () => {
     ])
   })
 
-  it('falls back to the always-valid default alias before any session reports', async () => {
+  it('seeds the selector with the stable aliases before any session reports', async () => {
+    // A fresh app launch must not show a one-row menu until someone starts a session.
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
-    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default'])
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'fable', 'sonnet', 'haiku'])
   })
 
   it('publishes the 1M capacity spelled in a route id through the native DSH model contract', async () => {

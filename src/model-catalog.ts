@@ -19,11 +19,18 @@ export interface ClaudeModelRow {
   readonly contextWindow?: number
 }
 
-/** The one id worth writing down: `default` is what the CLI runs when no model
- *  is named, so it is valid on every release and every plan. It stands in only
- *  until the first session initializes and reports the real lineup. */
+/** What the selector shows before any session has initialized in this Host
+ *  process -- a fresh app launch lands here. `default` is the only id that is
+ *  valid on every release and plan; the aliases after it are the stable
+ *  `/model` spellings Claude Code has kept across releases, so the menu is
+ *  usable at first paint instead of a single row. The first initialize
+ *  response replaces the whole list with the CLI's own lineup. */
 const SEED: readonly ClaudeModelRow[] = [
   { id: 'default', name: 'Default (recommended)', description: '' },
+  { id: 'opus[1m]', name: 'Opus (1M context)', description: '', contextWindow: 1_000_000 },
+  { id: 'fable', name: 'Fable', description: '' },
+  { id: 'sonnet', name: 'Sonnet', description: '' },
+  { id: 'haiku', name: 'Haiku', description: '' },
 ]
 
 /** A 1M-context route spells it in the id (`opus[1m]`, `claude-fable-5[1m]`),
