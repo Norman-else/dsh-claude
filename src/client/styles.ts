@@ -2403,16 +2403,9 @@ export const diffFileChevron: CSSProperties = {
   transition: 'transform 120ms ease',
 }
 
+/** Sits at the far end of the summary row; the rest of the button is the shared icon-button class. */
 export const diffSummaryAction: CSSProperties = {
   marginLeft: 'auto',
-  padding: '2px 8px',
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 6,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary)',
-  font: 'inherit',
-  fontSize: 12,
-  cursor: 'pointer',
 }
 
 export const diffCommentNav: CSSProperties = {

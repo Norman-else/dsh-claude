@@ -843,14 +843,17 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
           <span style={styles.diffAdd}>+{diff.additions}</span>
           <span style={styles.diffDelete}>−{diff.deletions}</span>
           {files.length === 0 ? null : (
-            <button
-              type="button"
-              style={styles.diffSummaryAction}
-              aria-label={allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
-              onClick={() => { setOpenFiles(new Map(files.map(file => [file.path, !allFilesOpen]))) }}
-            >
-              {allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
-            </button>
+            <Tooltip label={allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')} side="bottom" delayMs={250}>
+              <button
+                type="button"
+                className={styles.panelIconButtonClass}
+                style={styles.diffSummaryAction}
+                aria-label={allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
+                onClick={() => { setOpenFiles(new Map(files.map(file => [file.path, !allFilesOpen]))) }}
+              >
+                {allFilesOpen ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+              </button>
+            </Tooltip>
           )}
         </div>
         <div ref={diffBodyRef} style={styles.diffBody}>
