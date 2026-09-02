@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeClientProjection } from './projection.ts'
-import type { DiffOpenSource } from './diff-open-store.ts'
+import type { PanelOpenSource } from './panel-open-store.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 export interface ClaudeDiffHeaderActionInjected {
@@ -10,7 +10,7 @@ export interface ClaudeDiffHeaderActionInjected {
   /** Toggle this session's diff panel in the details column. */
   toggleDiff: () => void
   /** Whether that panel is currently on screen for this session. */
-  diffOpen: DiffOpenSource
+  diffOpen: PanelOpenSource
 }
 
 export interface ClaudeDiffHeaderActionProps extends ClaudeDiffHeaderActionInjected {

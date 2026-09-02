@@ -35,18 +35,37 @@ function denialMessage(outcome: ApprovalOutcome): string {
  *  plan, written for the user, and the approval that follows is the user
  *  agreeing to it. Everything else reads better as a prompt plus its input. */
 const PLAN_TOOL = 'ExitPlanMode'
-/** A plan is the one approval whose body is meant to be read in full. */
-const MAX_PLAN_CHARS = 8_000
 const MAX_REASON_CHARS = 1_200
+
+/** What the approval dialog says instead of the plan.
+ *
+ *  A plan is written to be read at length, and the approval dialog is a
+ *  cramped modal that renders its reason as plain text: pasting the plan there
+ *  turned a document into an unreadable wall. The decision stays with the Host
+ *  — this is still an ordinary tool approval — and the plan itself is drawn by
+ *  the plugin's own panel, where Markdown and the reader's chosen prose
+ *  palette both apply. The dialog only has to say what is being decided and
+ *  where to read it. */
+const PLAN_APPROVAL_PROMPT = 'Claude proposed a plan. Read it in the Plan panel, then approve or reject here.'
+
+/** The plan an `ExitPlanMode` call carries, if it carries one.
+ *
+ *  Travels to the client on the permission activity's `text` field: `summary`
+ *  is capped at 1k and `detail` at 4k, both of which truncate a real plan,
+ *  while `text` holds 64k. Only `kind: 'text'` activities are drawn as prose
+ *  by the transcript, so a plan riding a `kind: 'permission'` record reaches
+ *  the panel without being painted twice. */
+export function planText(toolName: string, input: Readonly<Record<string, unknown>>): string | undefined {
+  if (toolName !== PLAN_TOOL) return undefined
+  return typeof input.plan === 'string' && input.plan.length > 0 ? input.plan : undefined
+}
 
 export function permissionReason(
   toolName: string,
   input: Readonly<Record<string, unknown>>,
   options: Parameters<CanUseTool>[2],
 ): string {
-  if (toolName === PLAN_TOOL && typeof input.plan === 'string' && input.plan.length > 0) {
-    return boundText(input.plan, MAX_PLAN_CHARS)
-  }
+  if (planText(toolName, input) !== undefined) return PLAN_APPROVAL_PROMPT
   const prompt = options.title ?? options.description ?? options.decisionReason ?? `Claude Code wants to use ${toolName}.`
   const detail = safeDetail(input)
   return boundText(detail === undefined ? prompt : `${prompt}\nInput: ${detail}`, MAX_REASON_CHARS)
@@ -101,6 +120,7 @@ export function createPermissionBridge(
 
     active.markActivity?.()
     const reason = permissionReason(toolName, input, options)
+    const plan = planText(toolName, input)
     try {
       await active.appendActivity({
         kind: 'permission',
@@ -110,6 +130,8 @@ export function createPermissionBridge(
         title: options.displayName ?? toolName,
         summary: options.title ?? options.description ?? reason,
         detail: input,
+        // The plan panel reads this; see planText.
+        ...(plan === undefined ? {} : { text: plan }),
       })
       const alreadyFullAccess = await active.hasFullAccess?.() === true
       const outcome = alreadyFullAccess
