@@ -140,7 +140,7 @@ Responsibilities:
 - route SDK messages to the active request
 - interrupt and terminate the owned process tree on DSH cancellation
 - idle eviction (default 30 minutes)
-- bounded live process count (default 4), evicting least-recently-idle entries before refusing
+- bounded live process count (default 4), evicting enough least-recently-idle entries to honor a lowered limit and waiting FIFO for user-turn capacity when every entry is busy
 - dispose all processes during plugin shutdown
 - restart with `resume` after normal eviction or host restart
 - never automatically replay an in-flight prompt after an ambiguous crash
@@ -334,7 +334,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 | process exits while idle | mark disconnected; resume on next prompt |
 | process exits mid-turn after activity | persist a sidecar outcome-unknown error; never replay prompt automatically |
 | persisted Claude session missing | fail explicitly with option to start a new DSH conversation; no silent context reset |
-| process limit reached | evict least-recently-idle entry, otherwise fail with active-session count |
+| process limit reached | evict enough least-recently-idle entries; if every entry is busy, wait FIFO before prompt submission until capacity changes or the user cancels; metadata reads remain best-effort and do not wait |
 | plugin unload | terminate and await all owned trees |
 
 ## 7. Compatibility

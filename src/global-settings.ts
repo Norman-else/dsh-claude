@@ -305,12 +305,13 @@ function integerSetting(
   min: number,
   max: number,
   defaultFor: (limits: SupervisorLimits) => number,
+  effect: GlobalSettingEffect = 'new-session',
 ): TextSettingDescriptor {
   return {
     key,
     kind: 'text',
     document: 'plugin',
-    effect: 'new-session',
+    effect,
     maxLength: String(max).length,
     read(document, defaults = DEFAULT_LIMITS) {
       const value = document[key]
@@ -324,7 +325,7 @@ function integerSetting(
   }
 }
 
-const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses)
+const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses, 'immediate')
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
 const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]

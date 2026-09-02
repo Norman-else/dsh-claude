@@ -423,7 +423,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         ? { requestRestart: desktopActions.requestRestart.bind(desktopActions) }
         : {}),
     })
-    registerClaudeGlobalSettingsRoute(webCtx, { defaultLimits, onUpdated: applySettingsOverrides })
+    registerClaudeGlobalSettingsRoute(webCtx, {
+      defaultLimits,
+      onUpdated: async () => {
+        await applySettingsOverrides()
+        supervisor.limitsChanged()
+      },
+    })
     registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.())
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)

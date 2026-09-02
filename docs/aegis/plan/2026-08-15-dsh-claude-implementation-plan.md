@@ -177,10 +177,10 @@ Expected evidence: resolver detects an authenticated local Claude executable; pr
 4. Pump SDK messages exactly once and route each message to the active DSH request.
 5. Capture initialization/session id and persist the sidecar binding.
 6. Complete one request on its matching top-level result while keeping the streaming input source alive.
-7. Support interrupt, termination fallback, idle eviction, max-process LRU eviction, resume, plugin disposal, and no-replay crash classification.
+7. Support interrupt, termination fallback, idle eviction, max-process LRU convergence, abortable FIFO user-turn capacity waiting, resume, plugin disposal, and no-replay crash classification.
 8. Add a transport factory seam so all state-machine tests use fake SDK queries without network/model calls.
 
-Expected evidence: state-machine tests cover multi-turn reuse, resume, idle eviction, concurrency refusal, cancellation, crash-before-activity, crash-after-activity, and shutdown.
+Expected evidence: state-machine tests cover multi-turn reuse, resume, idle eviction, per-session concurrency refusal, cross-session capacity waiting, cancellation, crash-before-activity, crash-after-activity, and shutdown.
 
 ### Task 5 — Implement permission bridging
 

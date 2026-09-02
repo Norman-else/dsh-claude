@@ -231,6 +231,27 @@ function signalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true
 }
 
+interface TurnAdmission {
+  request: ClaudeTurnRequest
+  resolve: (output: AsyncIterable<ClaudeTurnStreamEvent>) => void
+  reject: (error: unknown) => void
+  delivered: boolean
+  admitting: boolean
+  waitedForCapacity: boolean
+  cancellation: AbortController
+  completion: Promise<void>
+  complete: () => void
+  abortListener?: () => void
+}
+
+interface MetadataAdmission {
+  sessionId: string
+  cancellation: AbortController
+  started: boolean
+  completion: Promise<void>
+  complete: () => void
+}
+
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -243,6 +264,23 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: s
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+async function withAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return operation
+  if (signal.aborted) throw abortFailure()
+  let abortListener: (() => void) | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        abortListener = () => { reject(abortFailure()) }
+        signal.addEventListener('abort', abortListener, { once: true })
+      }),
+    ])
+  } finally {
+    if (abortListener !== undefined) signal.removeEventListener('abort', abortListener)
   }
 }
 
@@ -311,6 +349,15 @@ export class ClaudeSupervisor {
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
   #admissionGate: Promise<void> = Promise.resolve()
+  /** FIFO user turns live outside the gate while capacity-blocked, so
+   *  best-effort metadata can still enter the serialized path and fail. */
+  readonly #turnAdmissions: TurnAdmission[] = []
+  readonly #metadataAdmissions = new Set<MetadataAdmission>()
+  #admissionDrainScheduled = false
+  /** Prevent a capacity change between a failed attempt and parking the head
+   *  from becoming a lost wake-up. */
+  #admissionRevision = 0
+  #blockedAdmissionRevision: number | undefined
 
   constructor(dependencies: {
     runtime: Pick<SubprocessRuntime, 'spawn' | 'resolveExecutable'>
@@ -407,31 +454,175 @@ export class ClaudeSupervisor {
   runTurn(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
     const interruption = this.#interruptions.get(request.agent.id as string)
     if (interruption !== undefined) return interruption.then(() => this.runTurn(request))
-    const operation = this.#admissionGate.then(() => this.#runTurnAdmitted(request))
-    this.#admissionGate = operation.then(() => undefined, () => undefined)
-    return operation
+    return new Promise((resolve, reject) => {
+      let complete: (() => void) | undefined
+      const completion = new Promise<void>(done => { complete = done })
+      const admission: TurnAdmission = {
+        request,
+        resolve,
+        reject,
+        delivered: false,
+        admitting: false,
+        waitedForCapacity: false,
+        cancellation: new AbortController(),
+        completion,
+        complete: () => { complete?.() },
+      }
+      if (request.signal !== undefined) {
+        const abortListener = () => {
+          if (!admission.admitting) {
+            this.#finishTurnAdmission(admission, { error: abortFailure() })
+          } else if (admission.waitedForCapacity && !admission.delivered) {
+            admission.delivered = true
+            admission.reject(abortFailure())
+          }
+          this.#admissionRevision += 1
+          this.#blockedAdmissionRevision = undefined
+          this.#scheduleTurnAdmissions()
+        }
+        admission.abortListener = abortListener
+        request.signal.addEventListener('abort', abortListener, { once: true })
+      }
+      this.#turnAdmissions.push(admission)
+      this.#scheduleTurnAdmissions()
+    })
   }
 
-  async #runTurnAdmitted(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
+  async #drainTurnAdmissions(): Promise<void> {
+    while (this.#turnAdmissions.length > 0) {
+      const admission = this.#turnAdmissions[0]!
+      if (signalAborted(admission.request.signal)) {
+        this.#finishTurnAdmission(admission, { error: abortFailure() })
+        continue
+      }
+      const attemptedRevision = this.#admissionRevision
+      admission.admitting = true
+      try {
+        const output = await this.#runTurnAdmitted(
+          admission.request,
+          admission.waitedForCapacity,
+          admission.cancellation.signal,
+        )
+        this.#finishTurnAdmission(admission, { output })
+      } catch (error) {
+        if (
+          error instanceof ClaudeProcessLimitError
+          && !signalAborted(admission.request.signal)
+          && !admission.cancellation.signal.aborted
+          && !this.#disposed
+        ) {
+          admission.admitting = false
+          admission.waitedForCapacity = true
+          if (attemptedRevision === this.#admissionRevision) {
+            this.#blockedAdmissionRevision = attemptedRevision
+            return
+          }
+          continue
+        }
+        this.#finishTurnAdmission(admission, { error })
+      }
+    }
+  }
+
+  #finishTurnAdmission(
+    admission: TurnAdmission,
+    outcome: { output: AsyncIterable<ClaudeTurnStreamEvent> } | { error: unknown },
+  ): void {
+    if (this.#turnAdmissions[0] === admission) this.#turnAdmissions.shift()
+    else {
+      const index = this.#turnAdmissions.indexOf(admission)
+      if (index >= 0) this.#turnAdmissions.splice(index, 1)
+    }
+    admission.admitting = false
+    if (admission.request.signal !== undefined && admission.abortListener !== undefined) {
+      admission.request.signal.removeEventListener('abort', admission.abortListener)
+    }
+    if (!admission.delivered) {
+      admission.delivered = true
+      if ('error' in outcome) admission.reject(outcome.error)
+      else admission.resolve(outcome.output)
+    }
+    admission.complete()
+  }
+
+  #scheduleTurnAdmissions(): void {
+    if (
+      this.#admissionDrainScheduled
+      || this.#turnAdmissions.length === 0
+      || this.#blockedAdmissionRevision === this.#admissionRevision
+    ) return
+    this.#admissionDrainScheduled = true
+    const operation = this.#admissionGate.then(() => this.#drainTurnAdmissions())
+    this.#admissionGate = operation.then(() => undefined, () => undefined)
+    const finished = () => {
+      this.#admissionDrainScheduled = false
+      this.#scheduleTurnAdmissions()
+    }
+    void operation.then(finished, finished)
+  }
+
+  async #runTurnAdmitted(
+    request: ClaudeTurnRequest,
+    abortDuringAdmission: boolean,
+    cancellationSignal: AbortSignal,
+  ): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
     if (this.#disposed) throw new Error('dsh-claude: supervisor is disposed')
+    if (cancellationSignal.aborted) throw abortFailure()
     if (signalAborted(request.signal)) throw abortFailure()
     const sessionId = request.agent.id as string
     let entry = this.#entries.get(sessionId)
+    let createdForRequest: SupervisorEntry | undefined
+    const throwIfUnavailable = async (): Promise<void> => {
+      const failure = this.#disposed
+        ? new Error('dsh-claude: supervisor is disposed')
+        : cancellationSignal.aborted || (abortDuringAdmission && signalAborted(request.signal))
+          ? abortFailure()
+          : undefined
+      if (failure === undefined) return
+      if (createdForRequest !== undefined) {
+        if (this.#entries.get(sessionId) === createdForRequest) this.#entries.delete(sessionId)
+        await this.#disposeEntry(createdForRequest)
+        createdForRequest = undefined
+      }
+      throw failure
+    }
     if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
+      await throwIfUnavailable()
       entry = undefined
     }
     if (entry === undefined) {
       await this.#makeRoom()
-      entry = await this.#createEntry(request.agent, request.model ?? this.#config.defaultModel, request.thinkingMode)
+      await throwIfUnavailable()
+      try {
+        entry = await this.#createEntry(
+          request.agent,
+          request.model ?? this.#config.defaultModel,
+          request.thinkingMode,
+          abortDuringAdmission ? request.signal : undefined,
+          cancellationSignal,
+        )
+      } catch (error) {
+        await throwIfUnavailable()
+        throw error
+      }
+      createdForRequest = entry
+      await throwIfUnavailable()
       this.#entries.set(sessionId, entry)
     }
     if (entry.ownerAgent !== request.agent) {
       throw new Error(`dsh-claude: live agent identity changed for session ${sessionId}`)
     }
     if (entry.active !== undefined || entry.state === 'interrupting') throw new ClaudeTurnBusyError(sessionId)
-    await entry.sdkInitialization
+    try {
+      const initialization = withAbort(entry.sdkInitialization, cancellationSignal)
+      await (abortDuringAdmission ? withAbort(initialization, request.signal) : initialization)
+    } catch (error) {
+      await throwIfUnavailable()
+      throw error
+    }
+    await throwIfUnavailable()
 
     if (entry.idleTimer !== undefined) {
       clearTimeout(entry.idleTimer)
@@ -447,16 +638,39 @@ export class ClaudeSupervisor {
       // query; the persisted Claude session binding keeps the context.
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
-      entry = await this.#createEntry(request.agent, model, request.thinkingMode)
+      if (createdForRequest === entry) createdForRequest = undefined
+      await throwIfUnavailable()
+      try {
+        entry = await this.#createEntry(
+          request.agent,
+          model,
+          request.thinkingMode,
+          abortDuringAdmission ? request.signal : undefined,
+          cancellationSignal,
+        )
+      } catch (error) {
+        await throwIfUnavailable()
+        throw error
+      }
+      createdForRequest = entry
+      await throwIfUnavailable()
       this.#entries.set(sessionId, entry)
-      await entry.sdkInitialization
+      try {
+        const initialization = withAbort(entry.sdkInitialization, cancellationSignal)
+        await (abortDuringAdmission ? withAbort(initialization, request.signal) : initialization)
+      } catch (error) {
+        await throwIfUnavailable()
+        throw error
+      }
     } else {
       await this.#syncPermissionMode(entry)
     }
+    await throwIfUnavailable()
 
     const promptUuid = randomUUID()
     const cursor = currentClaudeActivityCursor(request.agent.session.events)
     const projection = await this.#sidecar.read(sessionId)
+    await throwIfUnavailable()
     cursor.nextOrdinal = projection.activities.reduce((next, activity) => (
       activity.turn === cursor.turn && activity.step === cursor.step
         ? Math.max(next, activity.ordinal + 1)
@@ -509,9 +723,12 @@ export class ClaudeSupervisor {
         title: 'Claude Code turn cancelled before submission',
       })
       entry.active = undefined
-      entry.state = 'idle'
-      entry.lastUsedAt = Date.now()
-      this.#armIdleTimer(entry)
+      if (!abortDuringAdmission || createdForRequest === undefined) {
+        entry.state = 'idle'
+        entry.lastUsedAt = Date.now()
+        this.#armIdleTimer(entry)
+      }
+      await throwIfUnavailable()
       return active.output
     }
     if (request.signal !== undefined) {
@@ -528,34 +745,65 @@ export class ClaudeSupervisor {
     model: string,
     operation: (query: Query, entry: SupervisorEntry) => Promise<T>,
   ): Promise<T> {
+    if (this.#turnAdmissions.some(admission => admission.waitedForCapacity)) {
+      return Promise.reject(new ClaudeProcessLimitError(this.#config.maxProcesses))
+    }
+    let complete: (() => void) | undefined
+    const admission: MetadataAdmission = {
+      sessionId: agent.id as string,
+      cancellation: new AbortController(),
+      started: false,
+      completion: new Promise<void>(done => { complete = done }),
+      complete: () => { complete?.() },
+    }
+    this.#metadataAdmissions.add(admission)
     const admitted = this.#admissionGate.then(async () => {
+      admission.started = true
       if (this.#disposed) throw new Error('dsh-claude: supervisor is disposed')
-      const entry = await this.#metadataEntry(agent, model)
+      if (admission.cancellation.signal.aborted) throw abortFailure()
+      if (this.#turnAdmissions.some(admission => admission.waitedForCapacity)) {
+        throw new ClaudeProcessLimitError(this.#config.maxProcesses)
+      }
+      const entry = await this.#metadataEntry(agent, model, admission.cancellation.signal)
       try {
         // Use the SDK's initialize control request. system/init is emitted only
         // after the first real stdin message and is reserved for session binding.
-        await entry.sdkInitialization
-        return await this.#control(entry, operation(entry.query, entry), 'Claude metadata request')
+        await withAbort(entry.sdkInitialization, admission.cancellation.signal)
+        return await withAbort(
+          this.#control(entry, operation(entry.query, entry), 'Claude metadata request'),
+          admission.cancellation.signal,
+        )
       } finally {
         entry.lastUsedAt = Date.now()
         if (entry.active === undefined && entry.state === 'idle') this.#armIdleTimer(entry)
       }
-    })
+    }).finally(() => { this.#finishMetadataAdmission(admission) })
     this.#admissionGate = admitted.then(() => undefined, () => undefined)
-    return admitted
+    return withAbort(admitted, admission.cancellation.signal)
   }
 
-  async #metadataEntry(agent: Agent, model: string): Promise<SupervisorEntry> {
+  async #metadataEntry(
+    agent: Agent,
+    model: string,
+    cancellationSignal: AbortSignal,
+  ): Promise<SupervisorEntry> {
+    if (cancellationSignal.aborted) throw abortFailure()
     const sessionId = agent.id as string
     let entry = this.#entries.get(sessionId)
     if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
+      if (cancellationSignal.aborted) throw abortFailure()
       entry = undefined
     }
     if (entry === undefined) {
       await this.#makeRoom()
-      entry = await this.#createEntry(agent, model)
+      if (cancellationSignal.aborted) throw abortFailure()
+      entry = await this.#createEntry(agent, model, undefined, undefined, cancellationSignal)
+      if (cancellationSignal.aborted) {
+        await this.#disposeEntry(entry)
+        throw abortFailure()
+      }
       this.#entries.set(sessionId, entry)
     }
     if (entry.ownerAgent !== agent) {
@@ -566,7 +814,8 @@ export class ClaudeSupervisor {
       clearTimeout(entry.idleTimer)
       entry.idleTimer = undefined
     }
-    await this.#syncPermissionMode(entry)
+    await withAbort(this.#syncPermissionMode(entry), cancellationSignal)
+    if (cancellationSignal.aborted) throw abortFailure()
     // Never switch a live entry here: `model` is only the seed for a fresh
     // process. The idle metadata refresh runs with the plugin default, and
     // letting it call setModel raced runTurn's own switch -- a session the user
@@ -577,8 +826,8 @@ export class ClaudeSupervisor {
   /** Run one SDK control request against a live entry, and discard the entry if
    *  it does not answer.
    *
-   *  Turn admission and every metadata read share one process-wide gate, so an
-   *  unbounded control request stalls every session until the Host restarts.
+   *  Turn admission attempts and metadata reads share one process-wide gate,
+   *  so an unbounded control request stalls every session until the Host restarts.
    *  Bounding it is only half the cure: a timeout also proves this query has
    *  stopped answering, and keeping the entry means the next caller reuses the
    *  same dead process — timing out again, forever. Discarding it lets the next
@@ -606,37 +855,130 @@ export class ClaudeSupervisor {
     entry.permissionMode = mode
   }
 
+  #finishMetadataAdmission(admission: MetadataAdmission): void {
+    this.#metadataAdmissions.delete(admission)
+    admission.complete()
+  }
+
+  #cancelMetadataAdmissions(
+    predicate: (admission: MetadataAdmission) => boolean,
+  ): Promise<void>[] {
+    const cancelled = [...this.#metadataAdmissions].filter(predicate)
+    for (const admission of cancelled) {
+      admission.cancellation.abort()
+      if (!admission.started) this.#finishMetadataAdmission(admission)
+    }
+    return cancelled.map(admission => admission.completion)
+  }
+
+  #cancelTurnAdmissions(
+    predicate: (admission: TurnAdmission) => boolean,
+    error: Error,
+  ): Promise<void>[] {
+    const cancelled = this.#turnAdmissions.filter(predicate)
+    for (const admission of cancelled) {
+      admission.cancellation.abort()
+      if (!admission.delivered) {
+        admission.delivered = true
+        admission.reject(error)
+      }
+      if (!admission.admitting) this.#finishTurnAdmission(admission, { error })
+    }
+    if (cancelled.length > 0) {
+      this.#admissionRevision += 1
+      this.#blockedAdmissionRevision = undefined
+      this.#scheduleTurnAdmissions()
+    }
+    return cancelled.map(admission => admission.completion)
+  }
+
+  limitsChanged(): void {
+    if (this.#disposed) return
+    this.#notifyCapacityChange()
+    this.#scheduleLimitReconciliation()
+  }
+
   async disposeSession(sessionId: string): Promise<void> {
+    const pendingAdmissions = this.#cancelTurnAdmissions(
+      admission => (admission.request.agent.id as string) === sessionId,
+      abortFailure(),
+    )
+    const pendingMetadata = this.#cancelMetadataAdmissions(
+      admission => admission.sessionId === sessionId,
+    )
     const entry = this.#entries.get(sessionId)
-    if (entry === undefined) return
-    this.#entries.delete(sessionId)
-    await this.#disposeEntry(entry)
+    if (entry !== undefined) this.#entries.delete(sessionId)
+    await Promise.allSettled([
+      ...pendingAdmissions,
+      ...pendingMetadata,
+      ...(entry === undefined ? [] : [this.#disposeEntry(entry)]),
+    ])
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    const pendingAdmissions = this.#cancelTurnAdmissions(
+      () => true,
+      new Error('dsh-claude: supervisor is disposed'),
+    )
+    const pendingMetadata = this.#cancelMetadataAdmissions(() => true)
     const entries = [...this.#entries.values()]
     this.#entries.clear()
-    await Promise.allSettled(entries.map(entry => this.#disposeEntry(entry)))
+    this.#notifyCapacityChange()
+    await Promise.allSettled([
+      ...pendingAdmissions,
+      ...pendingMetadata,
+      ...entries.map(entry => this.#disposeEntry(entry)),
+    ])
   }
 
   async #makeRoom(): Promise<void> {
-    if (this.#entries.size < this.#config.maxProcesses) return
-    const idle = [...this.#entries.values()]
-      .filter(entry => entry.active === undefined && entry.state === 'idle')
-      .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0]
-    if (idle === undefined) throw new ClaudeProcessLimitError(this.#config.maxProcesses)
-    this.#entries.delete(idle.sessionId)
-    await this.#disposeEntry(idle)
+    while (this.#entries.size >= this.#config.maxProcesses) {
+      const idle = [...this.#entries.values()]
+        .filter(entry => entry.active === undefined && entry.state === 'idle')
+        .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0]
+      if (idle === undefined) throw new ClaudeProcessLimitError(this.#config.maxProcesses)
+      this.#entries.delete(idle.sessionId)
+      await this.#disposeEntry(idle)
+    }
   }
 
-  async #createEntry(agent: Agent, model: string, thinkingMode?: ClaudeThinkingMode): Promise<SupervisorEntry> {
+  async #trimExcessIdle(): Promise<void> {
+    while (this.#entries.size > this.#config.maxProcesses) {
+      const idle = [...this.#entries.values()]
+        .filter(entry => entry.active === undefined && entry.state === 'idle')
+        .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0]
+      if (idle === undefined) return
+      this.#entries.delete(idle.sessionId)
+      await this.#disposeEntry(idle)
+    }
+  }
+
+  #notifyCapacityChange(): void {
+    this.#admissionRevision += 1
+    this.#blockedAdmissionRevision = undefined
+    this.#scheduleTurnAdmissions()
+  }
+
+  #scheduleLimitReconciliation(): void {
+    const operation = this.#admissionGate.then(() => this.#trimExcessIdle())
+    this.#admissionGate = operation.then(() => undefined, () => undefined)
+  }
+
+  async #createEntry(
+    agent: Agent,
+    model: string,
+    thinkingMode?: ClaudeThinkingMode,
+    signal?: AbortSignal,
+    cancellationSignal?: AbortSignal,
+  ): Promise<SupervisorEntry> {
     const sessionId = agent.id as string
     const cwd = agent.session.header.cwd ?? process.cwd()
     const input = new AsyncQueue<SDKUserMessage>()
     const lifetime = new AbortController()
     const projection = await this.#sidecar.importLegacy(sessionId, agent.session.events)
+    if (signalAborted(signal) || signalAborted(cancellationSignal)) throw abortFailure()
     const binding = projection.binding
     // A rewound session resumes at the kept turn's chain anchor, or drops its
     // binding entirely when the rewind discarded every turn. The truncating
@@ -1242,6 +1584,8 @@ export class ClaudeSupervisor {
       await this.#recordChainAnchor(entry, active)
       this.#checkpointProjection(entry)
       this.#armIdleTimer(entry)
+      this.#notifyCapacityChange()
+      this.#scheduleLimitReconciliation()
       return
     }
     if (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined || result.usage.cumulativeCostUsd !== undefined) {
@@ -1317,9 +1661,11 @@ export class ClaudeSupervisor {
     entry.state = 'idle'
     entry.lastUsedAt = Date.now()
     await this.#recordChainAnchor(entry, active)
-    await this.#learnContextWindow(entry)
     this.#checkpointProjection(entry)
     this.#armIdleTimer(entry)
+    this.#notifyCapacityChange()
+    this.#scheduleLimitReconciliation()
+    await this.#learnContextWindow(entry)
   }
 
   /** Tell every reader where this session's delta stream ended.
@@ -1547,5 +1893,6 @@ export class ClaudeSupervisor {
         // The DSH subprocess owner still holds the tree and will finish escalation.
       }
     }
+    this.#notifyCapacityChange()
   }
 }

@@ -122,7 +122,7 @@ describe('Claude Code global settings registry', () => {
     const deps = { paths, defaultLimits: { maxProcesses: 6, idleTimeoutMs: 45 * 60_000 } }
     const initial = await readGlobalSettings(deps)
     expect(initial.settings.find(setting => setting.key === 'maxProcesses')).toMatchObject({
-      kind: 'text', value: '6', effect: 'new-session', maxLength: 2,
+      kind: 'text', value: '6', effect: 'immediate', maxLength: 2,
     })
     expect(initial.settings.find(setting => setting.key === 'idleTimeoutMinutes')).toMatchObject({
       kind: 'text', value: '45', effect: 'new-session', maxLength: 4,

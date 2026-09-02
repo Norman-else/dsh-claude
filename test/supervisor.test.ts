@@ -115,7 +115,7 @@ const sidecarRoots: string[] = []
 const sidecars = new WeakMap<ClaudeSupervisor, ClaudeSidecarRepository>()
 /** The live config object each supervisor reads, so a test can change a
  *  setting mid-turn the way the settings route does. */
-const configs = new WeakMap<ClaudeSupervisor, { renderMode: ClaudeRenderMode }>()
+const configs = new WeakMap<ClaudeSupervisor, { renderMode: ClaudeRenderMode; maxProcesses: number }>()
 
 afterEach(async () => {
   resetClaudeModels()
@@ -168,6 +168,25 @@ class HookedSidecar extends ClaudeSidecarRepository {
   override appendActivity(sessionId: string, activity: ClaudeActivityInput & { turn: number; step: number; ordinal: number }) {
     this.#beforeAppend(activity)
     return super.appendActivity(sessionId, activity)
+  }
+}
+
+class DeferredImportSidecar extends ClaudeSidecarRepository {
+  readonly started: Promise<void>
+  readonly #release: Promise<void>
+  #markStarted: (() => void) | undefined
+  release: (() => void) | undefined
+
+  constructor(root: string) {
+    super({ root })
+    this.started = new Promise(resolve => { this.#markStarted = resolve })
+    this.#release = new Promise(resolve => { this.release = resolve })
+  }
+
+  override async importLegacy(...args: Parameters<ClaudeSidecarRepository['importLegacy']>) {
+    this.#markStarted?.()
+    await this.#release
+    return super.importLegacy(...args)
   }
 }
 
@@ -987,7 +1006,7 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('does not exceed the process cap for concurrent first turns across sessions', async () => {
+  it('waits for a busy process cap before admitting the next session', async () => {
     const transport = factory()
     const runtime = supervisor(transport.create, 1)
     const one = fakeAgent('one')
@@ -997,12 +1016,517 @@ describe('Claude supervisor', () => {
       runtime.runTurn({ agent: two.agent, prompt: 'two' }),
     ]
     const first = await firstPromise
-    await expect(secondPromise).rejects.toBeInstanceOf(ClaudeProcessLimitError)
+    let secondState: 'pending' | 'resolved' | 'rejected' = 'pending'
+    void secondPromise.then(
+      () => { secondState = 'resolved' },
+      () => { secondState = 'rejected' },
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    expect(secondState).toBe('pending')
     expect(transport.queries).toHaveLength(1)
     transport.queries[0]!.push(init())
     transport.queries[0]!.push(result('one'))
     await collect(first)
+
+    const second = await secondPromise
+    expect(transport.queries).toHaveLength(2)
+    transport.queries[1]!.push(init('claude-session-2'))
+    transport.queries[1]!.push(result('two', 'claude-session-2'))
+    await collect(second)
     await runtime.dispose()
+  })
+
+  it('cancels a turn while it waits for process capacity without creating a query', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const controller = new AbortController()
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two', signal: controller.signal })
+    const outcome = waiting.then(
+      () => 'resolved',
+      error => error instanceof Error ? error.name : 'rejected',
+    )
+
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      expect(transport.queries).toHaveLength(1)
+      controller.abort()
+      await expect(Promise.race([
+        outcome,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('AbortError')
+      expect(transport.queries).toHaveLength(1)
+    } finally {
+      transport.queries[0]!.push(init())
+      transport.queries[0]!.push(result('one'))
+      await collect(first)
+      await waiting.catch(() => undefined)
+      await runtime.dispose()
+    }
+  })
+
+  it('admits a waiting session when the occupied session is disposed', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const firstOutcome = collect(first).then(
+      () => 'resolved',
+      error => error instanceof Error ? error.name : 'rejected',
+    )
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+    const waitingOutcome = waiting.then(() => 'admitted', () => 'rejected')
+
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      expect(transport.queries).toHaveLength(1)
+      await runtime.disposeSession('one')
+      await expect(firstOutcome).resolves.toBe('AbortError')
+      await vi.waitFor(() => {
+        expect(transport.queries).toHaveLength(2)
+      })
+      await expect(waitingOutcome).resolves.toBe('admitted')
+    } finally {
+      runtime.limitsChanged()
+      await waiting.catch(() => undefined)
+      await runtime.dispose()
+    }
+  })
+
+  it('admits capacity waiters in request order', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const secondPromise = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+    const thirdPromise = runtime.runTurn({ agent: fakeAgent('three').agent, prompt: 'three' })
+    let thirdState: 'pending' | 'resolved' | 'rejected' = 'pending'
+    void thirdPromise.then(
+      () => { thirdState = 'resolved' },
+      () => { thirdState = 'rejected' },
+    )
+
+    transport.queries[0]!.push(init('one-claude-session'))
+    transport.queries[0]!.push(result('one', 'one-claude-session'))
+    await collect(first)
+    const second = await secondPromise
+    expect(transport.queries).toHaveLength(2)
+    expect(thirdState).toBe('pending')
+
+    transport.queries[1]!.push(init('two-claude-session'))
+    transport.queries[1]!.push(result('two', 'two-claude-session'))
+    await collect(second)
+    const third = await thirdPromise
+    expect(transport.queries).toHaveLength(3)
+    transport.queries[2]!.push(init('three-claude-session'))
+    transport.queries[2]!.push(result('three', 'three-claude-session'))
+    await collect(third)
+    await runtime.dispose()
+  })
+
+  it('promptly cancels a later FIFO admission while the head remains capacity-blocked', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const secondPromise = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+    const controller = new AbortController()
+    const thirdPromise = runtime.runTurn({ agent: fakeAgent('three').agent, prompt: 'three', signal: controller.signal })
+    const thirdOutcome = thirdPromise.then(
+      () => 'resolved',
+      error => error instanceof Error ? error.name : 'rejected',
+    )
+
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      controller.abort()
+      await expect(Promise.race([
+        thirdOutcome,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('AbortError')
+      expect(transport.queries).toHaveLength(1)
+
+      transport.queries[0]!.push(init('one-claude-session'))
+      transport.queries[0]!.push(result('one', 'one-claude-session'))
+      await collect(first)
+      const second = await secondPromise
+      transport.queries[1]!.push(init('two-claude-session'))
+      transport.queries[1]!.push(result('two', 'two-claude-session'))
+      await collect(second)
+      expect(transport.queries).toHaveLength(2)
+    } finally {
+      controller.abort()
+      await runtime.dispose()
+      await thirdPromise.catch(() => undefined)
+    }
+  })
+
+  it('admits a capacity waiter when the process cap is raised', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(transport.queries).toHaveLength(1)
+
+    configs.get(runtime)!.maxProcesses = 2
+    runtime.limitsChanged()
+    const second = await waiting
+    expect(transport.queries).toHaveLength(2)
+
+    transport.queries[0]!.push(init('one-claude-session'))
+    transport.queries[0]!.push(result('one', 'one-claude-session'))
+    transport.queries[1]!.push(init('two-claude-session'))
+    transport.queries[1]!.push(result('two', 'two-claude-session'))
+    await Promise.all([collect(first), collect(second)])
+    await runtime.dispose()
+  })
+
+  it('rejects capacity waiters when the supervisor is disposed', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const firstOutcome = collect(first).catch(() => [])
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+    await new Promise(resolve => setImmediate(resolve))
+
+    await runtime.dispose()
+
+    await expect(waiting).rejects.toThrow('supervisor is disposed')
+    await firstOutcome
+    expect(transport.queries).toHaveLength(1)
+  })
+
+  it('cancels an admission still importing sidecar state when its session is disposed', async () => {
+    const transport = factory()
+    const root = join(tmpdir(), `dsh-claude-deferred-import-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const sidecar = new DeferredImportSidecar(root)
+    const runtime = supervisor(transport.create, 1, 60_000, sidecar)
+    const waiting = runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+
+    await sidecar.started
+    const disposing = runtime.disposeSession('one')
+    const outcome = waiting.then(
+      () => 'resolved',
+      error => error instanceof Error ? error.name : 'rejected',
+    )
+    await expect(Promise.race([
+      outcome,
+      new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+    ])).resolves.toBe('AbortError')
+    sidecar.release?.()
+    await disposing
+
+    expect(transport.queries).toHaveLength(0)
+    expect(runtime.snapshots()).toHaveLength(0)
+    await runtime.dispose()
+  })
+
+  it('awaits and cancels an admission still importing sidecar state during plugin disposal', async () => {
+    const transport = factory()
+    const root = join(tmpdir(), `dsh-claude-deferred-import-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const sidecar = new DeferredImportSidecar(root)
+    const runtime = supervisor(transport.create, 1, 60_000, sidecar)
+    const waiting = runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+
+    await sidecar.started
+    const disposing = runtime.dispose()
+    const outcome = waiting.then(
+      () => 'resolved',
+      error => error instanceof Error ? error.message : 'rejected',
+    )
+    await expect(Promise.race([
+      outcome,
+      new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+    ])).resolves.toContain('supervisor is disposed')
+    sidecar.release?.()
+    await disposing
+
+    expect(transport.queries).toHaveLength(0)
+    expect(runtime.snapshots()).toHaveLength(0)
+  })
+
+  it('cancels metadata still importing sidecar state when its session is disposed', async () => {
+    const transport = factory()
+    const root = join(tmpdir(), `dsh-claude-deferred-metadata-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const sidecar = new DeferredImportSidecar(root)
+    const runtime = supervisor(transport.create, 1, 60_000, sidecar)
+    const metadata = runtime.supportedCommands(fakeAgent('one').agent)
+    let disposing: Promise<void> | undefined
+
+    try {
+      await sidecar.started
+      disposing = runtime.disposeSession('one')
+      const outcome = metadata.then(
+        () => 'resolved',
+        error => error instanceof Error ? error.name : 'rejected',
+      )
+      await expect(Promise.race([
+        outcome,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('AbortError')
+      sidecar.release?.()
+      await disposing
+
+      expect(transport.queries).toHaveLength(0)
+      expect(runtime.snapshots()).toHaveLength(0)
+    } finally {
+      sidecar.release?.()
+      await disposing
+      await metadata.catch(() => undefined)
+      await runtime.dispose()
+    }
+  })
+
+  it('awaits and cancels metadata still importing sidecar state during plugin disposal', async () => {
+    const transport = factory()
+    const root = join(tmpdir(), `dsh-claude-deferred-metadata-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const sidecar = new DeferredImportSidecar(root)
+    const runtime = supervisor(transport.create, 1, 60_000, sidecar)
+    const metadata = runtime.supportedCommands(fakeAgent('one').agent)
+    let disposing: Promise<void> | undefined
+
+    try {
+      await sidecar.started
+      disposing = runtime.dispose()
+      const outcome = metadata.then(
+        () => 'resolved',
+        error => error instanceof Error ? error.name : 'rejected',
+      )
+      await expect(Promise.race([
+        outcome,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('AbortError')
+      sidecar.release?.()
+      await disposing
+
+      expect(transport.queries).toHaveLength(0)
+      expect(runtime.snapshots()).toHaveLength(0)
+    } finally {
+      sidecar.release?.()
+      await disposing
+      await metadata.catch(() => undefined)
+    }
+  })
+
+  it('does not queue metadata behind a user turn waiting on a busy process cap', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const controller = new AbortController()
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two', signal: controller.signal })
+    const metadata = runtime.supportedCommands(fakeAgent('metadata').agent).then(
+      () => 'resolved',
+      error => error instanceof ClaudeProcessLimitError ? 'process-limit' : 'rejected',
+    )
+
+    try {
+      await expect(Promise.race([
+        metadata,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('process-limit')
+      expect(transport.queries).toHaveLength(1)
+    } finally {
+      controller.abort()
+      await waiting.catch(() => undefined)
+      await runtime.dispose()
+      await expect(collect(first)).rejects.toMatchObject({ name: 'AbortError' })
+    }
+  })
+
+  it('promptly cancels a woken capacity waiter while its replacement initializes', async () => {
+    let releaseInitialization: (() => void) | undefined
+    const delayedInitialization = new Promise<void>(resolve => { releaseInitialization = resolve })
+    const transport = factory()
+    const create: ClaudeQueryFactory = params => {
+      const query = transport.create(params) as unknown as FakeQuery
+      if (transport.queries.length === 2) {
+        query.initializationResult.mockReturnValueOnce(delayedInitialization.then(() => ({
+          commands: [],
+          agents: [],
+          output_style: 'default',
+          available_output_styles: [],
+          models: [],
+          account: {},
+        })))
+      }
+      return query as unknown as Query
+    }
+    const runtime = supervisor(create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one' })
+    const controller = new AbortController()
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two', signal: controller.signal })
+    const outcome = waiting.then(
+      () => 'resolved',
+      error => error instanceof Error ? error.name : 'rejected',
+    )
+
+    try {
+      transport.queries[0]!.push(init('one-claude-session'))
+      transport.queries[0]!.push(result('one', 'one-claude-session'))
+      await collect(first)
+      await vi.waitFor(() => {
+        expect(transport.queries).toHaveLength(2)
+      })
+      const metadata = runtime.supportedCommands(fakeAgent('metadata').agent).then(
+        () => 'resolved',
+        error => error instanceof ClaudeProcessLimitError ? 'process-limit' : 'rejected',
+      )
+      await expect(Promise.race([
+        metadata,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('process-limit')
+
+      controller.abort()
+      await expect(Promise.race([
+        outcome,
+        new Promise<string>(resolve => setImmediate(() => { resolve('pending') })),
+      ])).resolves.toBe('AbortError')
+      releaseInitialization?.()
+      await vi.waitFor(() => {
+        expect(runtime.snapshots().some(snapshot => snapshot.sessionId === 'two')).toBe(false)
+      })
+      const submitted = transport.queries[1]!.input[Symbol.asyncIterator]().next().then(
+        result => result.done ? 'closed' : 'submitted',
+        error => error instanceof Error ? error.name : 'rejected',
+      )
+      await expect(submitted).resolves.not.toBe('submitted')
+    } finally {
+      releaseInitialization?.()
+      await waiting.catch(() => undefined)
+      await runtime.dispose()
+    }
+  })
+
+  it('releases process capacity before the completed turn context probe settles', async () => {
+    let releaseProbe: (() => void) | undefined
+    const probe = new Promise<Awaited<ReturnType<FakeQuery['getContextUsage']>>>(resolve => {
+      releaseProbe = () => {
+        resolve({
+          categories: [],
+          totalTokens: 0,
+          maxTokens: 200_000,
+          rawMaxTokens: 200_000,
+          percentage: 0,
+          gridRows: [],
+          model: 'claude-test',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        })
+      }
+    })
+    const transport = factory()
+    const runtime = supervisor(transport.create, 1)
+    const first = await runtime.runTurn({ agent: fakeAgent('one').agent, prompt: 'one', model: 'sonnet' })
+    transport.queries[0]!.getContextUsage.mockReturnValueOnce(probe)
+    const waiting = runtime.runTurn({ agent: fakeAgent('two').agent, prompt: 'two' })
+
+    try {
+      transport.queries[0]!.push(init('one-claude-session'))
+      transport.queries[0]!.push(result('one', 'one-claude-session'))
+      await collect(first)
+      await vi.waitFor(() => {
+        expect(transport.queries).toHaveLength(2)
+      })
+
+      const second = await waiting
+      transport.queries[1]!.push(init('two-claude-session'))
+      transport.queries[1]!.push(result('two', 'two-claude-session'))
+      await collect(second)
+    } finally {
+      releaseProbe?.()
+      await waiting.catch(() => undefined)
+      await runtime.dispose()
+    }
+  })
+
+  it('evicts enough idle entries when a lower process cap admits the next session', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 3)
+    for (const id of ['one', 'two', 'three']) {
+      const output = await runtime.runTurn({ agent: fakeAgent(id).agent, prompt: id })
+      transport.queries.at(-1)!.push(init(`${id}-claude-session`))
+      transport.queries.at(-1)!.push(result(id, `${id}-claude-session`))
+      await collect(output)
+    }
+    expect(runtime.snapshots()).toHaveLength(3)
+
+    configs.get(runtime)!.maxProcesses = 1
+    const output = await runtime.runTurn({ agent: fakeAgent('four').agent, prompt: 'four' })
+
+    expect(runtime.snapshots()).toEqual([
+      expect.objectContaining({ sessionId: 'four', state: 'running' }),
+    ])
+    transport.queries.at(-1)!.push(init('four-claude-session'))
+    transport.queries.at(-1)!.push(result('four', 'four-claude-session'))
+    await collect(output)
+    await runtime.dispose()
+  })
+
+  it('reclaims excess idle entries when the configured process cap changes', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 3)
+    for (const id of ['one', 'two', 'three']) {
+      const output = await runtime.runTurn({ agent: fakeAgent(id).agent, prompt: id })
+      transport.queries.at(-1)!.push(init(`${id}-claude-session`))
+      transport.queries.at(-1)!.push(result(id, `${id}-claude-session`))
+      await collect(output)
+    }
+    expect(runtime.snapshots()).toHaveLength(3)
+
+    configs.get(runtime)!.maxProcesses = 1
+    runtime.limitsChanged()
+    await vi.waitFor(() => {
+      expect(runtime.snapshots()).toHaveLength(1)
+    })
+    await runtime.dispose()
+  })
+
+  it('converges to a lower process cap as active turns finish without interrupting them', async () => {
+    const transport = factory()
+    const runtime = supervisor(transport.create, 3)
+    const outputs = [] as AsyncIterable<ClaudeTurnStreamEvent>[]
+    for (const id of ['one', 'two', 'three']) {
+      outputs.push(await runtime.runTurn({ agent: fakeAgent(id).agent, prompt: id }))
+    }
+    expect(runtime.snapshots().map(snapshot => snapshot.state)).toEqual(['running', 'running', 'running'])
+
+    configs.get(runtime)!.maxProcesses = 1
+    runtime.limitsChanged()
+    await new Promise(resolve => setImmediate(resolve))
+    expect(runtime.snapshots()).toHaveLength(3)
+
+    let completed = 0
+    try {
+      transport.queries[0]!.push(init('one-claude-session'))
+      transport.queries[0]!.push(result('one', 'one-claude-session'))
+      await collect(outputs[0]!)
+      completed = 1
+      await vi.waitFor(() => {
+        expect(runtime.snapshots()).toHaveLength(2)
+      })
+
+      transport.queries[1]!.push(init('two-claude-session'))
+      transport.queries[1]!.push(result('two', 'two-claude-session'))
+      await collect(outputs[1]!)
+      completed = 2
+      await vi.waitFor(() => {
+        expect(runtime.snapshots()).toEqual([
+          expect.objectContaining({ sessionId: 'three', state: 'running' }),
+        ])
+      })
+    } finally {
+      for (let index = completed; index < outputs.length; index += 1) {
+        transport.queries[index]!.push(init(`${index}-claude-session`))
+        transport.queries[index]!.push(result(String(index), `${index}-claude-session`))
+        await collect(outputs[index]!).catch(() => undefined)
+      }
+      await runtime.dispose()
+    }
   })
 
   it('refuses concurrent top-level turns for one DSH session', async () => {

@@ -84,7 +84,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Background task tracking** — Shows running and completed Claude subagents or background tasks with task status, recent tools, and expandable activity.
 - **Context usage** — Tracks how much of the context window a session has consumed and surfaces it as a percentage in the conversation and on the session board.
 - **Turn accounting** — Closes each turn the plugin transcript drew with the footer DSH gives only its own messages: tokens, cache hit rate, wall time, time to first token, and cumulative cost. The timings are measured as the turn runs, because activity records carry no clock of their own.
-- **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, and handles Stop, cancellation, restart, and process-tree cleanup.
+- **Managed process lifecycle** — Keeps one live Claude process per active session, serializes turns, evicts idle processes, queues user turns FIFO when every process slot is busy, converges safely after the limit is lowered, and handles Stop, cancellation, restart, and process-tree cleanup.
 - **Bilingual interface** — Ships every user-facing string in both English and Chinese.
 
 ### 3.2 Repository, worktrees, and pull requests
