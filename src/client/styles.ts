@@ -515,6 +515,47 @@ export const tasksGroupEmpty: CSSProperties = {
   lineHeight: '18px',
 }
 
+/** Status chip and close button share the header's right end. */
+export const planHeaderEnd: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+}
+
+export const planBadge: CSSProperties = {
+  flex: 'none',
+  padding: '2px 8px',
+  borderRadius: 999,
+  background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent)',
+  color: 'var(--dsw-alias-state-success-primary)',
+  fontSize: 11,
+  lineHeight: '16px',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+}
+
+export const planBadgePending: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+export const planBadgeRejected: CSSProperties = {
+  background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent)',
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+/** Says where the decision is made, since this panel deliberately does not
+ *  make it: the Host's approval dialog owns the buttons. */
+export const planHint: CSSProperties = {
+  margin: '0 0 12px',
+  padding: '8px 10px',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
 export const tasksFinishedSection: CSSProperties = {
   marginTop: 12,
   paddingTop: 8,

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ClaudeDiffHeaderAction } from '../src/client/ClaudeDiffHeaderAction.tsx'
-import { DiffOpenStore } from '../src/client/diff-open-store.ts'
+import { PanelOpenStore } from '../src/client/panel-open-store.ts'
 import { EMPTY_CLAUDE_PROJECTION, type ClaudeClientProjection } from '../src/client/projection.ts'
 import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 
@@ -20,7 +20,7 @@ function projectionHook(owned: boolean, diff?: { additions: number; deletions: n
 }
 
 function render(owned: boolean, openFor?: string, diff?: { additions: number; deletions: number }) {
-  const store = new DiffOpenStore()
+  const store = new PanelOpenStore()
   if (openFor !== undefined) store.open(openFor)
   return renderToStaticMarkup(<ClaudeDiffHeaderAction
     t={t}
@@ -82,7 +82,7 @@ describe('Claude diff header action', () => {
 
 describe('diff open store', () => {
   it('answers isOpen per session', () => {
-    const store = new DiffOpenStore()
+    const store = new PanelOpenStore()
 
     expect(store.isOpen('session-1')).toBe(false)
     store.open('session-1')
@@ -93,7 +93,7 @@ describe('diff open store', () => {
   })
 
   it('notifies subscribers and reports per-session open state', () => {
-    const store = new DiffOpenStore()
+    const store = new PanelOpenStore()
     const source = store.sourceFor('session-1')
     const listener = vi.fn()
     const unsubscribe = source.subscribe(listener)
@@ -113,7 +113,7 @@ describe('diff open store', () => {
   })
 
   it('does not notify when the open session is unchanged', () => {
-    const store = new DiffOpenStore()
+    const store = new PanelOpenStore()
     const listener = vi.fn()
     store.sourceFor('session-1').subscribe(listener)
 

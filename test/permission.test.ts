@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createPermissionBridge, mapApprovalOutcome, permissionReason } from '../src/permission.ts'
+import { createPermissionBridge, mapApprovalOutcome, permissionReason, planText } from '../src/permission.ts'
+import { normalizeActivity } from '../src/events.ts'
 
 function active() {
   const events: Array<{ type: string; data: unknown }> = []
@@ -40,18 +41,30 @@ describe('permission result mapping', () => {
     expect(reason).not.toContain('nope')
   })
 
-  it('hands the plan itself to the approval surface', () => {
+  it('points the approval dialog at the plan panel instead of pasting the plan', () => {
     const plan = `## Plan\n\n1. Read ${'the supervisor '.repeat(200)}\n2. Ship it`
     const reason = permissionReason('ExitPlanMode', { plan }, toolOptions())
-    // The plan is prose the user is being asked to agree to, so it arrives as
-    // prose rather than as `Input: {"plan":"..."}`.
-    expect(reason.startsWith('## Plan')).toBe(true)
+    // The dialog renders its reason as plain text in a cramped modal, so it
+    // says what is being decided and where to read it; the plan itself goes to
+    // the panel that can render Markdown.
+    expect(reason).toContain('Plan panel')
+    expect(reason).not.toContain('the supervisor')
     expect(reason).not.toContain('Input: ')
-    // Long enough to hold a real plan, still bounded.
-    expect(reason.length).toBeGreaterThan(1_200)
-    expect(reason.length).toBeLessThanOrEqual(8_000)
     // An empty or missing plan falls back to the ordinary prompt.
     expect(permissionReason('ExitPlanMode', { plan: '' }, toolOptions())).toContain('Input: ')
+  })
+
+  it('carries the plan on the activity field wide enough to hold it', () => {
+    // `summary` caps at 1k and `detail` at 4k; only `text` (64k) survives a
+    // real plan intact.
+    const plan = `## Plan\n\n${'step '.repeat(2_000)}`
+    expect(plan.length).toBeGreaterThan(4_000)
+    expect(planText('ExitPlanMode', { plan })).toBe(plan)
+    expect(normalizeActivity({ turn: 1, step: 0, ordinal: 0, kind: 'permission', text: plan }).text).toBe(plan)
+    // Nothing else routes through the plan panel.
+    expect(planText('Bash', { plan })).toBeUndefined()
+    expect(planText('ExitPlanMode', { plan: '' })).toBeUndefined()
+    expect(planText('ExitPlanMode', {})).toBeUndefined()
   })
 })
 

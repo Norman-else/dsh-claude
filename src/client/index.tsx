@@ -23,6 +23,8 @@ import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import { pluginRead } from './plugin-transport.ts'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
 import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
+import { ClaudePlanPanel, type ClaudePlanPanelInjected } from './ClaudePlanPanel.tsx'
+import { ClaudePlanHeaderAction, type ClaudePlanHeaderActionInjected } from './ClaudePlanHeaderAction.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
@@ -39,7 +41,7 @@ import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './C
 import { ClaudeSessionMenu, type ClaudeSessionMenuInjected } from './ClaudeSessionMenu.tsx'
 import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './ClaudeAgentPresetLabel.tsx'
 import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
-import { DiffOpenStore } from './diff-open-store.ts'
+import { PanelOpenStore } from './panel-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
@@ -267,7 +269,8 @@ export function apply(ctx: ClientContext): void {
   let disposeDiffOverlay: (() => void) | undefined
   let disposeExpandedDetailsResize: (() => void) | undefined
   let detailsSessionId: string | undefined
-  const diffOpen = new DiffOpenStore()
+  const diffOpen = new PanelOpenStore()
+  const planOpen = new PanelOpenStore()
   const restoreDiff = (): void => {
     if (disposeDiffOverlay === undefined) return
     disposeDiffOverlay()
@@ -285,6 +288,7 @@ export function apply(ctx: ClientContext): void {
     disposePluginDetails = undefined
     detailsSessionId = undefined
     diffOpen.close()
+    planOpen.close()
     layout?.closeDetails()
   }
   // Every Slot entry crash, not just the one this package knows how to recover.
@@ -313,6 +317,23 @@ ${error.stack ?? ''}`
       return
     }
     detailsSessionId = sessionId
+    layout?.openDetails()
+    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  }
+  const openPlanPanel = (sessionId: string): void => {
+    closePluginDetails()
+    try {
+      disposePluginDetails = ctx.slots.register({
+        name: 'details',
+        priority: -10,
+        locale: namespace,
+        inject: (): ClaudePlanPanelInjected => ({ t, closeDetails: closePluginDetails }),
+      }, ClaudePlanPanel)
+    } catch {
+      return
+    }
+    detailsSessionId = sessionId
+    planOpen.open(sessionId)
     layout?.openDetails()
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
@@ -456,6 +477,20 @@ ${error.stack ?? ''}`
       }),
     }, ClaudeAgentPresetLabel))
   }
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-plan',
+    order: 29,
+    locale: namespace,
+    inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
+      t,
+      togglePlan: () => {
+        if (planOpen.isOpen(sessionId)) closePluginDetails()
+        else openPlanPanel(sessionId)
+      },
+      planOpen: planOpen.sourceFor(sessionId),
+    }),
+  }, ClaudePlanHeaderAction))
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',
     id: 'claude-diff',
