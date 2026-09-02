@@ -132,6 +132,25 @@ function slug(value: string, fallback: string): string {
   return normalized.slice(0, 48) || fallback
 }
 
+/** A branch name as one path segment: `/` and anything else unsafe folds to
+ *  `-`, case is kept so a ticket key stays scannable (`PSOS-5683`, not
+ *  `psos-5683`). Flattened rather than nested on purpose -- see
+ *  {@link worktreeDirectoryName}. */
+function branchSegment(branch: string): string {
+  const flattened = branch.replace(/[^A-Za-z0-9._-]+/gu, '-').replace(/^[-.]+/u, '').replace(/-+$/u, '')
+  return flattened.slice(0, 48).replace(/-+$/u, '') || 'branch'
+}
+
+/** Name a worktree directory after the repository and the branch it holds, so
+ *  the workspace list reads without opening a session.
+ *
+ *  One flat segment, never a `feature/x` subdirectory: the orphan sweep lists
+ *  this root one level deep, and a prefix directory holds no lease of its own,
+ *  so it would be removed along with every live worktree inside it. */
+export function worktreeDirectoryName(root: string, branch: string): string {
+  return `${slug(basename(root), 'repository')}-${branchSegment(branch)}`
+}
+
 /** Comparable form for path identity: resolved, forward slashes, case-folded
  *  so Windows drive-letter or case spelling differences cannot hide a match. */
 export function comparablePath(value: string): string {
@@ -468,7 +487,7 @@ export class RepositorySetupService {
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
     const branch = explicitBranchName ?? await this.#generatedBranch(info, baseBranch, intent, stamp, suffix, progress)
-    const path = join(this.#worktreeRoot, `${slug(basename(root), 'repository')}-${stamp}-${suffix}`)
+    const path = join(this.#worktreeRoot, await this.#freeDirectoryName(root, branch))
     progress('creating-worktree')
     await mkdir(this.#worktreeRoot, { recursive: true })
     // A stale registration from a deleted worktree directory would keep the
@@ -508,6 +527,25 @@ export class RepositorySetupService {
   /** `<prefix>/<what the draft is about>`, falling back to
    *  `<prefix>/<base branch>-<stamp>-<random>` whenever the summary is missing
    *  or unusable. The prefix and the fallback shape are unchanged. */
+  /** The branch-named directory, or the first `-2`, `-3`, ... spelling free of
+   *  anything already on disk. Names no longer carry a timestamp, so a stale
+   *  directory a crash left behind -- or two branches that fold to the same
+   *  segment -- would otherwise fail `worktree add` outright. Compared
+   *  case-folded, since a case-insensitive filesystem would collide anyway. */
+  async #freeDirectoryName(root: string, branch: string): Promise<string> {
+    const base = worktreeDirectoryName(root, branch)
+    const taken = await readdir(this.#worktreeRoot).then(
+      entries => new Set(entries.map(entry => entry.toLocaleLowerCase('en-US'))),
+      () => new Set<string>(),
+    )
+    if (!taken.has(base.toLocaleLowerCase('en-US'))) return base
+    for (let index = 2; index < 100; index += 1) {
+      const candidate = `${base}-${index}`
+      if (!taken.has(candidate.toLocaleLowerCase('en-US'))) return candidate
+    }
+    return base
+  }
+
   async #generatedBranch(
     info: RepositoryBranchList,
     baseBranch: string,

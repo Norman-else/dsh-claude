@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
@@ -204,6 +204,40 @@ describe('repository setup service', () => {
     }).setup(second.root, 'main', true, 'feature/exact-name')
     expect(explicit.branch).toBe('feature/exact-name')
     expect(explicitRuntime.spawn.mock.calls[5]?.[0].argv).toContain('feature/exact-name')
+  })
+
+  it('names the worktree directory after the repository and branch, flattened and case-kept', async () => {
+    // The workspace list shows this directory name, so a timestamp there means
+    // telling two checkouts apart requires opening a session.
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await service.setup(root, 'main', true, 'feature/PSOS-5683')
+    expect(result.path).toBe(join(worktreeRoot, `${basename(root).toLowerCase()}-feature-PSOS-5683`))
+  })
+
+  it('steps a colliding worktree directory aside instead of failing the add', async () => {
+    // Without the timestamp, a directory a crash left behind owns the name.
+    const { root, leasePath, worktreeRoot } = await roots()
+    await mkdir(join(worktreeRoot, `${basename(root).toLowerCase()}-PSOS-5683`), { recursive: true })
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await service.setup(root, 'main', true, 'PSOS-5683')
+    expect(result.path).toBe(join(worktreeRoot, `${basename(root).toLowerCase()}-PSOS-5683-2`))
   })
 
   it('names a generated branch after the composer draft, skipping a name already taken', async () => {
