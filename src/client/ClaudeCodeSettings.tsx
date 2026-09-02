@@ -2,8 +2,9 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CLAUDE_DOCTOR_PATH, CLAUDE_GLOBAL_SETTINGS_PATH, CLAUDE_UPDATE_CHECK_PATH, CLAUDE_UPDATE_PATH, CLAUDE_USAGE_PATH } from '../constants.ts'
 import type { PlanUsageReport, PlanUsageWindow } from '../plan-usage.ts'
-import { DEFAULT_CLAUDE_PROSE_MODE, isClaudeProseMode, type ClaudeProseMode } from '../constants.ts'
+import { DEFAULT_CLAUDE_ALERT_MODE, DEFAULT_CLAUDE_PROSE_MODE, isClaudeAlertMode, isClaudeProseMode, type ClaudeAlertMode, type ClaudeProseMode } from '../constants.ts'
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
+import { setClaudeAlertsEnabled } from './session-alerts.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 import { connectJira, disconnectJira, loadJiraStatus, type JiraStatus } from './jira-api.ts'
@@ -267,6 +268,13 @@ export function proseModeOf(settings: readonly GlobalSettingView[]): ClaudeProse
   return isClaudeProseMode(value) ? value : DEFAULT_CLAUDE_PROSE_MODE
 }
 
+/** The alert mode a settings payload carries, read the same way and for the
+ *  same reason as {@link proseModeOf}. */
+export function alertModeOf(settings: readonly GlobalSettingView[]): ClaudeAlertMode {
+  const value = settings.find(setting => setting.key === 'alerts')?.value
+  return isClaudeAlertMode(value) ? value : DEFAULT_CLAUDE_ALERT_MODE
+}
+
 /** Settings whose row only makes sense under a particular value of another.
  *  Filtering here rather than server-side keeps the descriptor list flat: the
  *  server has no view of what the Client can paint. Fails OPEN — a payload
@@ -286,6 +294,7 @@ export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKe
   outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
   renderer: { label: 'renderer', hint: 'rendererEffect' },
   prose: { label: 'prose', hint: 'proseEffect' },
+  alerts: { label: 'alerts', hint: 'alertsEffect' },
   worktreeBranchPrefix: { label: 'worktreeBranchPrefix', hint: 'worktreeBranchPrefixEffect' },
   maxProcesses: { label: 'maxProcessesSetting', hint: 'maxProcessesEffect' },
   idleTimeoutMinutes: { label: 'idleTimeoutSetting', hint: 'idleTimeoutEffect' },
@@ -299,6 +308,8 @@ export const SETTING_OPTION_COPY: Readonly<Record<string, ClaudeCodeSettingsKey>
   'renderer:native': 'rendererNative',
   'prose:plain': 'prosePlain',
   'prose:enhanced': 'proseEnhanced',
+  'alerts:off': 'alertsOff',
+  'alerts:on': 'alertsOn',
 }
 
 export function settingOptionLabel(
@@ -548,6 +559,7 @@ export function ClaudeCodeSettings({ t }: ClaudeCodeSettingsInjected) {
       // initial read as well as the write, so opening the panel re-syncs a
       // stylesheet that boot could not reach.
       applyClaudeMarkdownTheme(proseModeOf(payload.settings))
+      setClaudeAlertsEnabled(alertModeOf(payload.settings) === 'on')
     } catch (cause) {
       setGlobalSettingsError(cardFailure(cause))
     } finally {

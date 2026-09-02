@@ -94,6 +94,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Jira-driven sessions** — Connects to Jira Cloud and starts work from a ticket: the branch is named after the ticket key, the composer is seeded with the ticket brief, the ticket is assigned to the user once the worktree exists, and several tickets can be kicked off at once, each in its own worktree session.
 - **Repository and pull request status** — Shows the current repository, branch, worktree state, changed-line counts, unpushed commits, GitHub pull request, checks, review state, merge state, and blocking Claude rate limits near the composer.
 - **Session board** — Summarizes every Claude session in one place with its run state, branch, pull request, context usage, auto-fix state, and whether it is waiting on an approval or an answer.
+- **Session alerts** — Raises a desktop notification when a session the user is not looking at starts waiting on an approval or an answer, or finishes its turn; clicking it brings that session up. The session on screen never raises one, a prompt is announced once, and the whole thing is switched off from Settings.
 - **Branch diff viewer** — Provides an expandable or maximized branch diff with file statistics, expand-all and collapse-all, on-demand unmodified context, and comment-to-comment navigation.
 - **Line-level review comments** — Records the user's own line or range comments against the diff and attaches them to the next Claude message.
 - **GitHub review threads** — Reads, replies to, resolves, and unresolves pull request review threads inline, with `@` completion for repository members, bot authors marked as such, and a link back to the thread on GitHub.
@@ -106,7 +107,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 
 ### 3.3 Diagnostics, settings, and updates
 
-- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, output style, AI output renderer, worktree branch prefix, process limits, and authentication and handshake status.
+- **Claude Code settings and Doctor** — Adds a Settings panel for runtime diagnostics, supported Claude settings, output style, AI output renderer, session alerts, worktree branch prefix, process limits, and authentication and handshake status.
 - **Plan usage** — Reports the signed-in subscription's utilization windows — five-hour, weekly across all models, and weekly per model — with reset countdowns, degrading to unavailable rather than failing on API-key, Bedrock, and Vertex sessions.
 - **Bounded requests and a rationed connection pool** — Caps the plugin's share of the browser's per-origin connections so its own panels can never starve each other or the Host, and gives every route a declared time budget — answers from memory, local Git work, and calls that reach the network each get their own — with the client waiting one round trip longer than the server, so a slow operation reports which budget elapsed instead of hanging in the browser's queue.
 - **Plugin updates** — Checks npm for new releases and updates in place, only when the installation is uniquely identified; local development links are never replaced.

@@ -7,10 +7,13 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
   CLAUDE_GLOBAL_SETTINGS_PATH,
+  CLAUDE_ALERT_MODES,
   CLAUDE_RENDER_MODES,
   CLAUDE_PROSE_MODES,
+  DEFAULT_CLAUDE_ALERT_MODE,
   DEFAULT_CLAUDE_PROSE_MODE,
   DEFAULT_CLAUDE_RENDER_MODE,
+  isClaudeAlertMode,
   isClaudeProseMode,
   isClaudeRenderMode,
   type ClaudeRenderMode,
@@ -271,6 +274,28 @@ const PROSE: SelectSettingDescriptor = {
   },
 }
 
+/** Whether a session that needs the user interrupts them. Presentation only,
+ *  and read by the Client at delivery time, so like {@link PROSE} the switch
+ *  lands the moment it is saved. */
+const ALERTS: SelectSettingDescriptor = {
+  key: 'alerts',
+  kind: 'select',
+  document: 'plugin',
+  effect: 'immediate',
+  async options() {
+    return CLAUDE_ALERT_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) {
+    const value = document.alerts
+    return isClaudeAlertMode(value) ? value : DEFAULT_CLAUDE_ALERT_MODE
+  },
+  apply(document, value) {
+    if (!isClaudeAlertMode(value)) throw new Error('Invalid value for global setting alerts')
+    if (value === DEFAULT_CLAUDE_ALERT_MODE) delete document.alerts
+    else document.alerts = value
+  },
+}
+
 function isBoundedInteger(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
 }
@@ -302,7 +327,7 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses)
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 

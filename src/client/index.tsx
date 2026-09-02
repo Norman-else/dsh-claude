@@ -17,7 +17,8 @@ import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDe
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
-import { ClaudeCodeSettings, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
+import { ClaudeCodeSettings, alertModeOf, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
+import { setClaudeAlertsEnabled, startClaudeSessionAlerts, type ClaudeSessionAlertsDeps } from './session-alerts.ts'
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import { pluginRead } from './plugin-transport.ts'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
@@ -158,7 +159,9 @@ export function apply(ctx: ClientContext): void {
   // default rather than blocking the rest of `apply`.
   void pluginRead(CLAUDE_GLOBAL_SETTINGS_PATH, 'fast')
     .then(payload => {
-      if (isGlobalSettingsView(payload)) applyClaudeMarkdownTheme(proseModeOf(payload.settings))
+      if (!isGlobalSettingsView(payload)) return
+      applyClaudeMarkdownTheme(proseModeOf(payload.settings))
+      setClaudeAlertsEnabled(alertModeOf(payload.settings) === 'on')
     })
     .catch(() => {})
   // A carrier that loses a line leaves the projection quietly behind the
@@ -221,6 +224,23 @@ export function apply(ctx: ClientContext): void {
     }), 'dsh-claude: sidecar projection provider')
   }
   ctx.effect(() => () => projections.dispose(), 'dsh-claude: sidecar projection lifecycle')
+  // Standing watcher, not a slot: the point is to reach a user who is looking
+  // at another session, which is exactly when no panel of this plugin is on
+  // screen to do it.
+  if (sessions !== undefined) {
+    ctx.effect(() => startClaudeSessionAlerts({
+      // Bound through closures for the same reason the session board does it:
+      // the Host hands the list over as a class instance whose readers touch
+      // `this`.
+      sessions: {
+        subscribe: (listener: () => void) => sessions.list.subscribe(listener),
+        getSnapshot: () => sessions.list.getSnapshot(),
+      } as unknown as ClaudeSessionAlertsDeps['sessions'],
+      projectionFor: id => projections.source(id),
+      open: id => { sessions.open(id as SessionId) },
+      t,
+    }), 'dsh-claude: session alerts')
+  }
   // Desktop 2.0 publishes the target-neutral Conversation registry through
   // uiConversation. Registering against the removed conversationEvents service
   // never fires, leaving a live sidecar projection with no custom Chat nodes.

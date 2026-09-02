@@ -62,3 +62,14 @@ export const DEFAULT_CLAUDE_PROSE_MODE: ClaudeProseMode = 'plain'
 export function isClaudeProseMode(value: unknown): value is ClaudeProseMode {
   return value === 'plain' || value === 'enhanced'
 }
+
+/** Whether a session that needs the user raises a desktop notification while
+ *  the user is looking at another session. Client-side presentation, like
+ *  {@link ClaudeProseMode}: nothing on the server reads it back. */
+export type ClaudeAlertMode = 'off' | 'on'
+export const CLAUDE_ALERT_MODES = ['off', 'on'] as const
+export const DEFAULT_CLAUDE_ALERT_MODE: ClaudeAlertMode = 'on'
+
+export function isClaudeAlertMode(value: unknown): value is ClaudeAlertMode {
+  return value === 'off' || value === 'on'
+}
