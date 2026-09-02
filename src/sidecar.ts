@@ -24,9 +24,12 @@ import {
   EMPTY_REWIND_STATE,
   MAX_REWIND_ANCHORS,
   MAX_REWIND_RANGES,
+  MAX_REWIND_SNAPSHOTS,
   recordRewindAnchor,
+  recordRewindSnapshot,
   type ClaudeRewindAnchor,
   type ClaudeRewindRange,
+  type ClaudeRewindSnapshot,
   type ClaudeRewindState,
 } from './rewind.ts'
 
@@ -143,12 +146,23 @@ function rewind(value: unknown): ClaudeRewindState | undefined {
     if (anchor === undefined || !finiteInteger(anchor.turn) || !string(anchor.uuid, 128)) return undefined
     anchors.push({ turn: anchor.turn, uuid: anchor.uuid })
   }
+  // Documents written before working-tree snapshots existed carry no list;
+  // they read as a session that simply has no tree to restore.
+  const snapshots: ClaudeRewindSnapshot[] = []
+  if (input.snapshots !== undefined) {
+    if (!Array.isArray(input.snapshots) || input.snapshots.length > MAX_REWIND_SNAPSHOTS) return undefined
+    for (const item of input.snapshots) {
+      const snapshot = record(item)
+      if (snapshot === undefined || !finiteInteger(snapshot.turn) || !string(snapshot.tree, 64)) return undefined
+      snapshots.push({ turn: snapshot.turn, tree: snapshot.tree })
+    }
+  }
   const pending = record(input.pending)
   if (input.pending !== undefined && pending === undefined) return undefined
-  if (pending === undefined) return { ranges, anchors }
-  if (pending.fresh === true) return { ranges, anchors, pending: { fresh: true } }
+  if (pending === undefined) return { ranges, anchors, snapshots }
+  if (pending.fresh === true) return { ranges, anchors, snapshots, pending: { fresh: true } }
   if (!string(pending.resumeAt, 128)) return undefined
-  return { ranges, anchors, pending: { resumeAt: pending.resumeAt } }
+  return { ranges, anchors, snapshots, pending: { resumeAt: pending.resumeAt } }
 }
 
 function tasks(value: unknown): ClaudeTasksEvent | undefined {
@@ -425,12 +439,20 @@ export class ClaudeSidecarRepository {
     }))
   }
 
+  /** Remember the working tree one DSH turn was admitted against. */
+  recordRewindSnapshot(sessionId: string, turn: number, tree: string): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => ({
+      ...current,
+      rewind: recordRewindSnapshot(current.rewind ?? EMPTY_REWIND_STATE, { turn, tree }),
+    }))
+  }
+
   /** Disarm the fork target once a Claude process has resumed at it, so a
    *  later respawn continues the rewound session instead of re-truncating it. */
   clearRewindPending(sessionId: string): Promise<ClaudeSidecarProjection> {
     return this.#update(sessionId, current => (current.rewind?.pending === undefined ? current : {
       ...current,
-      rewind: { ranges: current.rewind.ranges, anchors: current.rewind.anchors },
+      rewind: { ranges: current.rewind.ranges, anchors: current.rewind.anchors, snapshots: current.rewind.snapshots },
     }))
   }
 

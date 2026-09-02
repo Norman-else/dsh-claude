@@ -11,6 +11,11 @@
  *    holds — even compaction keeps the shadowed conversation on screen — so the
  *    discarded rows are recorded here as hidden seq ranges and suppressed by
  *    the browser instead of deleted.
+ *
+ *  The files are a third half, and an optional one: every turn is admitted
+ *  against a captured working tree, so a rewind can put the checkout back to
+ *  where the discarded turns found it rather than leaving Claude to resume
+ *  against edits it no longer remembers making.
  */
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
@@ -26,6 +31,12 @@ export interface ClaudeRewindAnchor {
   readonly uuid: string
 }
 
+/** The git tree one DSH turn was admitted against. */
+export interface ClaudeRewindSnapshot {
+  readonly turn: number
+  readonly tree: string
+}
+
 /** Fork target for the next Claude spawn; `fresh` starts an empty session. */
 export type ClaudeRewindResume = { readonly resumeAt: string } | { readonly fresh: true }
 
@@ -34,15 +45,20 @@ export interface ClaudeRewindState {
   readonly ranges: readonly ClaudeRewindRange[]
   /** Chain anchors of the turns Claude still holds, ascending by turn. */
   readonly anchors: readonly ClaudeRewindAnchor[]
+  /** Working trees the surviving turns started from, ascending by turn. */
+  readonly snapshots: readonly ClaudeRewindSnapshot[]
   /** Armed once by a rewind, consumed by the next Claude spawn. */
   readonly pending?: ClaudeRewindResume
 }
 
-export const EMPTY_REWIND_STATE: ClaudeRewindState = { ranges: [], anchors: [] }
+export const EMPTY_REWIND_STATE: ClaudeRewindState = { ranges: [], anchors: [], snapshots: [] }
 
-/** Sessions outlive their rewinds; both lists stay bounded. */
+/** Sessions outlive their rewinds; every list stays bounded. */
 export const MAX_REWIND_RANGES = 200
 export const MAX_REWIND_ANCHORS = 2_000
+/** Shorter than the anchors: each entry pins a whole tree in the object
+ *  database, and a rewind reaches back turns rather than hundreds of them. */
+export const MAX_REWIND_SNAPSHOTS = 100
 
 /** Absorb one span into an ascending, non-overlapping range list. Adjacent
  *  spans merge so a rewind of a rewind reads as one hidden block. */
@@ -82,6 +98,18 @@ export function recordRewindAnchor(
   return { ...state, anchors }
 }
 
+/** Record the working tree one turn was admitted against, replacing a re-run
+ *  turn's. */
+export function recordRewindSnapshot(
+  state: ClaudeRewindState,
+  snapshot: ClaudeRewindSnapshot,
+): ClaudeRewindState {
+  const snapshots = [...state.snapshots.filter(item => item.turn !== snapshot.turn), snapshot]
+    .sort((left, right) => left.turn - right.turn)
+    .slice(-MAX_REWIND_SNAPSHOTS)
+  return { ...state, snapshots }
+}
+
 /** The turn a surface seq belongs to: the first turn opened at or after it.
  *  A message accepted but never run belongs to no logged turn, so nothing
  *  Claude holds is discarded and every anchor stays valid. */
@@ -92,9 +120,22 @@ export function turnAtOrAfter(events: readonly SessionEvent[], seq: number): num
   return undefined
 }
 
+/** The working tree a rewind at `seq` restores: the snapshot of the first turn
+ *  it discards. Undefined when nothing is discarded, or when that turn ran
+ *  before this session captured trees. */
+export function rewindRestoreTree(
+  state: ClaudeRewindState,
+  events: readonly SessionEvent[],
+  seq: number,
+): string | undefined {
+  const turn = turnAtOrAfter(events, seq)
+  return turn === undefined ? undefined : state.snapshots.find(item => item.turn === turn)?.tree
+}
+
 /** Plan one rewind at `seq`, or undefined when the seq is not in the log.
- *  Anchors of the discarded turns go with them: after this rewind Claude no
- *  longer holds those entries, so a later rewind must never fork at one. */
+ *  Anchors and snapshots of the discarded turns go with them: after this
+ *  rewind Claude no longer holds those entries, so a later rewind must never
+ *  fork at one — nor restore a tree for a turn that no longer exists. */
 export function planRewind(
   state: ClaudeRewindState,
   events: readonly SessionEvent[],
@@ -108,6 +149,7 @@ export function planRewind(
   return {
     ranges: mergeRewindRanges(state.ranges, { start: seq, end: last }),
     anchors,
+    snapshots: state.snapshots.filter(item => item.turn < turn),
     pending: kept === undefined ? { fresh: true } : { resumeAt: kept.uuid },
   }
 }

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { EMPTY_REWIND_STATE, isRewound, mergeRewindRanges, planRewind, recordRewindAnchor } from '../src/rewind.ts'
+import { EMPTY_REWIND_STATE, isRewound, mergeRewindRanges, planRewind, recordRewindAnchor, recordRewindSnapshot, rewindRestoreTree } from '../src/rewind.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 
 const roots: string[] = []
@@ -75,6 +75,30 @@ describe('rewind planning', () => {
     expect(isRewound(ranges, 7)).toBe(false)
   })
 
+  it('restores the tree of the first discarded turn', () => {
+    const state = recordRewindSnapshot(recordRewindSnapshot(EMPTY_REWIND_STATE, { turn: 1, tree: 'tree-1' }), { turn: 2, tree: 'tree-2' })
+    // Rewinding the second message undoes turn 2, so the checkout goes back to
+    // the tree turn 2 was admitted against -- not turn 1's.
+    expect(rewindRestoreTree(state, log(), 4)).toBe('tree-2')
+    expect(rewindRestoreTree(state, log(), 1)).toBe('tree-1')
+    // A message no turn ever opened discards nothing, so nothing is restored.
+    const pending = log().slice(0, 3).concat({ type: 'user/message', seq: 4, time: 4, data: {} } as unknown as SessionEvent)
+    expect(rewindRestoreTree(state, pending, 4)).toBeUndefined()
+    // A turn that ran before snapshots existed has no tree to go back to.
+    expect(rewindRestoreTree(EMPTY_REWIND_STATE, log(), 4)).toBeUndefined()
+  })
+
+  it('drops the snapshots of the turns it discards', () => {
+    const state = recordRewindSnapshot(recordRewindSnapshot(EMPTY_REWIND_STATE, { turn: 1, tree: 'tree-1' }), { turn: 2, tree: 'tree-2' })
+    expect(planRewind(state, log(), 4)?.snapshots).toEqual([{ turn: 1, tree: 'tree-1' }])
+    expect(planRewind(state, log(), 1)?.snapshots).toEqual([])
+  })
+
+  it('replaces the snapshot of a re-run turn', () => {
+    const state = recordRewindSnapshot(recordRewindSnapshot(EMPTY_REWIND_STATE, { turn: 1, tree: 'a' }), { turn: 1, tree: 'b' })
+    expect(state.snapshots).toEqual([{ turn: 1, tree: 'b' }])
+  })
+
   it('replaces the anchor of a re-run turn', () => {
     const state = recordRewindAnchor(recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' }), { turn: 1, uuid: 'b' })
     expect(state.anchors).toEqual([{ turn: 1, uuid: 'b' }])
@@ -92,6 +116,7 @@ describe('rewind persistence', () => {
     expect((await stored.read('session')).rewind).toEqual({
       ranges: [{ start: 4, end: 6 }],
       anchors: [{ turn: 1, uuid: 'uuid-1' }],
+      snapshots: [],
       pending: { resumeAt: 'uuid-1' },
     })
     await store.clearRewindPending('session')

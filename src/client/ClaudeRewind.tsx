@@ -11,6 +11,7 @@ import {
   type ClaudeRewindSeat,
 } from './rewind-dom.ts'
 import { rewindSession } from './rewind-api.ts'
+import { useActionToast } from './action-toast.tsx'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import * as styles from './styles.ts'
 
@@ -108,6 +109,11 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
   const [target, setTarget] = useState<RewindTarget>()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  // Default on: a conversation rewound without its files leaves Claude
+  // resuming against edits it no longer remembers making, which is the whole
+  // reason the trees are captured.
+  const [restoreFiles, setRestoreFiles] = useState(true)
+  const { toast, report } = useActionToast()
 
   const ranges = projection.rewind?.ranges ?? EMPTY_RANGES
   const owned = projection.owned
@@ -169,6 +175,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
     setTarget(undefined)
     setSubmitting(false)
     setError(undefined)
+    setRestoreFiles(true)
   }, [sessionId])
 
   if (sessionId === undefined || !owned) return <span data-dsh-claude-rewind-armed="armed" hidden />
@@ -182,10 +189,13 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
     if (target === undefined || submitting) return
     setSubmitting(true)
     setError(undefined)
-    void rewindSession(sessionId, target.seq).then(() => {
+    void rewindSession(sessionId, target.seq, restoreFiles).then(({ filesRestored }) => {
       setSubmitting(false)
       setTarget(undefined)
       if (target.text !== '') setDraft?.(sessionId, target.text)
+      // Only the disappointing half is worth a banner: a restore that landed
+      // is visible in the checkout the user is looking at.
+      if (restoreFiles && !filesRestored) report(t('rewindFilesUnavailable'))
     }, (reason: unknown) => {
       setSubmitting(false)
       const code = reason instanceof Error && reason.message !== '' ? reason.message : 'unknown'
@@ -197,6 +207,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
 
   return (
     <>
+      {toast}
       <style data-dsh-claude-rewind-styles>{`${styles.rewindActionCss}${rewindHiddenCss(hiddenKeys)}`}</style>
       {seats.map(seat => {
         const entry = targets.get(seat.key)
@@ -233,7 +244,11 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
       >
         {target === undefined ? null : <div style={styles.diffModalBody}>
           {target.text === '' ? null : <p style={styles.rewindModalMessage}>{target.text.slice(0, 2_000)}</p>}
-          <p style={styles.diffModalStatus}>{t('rewindHint')}</p>
+          <label style={styles.diffModalCheckbox}>
+            <input type="checkbox" checked={restoreFiles} disabled={submitting} onChange={event => { setRestoreFiles(event.currentTarget.checked) }} />
+            {t('rewindRestoreFiles')}
+          </label>
+          <p style={styles.diffModalStatus}>{restoreFiles ? t('rewindRestoreFilesHint') : t('rewindHint')}</p>
           {error === undefined ? null : <p style={styles.diffModalError}>{error}</p>}
         </div>}
       </Modal>

@@ -36,6 +36,7 @@ import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
+import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
@@ -454,6 +455,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')
       )),
       reset: sessionId => supervisor.disposeSession(sessionId),
+      restoreFiles: async (sessionId, tree) => {
+        const agent = webCtx.agents.get(sessionId as never)
+        const cwd = agent?.session.header.cwd
+        return cwd === undefined ? false : restoreWorktreeTree(ctx.subprocess, cwd, tree)
+      },
     })
     registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
     registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {

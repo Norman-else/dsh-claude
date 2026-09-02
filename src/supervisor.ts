@@ -35,6 +35,7 @@ import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.t
 import { recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
+import { captureWorktreeTree } from './worktree-snapshot.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -286,7 +287,7 @@ function rootCallSummary(toolName: string, input: unknown): string {
 export class ClaudeSupervisor {
   readonly #entries = new Map<string, SupervisorEntry>()
   readonly #interruptions = new Map<string, Promise<void>>()
-  readonly #runtime: Pick<SubprocessRuntime, 'spawn'>
+  readonly #runtime: Pick<SubprocessRuntime, 'spawn' | 'resolveExecutable'>
   readonly #approval: Pick<ApprovalService, 'request'>
   readonly #userQuestions: Pick<UserQuestionService, 'ask'>
   readonly #config: ClaudeSupervisorConfig
@@ -299,7 +300,7 @@ export class ClaudeSupervisor {
   #admissionGate: Promise<void> = Promise.resolve()
 
   constructor(dependencies: {
-    runtime: Pick<SubprocessRuntime, 'spawn'>
+    runtime: Pick<SubprocessRuntime, 'spawn' | 'resolveExecutable'>
     approval: Pick<ApprovalService, 'request'>
     userQuestions: Pick<UserQuestionService, 'ask'>
     config: ClaudeSupervisorConfig
@@ -471,6 +472,7 @@ export class ClaudeSupervisor {
     entry.active = active
     entry.state = 'running'
     entry.lastUsedAt = Date.now()
+    await this.#captureWorktree(entry, cursor.turn)
     try {
       await this.#appendActivity(active, {
         kind: 'status',
@@ -1321,6 +1323,23 @@ export class ClaudeSupervisor {
       this.#sidecar.checkpoint(entry.sessionId)
     } catch {
       // A reader that misses the checkpoint is no worse off than before it.
+    }
+  }
+
+  /** Pin the working tree this turn is about to change, so a rewind of it can
+   *  put the checkout back where the turn found it.
+   *
+   *  Awaited, and deliberately: a snapshot taken after Claude's first edit
+   *  would restore to a state that never existed. It costs one `git add -A`
+   *  against a throwaway index per turn, and best effort throughout -- a
+   *  session with no repository simply never offers a file rewind. */
+  async #captureWorktree(entry: SupervisorEntry, turn: number): Promise<void> {
+    try {
+      const tree = await captureWorktreeTree(this.#runtime, entry.cwd)
+      if (tree === undefined) return
+      await this.#sidecar.recordRewindSnapshot(entry.sessionId, turn, tree)
+    } catch {
+      // The snapshot is advisory; a failed capture never fails the turn.
     }
   }
 

@@ -3,7 +3,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { CLAUDE_REWIND_PATH } from './constants.ts'
 import { registerPluginRoute, type PluginRouteIo } from './http.ts'
-import { EMPTY_REWIND_STATE, planRewind } from './rewind.ts'
+import { EMPTY_REWIND_STATE, planRewind, rewindRestoreTree } from './rewind.ts'
 import type { ClaudeSidecarRepository } from './sidecar.ts'
 
 const MAX_BODY_BYTES = 4 * 1024
@@ -16,6 +16,9 @@ export interface ClaudeRewindSessionAccess {
   busy: (sessionId: string) => boolean
   /** Drop the live Claude process so the next turn resumes at the fork target. */
   reset: (sessionId: string) => Promise<void>
+  /** Put the session's checkout back to a captured tree, reporting whether it
+   *  landed. Absent when the Host offers no way to run git. */
+  restoreFiles?: (sessionId: string, tree: string) => Promise<boolean>
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -33,8 +36,15 @@ async function readJson(io: PluginRouteIo): Promise<Record<string, unknown> | un
   }
 }
 
-/** `POST <path>` with `{ sessionId, seq }`: hide that surface event and every
- *  later one, and arm Claude to resume before the turn it opened. */
+/** `POST <path>` with `{ sessionId, seq, restoreFiles? }`: hide that surface
+ *  event and every later one, and arm Claude to resume before the turn it
+ *  opened. With `restoreFiles`, the checkout is also put back to the tree that
+ *  turn was admitted against.
+ *
+ *  The conversation rewind is what the user confirmed, so it lands first and
+ *  stands on its own; a checkout that cannot be restored — no snapshot, a
+ *  collected tree, no git — reports `filesRestored: false` rather than
+ *  failing the rewind. */
 export function registerClaudeRewindRoute(
   ctx: Context,
   sidecar: ClaudeSidecarRepository,
@@ -62,9 +72,13 @@ export function registerClaudeRewindRoute(
         const current = (await sidecar.read(sessionId)).rewind ?? EMPTY_REWIND_STATE
         const planned = planRewind(current, events, seq)
         if (planned === undefined) return { status: 409, value: { error: 'seq-unavailable' } }
+        const tree = input?.restoreFiles === true ? rewindRestoreTree(current, events, seq) : undefined
         await sidecar.writeRewind(sessionId, planned)
         await access.reset(sessionId)
-        return { status: 200, value: { ranges: planned.ranges } }
+        const filesRestored = tree === undefined || access.restoreFiles === undefined
+          ? false
+          : await access.restoreFiles(sessionId, tree).catch(() => false)
+        return { status: 200, value: { ranges: planned.ranges, filesRestored } }
       } catch (error) {
         if (error instanceof SyntaxError) return { status: 400, value: { error: 'invalid-json' } }
         return { status: 500, value: { error: 'rewind-unavailable' } }
