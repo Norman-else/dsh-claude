@@ -308,7 +308,7 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('discards a process whose metadata model switch never answers instead of stalling admission', async () => {
+  it('discards a process whose metadata request never answers instead of stalling admission', async () => {
     vi.useFakeTimers()
     try {
       const transport = factory()
@@ -317,12 +317,11 @@ describe('Claude supervisor', () => {
       await runtime.supportedCommands(owner.agent)
       const query = transport.queries[0]!
 
-      query.setModel.mockReturnValueOnce(new Promise<undefined>(() => {}))
-      const wedged = runtime.contextUsage(owner.agent, 'fable')
+      query.getContextUsage.mockReturnValueOnce(new Promise<never>(() => {}))
+      const wedged = runtime.contextUsage(owner.agent)
       const settled = expect(wedged).rejects.toThrow('timed out')
       await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
       await settled
-      expect(query.getContextUsage).not.toHaveBeenCalled()
 
       // Metadata shares turn admission's gate, so the wedged process must be
       // discarded and the gate released: the next request runs on a fresh one.
@@ -874,6 +873,27 @@ describe('Claude supervisor', () => {
     expect(latestClaudeModels()).toEqual([
       { id: 'claude-nextthing-9[1m]', name: 'Nextthing', description: 'Ships between plugin releases', contextWindow: 1_000_000 },
     ])
+    await runtime.dispose()
+  })
+
+  it('keeps the live model across metadata refreshes run with the plugin default', async () => {
+    // The idle refresh (commands, context usage, plan usage) runs with the
+    // plugin default model. It must observe the session, not re-model it:
+    // switching here raced the turn's own switch and answered on Opus.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one', model: 'fable' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(result('one'))
+    await collect(first)
+
+    await runtime.supportedCommands(owner.agent)
+    await runtime.contextUsage(owner.agent)
+    expect(query.setModel).not.toHaveBeenCalled()
+    expect(runtime.snapshots()[0]?.model).toBe('fable')
+    expect(runtime.contextWindow('fable')).toBe(200_000)
     await runtime.dispose()
   })
 

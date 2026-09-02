@@ -334,9 +334,11 @@ export class ClaudeSupervisor {
   }
 
   async contextUsage(agent: Agent, model = this.#config.defaultModel): Promise<SDKControlGetContextUsageResponse> {
-    const usage = await this.#runMetadata(agent, model, query => query.getContextUsage())
-    this.#recordContextWindow(model, usage)
-    return usage
+    return this.#runMetadata(agent, model, async (query, entry) => {
+      const usage = await query.getContextUsage()
+      this.#recordContextWindow(entry.model, usage)
+      return usage
+    })
   }
 
   /** Cache a window under both the selector id the caller asked for and the
@@ -549,10 +551,10 @@ export class ClaudeSupervisor {
       entry.idleTimer = undefined
     }
     await this.#syncPermissionMode(entry)
-    if (model !== entry.model) {
-      await this.#control(entry, entry.query.setModel(model), 'Claude Code model switch')
-      entry.model = model
-    }
+    // Never switch a live entry here: `model` is only the seed for a fresh
+    // process. The idle metadata refresh runs with the plugin default, and
+    // letting it call setModel raced runTurn's own switch -- a session the user
+    // set to Fable answered on Opus whenever the refresh landed last.
     return entry
   }
 
