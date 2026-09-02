@@ -35,6 +35,23 @@ function card(value: PullRequestReviewThread) {
 }
 
 describe('review thread card', () => {
+  it('offers the fix handoff only for an open thread and only when a composer takes it', () => {
+    const send = vi.fn()
+    const markup = renderToStaticMarkup(<ReviewThreadCard
+      thread={thread()}
+      t={t}
+      now={NOW}
+      suggest={vi.fn(async () => [])}
+      onReply={vi.fn(async () => undefined)}
+      onResolvedChange={vi.fn(async () => undefined)}
+      onSendToAi={send}
+    />)
+
+    expect(markup).toContain('Send to AI')
+    // No composer to submit into, and a settled thread, both drop the button.
+    expect(card(thread())).not.toContain('Send to AI')
+  })
+
   it('stacks a conversation under one anchor with reply and resolve offered', () => {
     const markup = card(thread())
 

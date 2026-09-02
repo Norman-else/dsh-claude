@@ -334,6 +334,8 @@ interface DiffFileSectionProps {
   readonly now: number
   readonly onReplyToThread: (thread: PullRequestReviewThread, body: string) => Promise<void>
   readonly onThreadResolvedChange: (thread: PullRequestReviewThread, resolved: boolean) => Promise<void>
+  /** Undefined when the session has no composer to submit a fix request into. */
+  readonly onSendThreadToAi: ((thread: PullRequestReviewThread) => void) | undefined
   readonly editorAnchor: ReviewCommentAnchor | undefined
   readonly editorNode: ReactNode
   readonly activeTargetKey: string | undefined
@@ -345,7 +347,7 @@ interface DiffFileSectionProps {
 function DiffFileSection({
   file, root, open, t, comments, ghThreads, editorAnchor, editorNode, now,
   activeTargetKey,
-  suggestMention, onOpenEditor, onOpenChange, onRemoveComment, onReplyToThread, onThreadResolvedChange,
+  suggestMention, onOpenEditor, onOpenChange, onRemoveComment, onReplyToThread, onThreadResolvedChange, onSendThreadToAi,
 }: DiffFileSectionProps) {
   const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
   const [total, setTotal] = useState<number>()
@@ -452,6 +454,7 @@ function DiffFileSection({
                 now={now}
                 onReply={body => onReplyToThread(thread, body)}
                 onResolvedChange={resolved => onThreadResolvedChange(thread, resolved)}
+                onSendToAi={onSendThreadToAi === undefined ? undefined : () => { onSendThreadToAi(thread) }}
               />
             ))}
             {editorOpen ? editorNode : null}
@@ -867,6 +870,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
               activeTargetKey={activeTargetKey}
               onReplyToThread={replyToThread}
               onThreadResolvedChange={changeThreadResolved}
+              onSendThreadToAi={submitPrompt === undefined ? undefined : thread => { submitPrompt(composeCommentsPrompt([thread])) }}
               editorAnchor={commentEditor !== undefined && commentEditor.path === file.path ? commentEditor : undefined}
               editorNode={commentEditorNode}
               onOpenEditor={anchor => openCommentEditor(file.path, anchor)}

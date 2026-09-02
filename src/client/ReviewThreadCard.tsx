@@ -71,7 +71,7 @@ function CommentBody({ comment, t, now, first }: {
  *  the thread, plus the two things a reviewer expects to do with it — answer it
  *  and close it. A resolved thread collapses, because the diff is about what
  *  still needs attention. */
-export function ReviewThreadCard({ thread, t, now, anchorKey, active = false, suggest, onReply, onResolvedChange }: {
+export function ReviewThreadCard({ thread, t, now, anchorKey, active = false, suggest, onReply, onResolvedChange, onSendToAi }: {
   thread: PullRequestReviewThread
   /** Anchor the panel's prev/next walk scrolls to. */
   anchorKey?: string
@@ -82,6 +82,8 @@ export function ReviewThreadCard({ thread, t, now, anchorKey, active = false, su
   suggest: (query: string) => Promise<readonly MentionableUser[]>
   onReply: (body: string) => Promise<void>
   onResolvedChange: (resolved: boolean) => Promise<void>
+  /** Hands this one thread to Claude as a fix request; omitted when there is no composer to submit into. */
+  onSendToAi?: (() => void) | undefined
 }) {
   const [expanded, setExpanded] = useState(false)
   const [replying, setReplying] = useState(false)
@@ -187,6 +189,11 @@ export function ReviewThreadCard({ thread, t, now, anchorKey, active = false, su
         </div>
       ) : (
         <div style={styles.diffCommentActions}>
+          {onSendToAi === undefined || thread.resolved ? null : (
+            <button type="button" style={styles.diffCommentActionButton} disabled={busy} onClick={onSendToAi}>
+              {t('reviewThreadSendToAi')}
+            </button>
+          )}
           <button type="button" style={styles.diffCommentActionButton} disabled={busy} onClick={() => { setReplying(true) }}>
             {t('reviewThreadReply')}
           </button>
