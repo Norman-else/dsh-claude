@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { latestPlanReview } from '../src/client/ClaudePlanPanel.tsx'
+import { latestPlanReview, parsePlanReviewKey, planReviewKey } from '../src/client/ClaudePlanPanel.tsx'
 
 let ordinal = 0
 function permission(fields: Partial<ClaudeActivityEvent>): ClaudeActivityEvent {
@@ -13,7 +13,7 @@ describe('plan panel review selection', () => {
     const review = latestPlanReview([
       permission({ phase: 'started', toolUseId: 'plan-1', text: '## Steps\n\n1. Ship' }),
     ])
-    expect(review).toEqual({ toolUseId: 'plan-1', plan: '## Steps\n\n1. Ship', turn: 1, state: 'pending' })
+    expect(review).toEqual({ toolUseId: 'plan-1', plan: '## Steps\n\n1. Ship', state: 'pending' })
   })
 
   it('settles on the decision recorded under the same tool use', () => {
@@ -34,10 +34,10 @@ describe('plan panel review selection', () => {
     const review = latestPlanReview([
       permission({ phase: 'started', toolUseId: 'plan-1', text: 'first' }),
       permission({ phase: 'denied', toolUseId: 'plan-1' }),
-      permission({ phase: 'started', toolUseId: 'plan-2', text: 'second', turn: 2 }),
+      permission({ phase: 'started', toolUseId: 'plan-2', text: 'second' }),
     ])
     // The rejection belongs to the plan it rejected, not to the new one.
-    expect(review).toEqual({ toolUseId: 'plan-2', plan: 'second', turn: 2, state: 'pending' })
+    expect(review).toEqual({ toolUseId: 'plan-2', plan: 'second', state: 'pending' })
   })
 
   it('ignores everything that is not a plan handed over for approval', () => {
@@ -48,5 +48,28 @@ describe('plan panel review selection', () => {
     expect(latestPlanReview([permission({ phase: 'started', toolUseId: 'plan-1', text: '' })])).toBeUndefined()
     // Prose in the transcript is not a plan, whatever it says.
     expect(latestPlanReview([{ turn: 1, step: 0, ordinal: 1, kind: 'text', text: '# Plan' }])).toBeUndefined()
+  })
+})
+
+describe('plan review key', () => {
+  const proposal = permission({ phase: 'started', toolUseId: 'plan-1', text: '# Plan' })
+
+  it('round-trips through the primitive the header action selects on', () => {
+    const key = planReviewKey([proposal])
+    expect(parsePlanReviewKey(key)).toEqual({ state: 'pending', toolUseId: 'plan-1' })
+    // The key moves when the decision lands, which is what reopens nothing and
+    // repaints the dot.
+    expect(planReviewKey([proposal, permission({ phase: 'completed', toolUseId: 'plan-1' })])).not.toBe(key)
+  })
+
+  it('survives a tool use id that contains the separator', () => {
+    const odd = permission({ phase: 'started', toolUseId: 'toolu:01:abc', text: '# Plan' })
+    expect(parsePlanReviewKey(planReviewKey([odd]))).toEqual({ state: 'pending', toolUseId: 'toolu:01:abc' })
+  })
+
+  it('reads no plan as no key', () => {
+    expect(planReviewKey([])).toBe('')
+    expect(parsePlanReviewKey('')).toBeUndefined()
+    expect(parsePlanReviewKey('nonsense:plan-1')).toBeUndefined()
   })
 })

@@ -1,10 +1,10 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { PanelOpenSource } from './panel-open-store.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
-import { latestPlanReview } from './ClaudePlanPanel.tsx'
+import { parsePlanReviewKey, planReviewKey } from './ClaudePlanPanel.tsx'
 
 export interface ClaudePlanHeaderActionInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -51,7 +51,8 @@ function ensureCss(): void {
   document.head.appendChild(element)
 }
 
-/** A checklist: the plan is a document of steps. Drawn inline for the same
+/** A written page, not a checklist: a plan is a document to read, and ticks
+ *  next to lines are what the task board means. Drawn inline for the same
  *  reason the diff glyph is — the primitives set ships neither. */
 function PlanGlyph() {
   return (
@@ -64,23 +65,37 @@ function PlanGlyph() {
       aria-hidden="true"
       focusable="false"
     >
-      <path d="m2.75 5.25 1.4 1.4 2.35-2.6M2.75 12.25l1.4 1.4 2.35-2.6" />
-      <path d="M9.25 5.25h6M9.25 12.25h6" />
+      {/* Sheet with a turned corner: the outline and the fold are one path so
+          the corner reads as folded rather than as a notch with a stray line. */}
+      <path d="M10.5 2.25H5a1.75 1.75 0 0 0-1.75 1.75v10A1.75 1.75 0 0 0 5 15.75h8A1.75 1.75 0 0 0 14.75 14V6.5Z" />
+      <path d="M10.5 2.25V6.5h4.25" />
+      {/* Ragged last line: text, rather than three equal rules. */}
+      <path d="M6.25 9h5.5M6.25 12h3.5" />
     </svg>
   )
 }
 
 export function ClaudePlanHeaderAction({ t, sessionId, togglePlan, planOpen, useClaudeProjection }: ClaudePlanHeaderActionProps) {
   const owned = useClaudeProjection(projection => projection.owned)
-  // The state string, not the review object: this hook keeps a snapshot only
-  // while the selected value compares equal, and a fresh object per snapshot
-  // would defeat that. One linear pass over a stream capped at 10k records is
-  // cheaper than a second channel publishing a flag the transcript carries.
-  const state = useClaudeProjection(projection => latestPlanReview(projection.activities)?.state)
+  // One primitive, not the review object: this hook keeps a snapshot only
+  // while the selected value compares equal. One linear pass over a stream
+  // capped at 10k records is cheaper than a second channel publishing a flag
+  // the transcript already carries.
+  const key = useClaudeProjection(projection => planReviewKey(projection.activities))
+  const review = parsePlanReviewKey(key)
   const open = useSyncExternalStore(planOpen.subscribe, planOpen.getSnapshot, planOpen.getSnapshot)
+  // A plan arrives as something the user has to decide on right now, so the
+  // panel that holds it opens itself. Once per proposal: a user who closes it
+  // has closed it, and only the next plan reopens the column.
+  const opened = useRef<string>()
+  useEffect(() => {
+    if (review?.state !== 'pending' || opened.current === review.toolUseId) return
+    opened.current = review.toolUseId
+    if (!open) togglePlan()
+  })
   // The action row renders in every Session header. A session that never left
   // plan mode has nothing to open, so the button is absent rather than inert.
-  if (!owned || state === undefined) return null
+  if (!owned || review === undefined) return null
   ensureCss()
   const label = t(open ? 'planClose' : 'planOpen')
   return (
@@ -90,7 +105,7 @@ export function ClaudePlanHeaderAction({ t, sessionId, togglePlan, planOpen, use
         className="dsh-claude-header-plan"
         aria-label={label}
         aria-pressed={open}
-        data-pending={state === 'pending' || undefined}
+        data-pending={review.state === 'pending' || undefined}
         data-session={sessionId}
         onClick={togglePlan}
       >

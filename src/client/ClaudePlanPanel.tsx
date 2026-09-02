@@ -23,7 +23,6 @@ export type PlanState = 'pending' | 'approved' | 'rejected'
 export interface PlanReview {
   readonly toolUseId: string
   readonly plan: string
-  readonly turn: number
   readonly state: PlanState
 }
 
@@ -53,7 +52,25 @@ export function latestPlanReview(activities: readonly ClaudeActivityEvent[]): Pl
     if (activity.phase === 'completed') state = 'approved'
     else if (activity.phase === 'denied' || activity.phase === 'failed') state = 'rejected'
   }
-  return { toolUseId, plan: proposal.text, turn: proposal.turn, state }
+  return { toolUseId, plan: proposal.text, state }
+}
+
+/** The review as one primitive, for readers that only need to know whether it
+ *  changed. A snapshot hook keeps its value only while the selection compares
+ *  equal, and a fresh object per snapshot would defeat that. Empty string when
+ *  the session has proposed nothing. */
+export function planReviewKey(activities: readonly ClaudeActivityEvent[]): string {
+  const review = latestPlanReview(activities)
+  return review === undefined ? '' : `${review.state}:${review.toolUseId}`
+}
+
+/** Split what {@link planReviewKey} joined. */
+export function parsePlanReviewKey(key: string): { state: PlanState; toolUseId: string } | undefined {
+  const cut = key.indexOf(':')
+  if (cut < 0) return undefined
+  const state = key.slice(0, cut)
+  if (state !== 'pending' && state !== 'approved' && state !== 'rejected') return undefined
+  return { state, toolUseId: key.slice(cut + 1) }
 }
 
 const STATE_LABEL: Record<PlanState, ClaudeCodeSettingsKey> = {
@@ -79,12 +96,7 @@ export function ClaudePlanPanel({ useClaudeProjection, t, closeDetails }: Claude
     <div className={styles.detailsCardClass} style={styles.tasksPanel}>
       <style data-dsh-claude-panel-icon-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}</style>
       <div style={styles.tasksHeader}>
-        <div>
-          <span style={styles.tasksHeading}>{t('planPanelTitle')}</span>
-          {review === undefined ? null : (
-            <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn: review.turn })}</span>
-          )}
-        </div>
+        <span style={styles.tasksHeading}>{t('planPanelTitle')}</span>
         <div style={styles.planHeaderEnd}>
           {review === undefined ? null : (
             <span style={{ ...styles.planBadge, ...(review.state === 'pending' ? styles.planBadgePending : review.state === 'rejected' ? styles.planBadgeRejected : {}) }}>
