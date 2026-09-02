@@ -60,6 +60,28 @@ export function planText(toolName: string, input: Readonly<Record<string, unknow
   return typeof input.plan === 'string' && input.plan.length > 0 ? input.plan : undefined
 }
 
+/** The session's approval-policy override, or undefined when it never switched.
+ *
+ *  The same fold the approval service does — the last `approval/policy` event
+ *  wins, because replaying the log IS the state. Read here rather than
+ *  imported so this package keeps its runtime surface to the Host services it
+ *  is actually handed. */
+export function approvalPolicyOf(events: readonly { type: string; data: unknown }[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type !== 'approval/policy') continue
+    const policy = (event.data as { policy?: unknown }).policy
+    return typeof policy === 'string' ? policy : undefined
+  }
+  return undefined
+}
+
+/** The policy that answers every request with `rejected` before reaching an
+ *  answerer, so no approval surface is ever shown. DSH writes it alongside
+ *  `sandbox/mode: danger-full-access` — Full access means "stop asking". */
+const SILENT_POLICY = 'never'
+const ASKING_POLICY = 'ask'
+
 export function permissionReason(
   toolName: string,
   input: Readonly<Record<string, unknown>>,
@@ -139,7 +161,17 @@ export function createPermissionBridge(
       // before anyone has read it. So it is the one approval Full access does
       // not stand in for — a user who wanted the plan waived would not have
       // asked for a plan.
+      //
+      // Full access does not merely pre-answer the request, it silences it:
+      // DSH writes `approval/policy: never` next to the access mode, and the
+      // approval service returns `rejected` from that policy alone, before any
+      // answerer runs, so no surface is ever shown. Waiving the short-circuit
+      // below is therefore not enough — the ask has to be un-silenced for as
+      // long as it is open, and put back exactly as it was afterwards.
       const userDecides = plan !== undefined
+      const session = active.agent.session
+      const silenced = userDecides && approvalPolicyOf(session.events) === SILENT_POLICY
+      if (silenced) await session.append('approval/policy', { policy: ASKING_POLICY })
       const alreadyFullAccess = !userDecides && await active.hasFullAccess?.() === true
       const outcome = alreadyFullAccess
         ? 'allowed-once'
@@ -148,6 +180,11 @@ export function createPermissionBridge(
             toolName,
             reason,
             signal: options.signal,
+          }).finally(async () => {
+            // Only ever restores a policy this bridge itself lifted, so a user
+            // who switched away from Full access while reading keeps their own
+            // choice rather than having `never` written back over it.
+            if (silenced) await session.append('approval/policy', { policy: SILENT_POLICY })
           })
       // The access selector can change while the approval UI is open. Re-read
       // its durable state so an explicit Full access choice wins over the stale

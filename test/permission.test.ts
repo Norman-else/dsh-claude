@@ -3,15 +3,31 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createPermissionBridge, mapApprovalOutcome, permissionReason, planText } from '../src/permission.ts'
 import { normalizeActivity } from '../src/events.ts'
 
-function active() {
+function active(policy?: 'ask' | 'never') {
   const events: Array<{ type: string; data: unknown }> = []
-  const agent = {} as Agent
+  const sessionEvents: Array<{ type: string; data: unknown }> = policy === undefined
+    ? []
+    : [{ type: 'approval/policy', data: { policy } }]
+  const agent = {
+    session: {
+      events: sessionEvents,
+      append: async (type: string, data: unknown) => { sessionEvents.push({ type, data }) },
+    },
+  } as unknown as Agent
   return {
     agent,
     cursor: { turn: 1, step: 1, nextOrdinal: 0 },
     events,
+    sessionEvents,
     appendActivity: async (data: unknown) => { events.push({ type: 'activity', data }) },
   }
+}
+
+/** The `approval/policy` values a session log carries, in order. */
+function policies(sessionEvents: ReadonlyArray<{ type: string; data: unknown }>): string[] {
+  return sessionEvents
+    .filter(event => event.type === 'approval/policy')
+    .map(event => String((event.data as { policy?: unknown }).policy))
 }
 
 const toolOptions = (signal = new AbortController().signal) => ({
@@ -132,24 +148,48 @@ describe('DSH approval bridge', () => {
   })
 
   it('asks for a plan even under Full access', async () => {
-    const state = active()
+    // Full access, so DSH has silenced approvals with `policy: never`.
+    const state = active('never')
     const request = vi.fn(async () => 'allowed-once' as const)
     const hasFullAccess = vi.fn(async () => true)
     const canUseTool = createPermissionBridge({ request }, () => ({ ...state, hasFullAccess }))
 
     await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
     // A plan is the decision the user asked for; Full access waives actions,
-    // not decisions.
+    // not decisions. Under `never` the service answers `rejected` before any
+    // answerer runs, so the ask has to be un-silenced while it is open.
     expect(request).toHaveBeenCalledOnce()
+    expect(policies(state.sessionEvents)).toEqual(['never', 'ask', 'never'])
     expect(state.events.at(-1)?.data).toMatchObject({ phase: 'completed', summary: 'Allowed once in DeepSeek Harness' })
-    // Everything else still short-circuits.
+    // Everything else still short-circuits, and leaves the policy alone.
     request.mockClear()
     await expect(canUseTool('Bash', { command: 'ls' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
     expect(request).not.toHaveBeenCalled()
+    expect(policies(state.sessionEvents)).toEqual(['never', 'ask', 'never'])
+  })
+
+  it('leaves an already-asking policy untouched', async () => {
+    const state = active('ask')
+    const request = vi.fn(async () => 'allowed-once' as const)
+    const canUseTool = createPermissionBridge({ request }, () => state)
+
+    await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    // Nothing to lift, so nothing is written — and nothing to put back.
+    expect(policies(state.sessionEvents)).toEqual(['ask'])
+  })
+
+  it('restores the silent policy when the approval throws', async () => {
+    const state = active('never')
+    const request = vi.fn(async () => { throw new Error('surface exploded') })
+    const canUseTool = createPermissionBridge({ request }, () => state)
+
+    await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'deny' })
+    // A failed ask must not leave the session asking about everything else.
+    expect(policies(state.sessionEvents)).toEqual(['never', 'ask', 'never'])
   })
 
   it('keeps a rejected plan rejected when Full access lands mid-read', async () => {
-    const state = active()
+    const state = active('never')
     let fullAccess = false
     // The user switches to Full access while the plan is on screen, then
     // rejects it. The rejection is the answer; the switch is not.
