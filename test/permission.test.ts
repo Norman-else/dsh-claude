@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createPermissionBridge, mapApprovalOutcome, permissionReason, planText } from '../src/permission.ts'
 import { normalizeActivity } from '../src/events.ts'
+import { PlanFeedbackGate } from '../src/plan-feedback.ts'
 
 function active(policy?: 'ask' | 'never') {
   const events: Array<{ type: string; data: unknown }> = []
@@ -204,6 +205,53 @@ describe('DSH approval bridge', () => {
 
     await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'deny' })
     expect(state.events.at(-1)?.data).toMatchObject({ phase: 'denied' })
+  })
+
+  it('lets the panel answer a plan with revisions and closes the dialog', async () => {
+    const state = active('never')
+    const gate = new PlanFeedbackGate()
+    // The dialog never answers; the reviewer sends notes from the panel.
+    const request = vi.fn((options: { signal?: AbortSignal }) => new Promise<'allowed-once'>((_, reject) => {
+      options.signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+    }))
+    const canUseTool = createPermissionBridge({ request } as never, () => state, undefined, gate)
+
+    const decision = canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())
+    // Wait for the bridge to reach the race before answering it.
+    await vi.waitFor(() => { expect(gate.pending('tool-1')).toBe(true) })
+    expect(gate.submit('tool-1', [{ quote: '# Plan', text: 'add a rollback step' }])).toBe(true)
+
+    const result = await decision
+    expect(result).toMatchObject({ behavior: 'deny' })
+    // Claude is told what to change, not merely that it was refused.
+    expect((result as { message: string }).message).toContain('add a rollback step')
+    expect((result as { message: string }).message).toContain('> # Plan')
+    expect(state.events.at(-1)?.data).toMatchObject({ phase: 'denied', summary: 'Sent back for changes in DeepSeek Harness' })
+    // The lifted policy goes back even though the dialog never answered.
+    expect(policies(state.sessionEvents)).toEqual(['never', 'ask', 'never'])
+  })
+
+  it('leaves an answered plan for the dialog, not the panel', async () => {
+    const state = active('never')
+    const gate = new PlanFeedbackGate()
+    const request = vi.fn(async () => 'allowed-once' as const)
+    const canUseTool = createPermissionBridge({ request }, () => state, undefined, gate)
+
+    await expect(canUseTool('ExitPlanMode', { plan: '# Plan' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    // The wait is abandoned once the dialog decides, so late notes are refused
+    // rather than reopening a settled plan.
+    expect(gate.pending('tool-1')).toBe(false)
+    expect(gate.submit('tool-1', [{ text: 'too late' }])).toBe(false)
+  })
+
+  it('never races an ordinary tool against the panel', async () => {
+    const state = active('ask')
+    const gate = new PlanFeedbackGate()
+    const request = vi.fn(async () => 'allowed-once' as const)
+    const canUseTool = createPermissionBridge({ request }, () => state, undefined, gate)
+
+    await expect(canUseTool('Bash', { command: 'ls' }, toolOptions())).resolves.toMatchObject({ behavior: 'allow' })
+    expect(gate.pending('tool-1')).toBe(false)
   })
 
   it('fails closed when the approval service rejects', async () => {

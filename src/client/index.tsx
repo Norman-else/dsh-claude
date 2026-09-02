@@ -121,9 +121,10 @@ function MaximizedDiff({
 }
 
 export const name = 'dsh-claude-client'
-function MaximizedPlan({ source, t, closeDetails, restore }: {
+function MaximizedPlan({ source, t, sessionId, closeDetails, restore }: {
   source: ClaudeProjectionSource
   t: ClaudePlanPanelInjected['t']
+  sessionId: string
   closeDetails: () => void
   restore: () => void
 }) {
@@ -132,6 +133,7 @@ function MaximizedPlan({ source, t, closeDetails, restore }: {
   return <ClaudePanelOverlay onRestore={restore}><ClaudePlanPanel
     useClaudeProjection={useClaudeProjection}
     t={t}
+    sessionId={sessionId}
     maximized
     closeDetails={closeDetails}
     toggleMaximized={restore}
@@ -368,6 +370,7 @@ ${error.stack ?? ''}`
         }, () => <MaximizedPlan
           source={projections.source(sessionId)}
           t={t}
+          sessionId={sessionId}
           closeDetails={closePluginDetails}
           restore={restorePlan}
         />)
@@ -384,6 +387,7 @@ ${error.stack ?? ''}`
         locale: namespace,
         inject: (): ClaudePlanPanelInjected => ({
           t,
+          sessionId,
           closeDetails: closePluginDetails,
           maximized: false,
           toggleMaximized: maximizePlan,

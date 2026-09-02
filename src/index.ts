@@ -35,6 +35,7 @@ import { registerJiraRoute } from './jira-routes.ts'
 import { AskService } from './ask.ts'
 import { registerAskRoute } from './ask-routes.ts'
 import { registerReviewCommentRoute } from './review-comment-routes.ts'
+import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
@@ -445,6 +446,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return agent !== undefined && webCtx.agentPresets.composedPreset(agent.ctx) === CLAUDE_CODE_PRESET_ID
     }
     registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
+    registerPlanFeedbackRoute(webCtx, supervisor.planFeedback, ownsClaudeSession)
     registerClaudeRewindRoute(webCtx, sidecar, {
       eventsFor: sessionId => {
         const agent = webCtx.agents.get(sessionId as never)

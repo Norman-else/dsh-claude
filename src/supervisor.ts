@@ -28,6 +28,7 @@ import {
   type ClaudeUsage,
 } from './events.ts'
 import { createPermissionBridge } from './permission.ts'
+import { PlanFeedbackGate } from './plan-feedback.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
@@ -290,6 +291,8 @@ export class ClaudeSupervisor {
   readonly #runtime: Pick<SubprocessRuntime, 'spawn' | 'resolveExecutable'>
   readonly #approval: Pick<ApprovalService, 'request'>
   readonly #userQuestions: Pick<UserQuestionService, 'ask'>
+  /** Lets the plan panel answer a plan's approval with revisions. */
+  readonly planFeedback = new PlanFeedbackGate()
   readonly #config: ClaudeSupervisorConfig
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
@@ -669,7 +672,7 @@ export class ClaudeSupervisor {
       }
     }
     const userQuestion = createUserQuestionBridge(this.#userQuestions, activeInteraction)
-    const canUseTool = createPermissionBridge(this.#approval, activeInteraction, userQuestion)
+    const canUseTool = createPermissionBridge(this.#approval, activeInteraction, userQuestion, this.planFeedback)
     const options: ClaudeOptions = {
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,

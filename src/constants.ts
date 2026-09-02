@@ -26,6 +26,7 @@ export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'
 export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
 export const CLAUDE_EDITOR_OPEN_PATH = '/plugins/dsh-claude/editor/open'
 export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
+export const CLAUDE_PLAN_FEEDBACK_PATH = '/plugins/dsh-claude/plan/feedback'
 
 /** Which renderer draws Claude's visible output.
  *

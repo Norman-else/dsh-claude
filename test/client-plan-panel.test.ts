@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { latestPlanReview, parsePlanReviewKey, planReviewKey, planReviews, planTitle } from '../src/client/ClaudePlanPanel.tsx'
+import { latestPlanReview, parsePlanReviewKey, planReviewKey, planReviews, planTitle, quotedSelection } from '../src/client/ClaudePlanPanel.tsx'
 
 let ordinal = 0
 function permission(fields: Partial<ClaudeActivityEvent>): ClaudeActivityEvent {
@@ -125,5 +125,43 @@ describe('plan titles', () => {
 
   it('bounds a title that would push the picker wide', () => {
     expect(planTitle(`# ${'long '.repeat(40)}`).length).toBeLessThanOrEqual(80)
+  })
+})
+
+describe('quoting a passage of the plan', () => {
+  const body = { contains: (node: Node) => node !== outside } as unknown as Node
+  const outside = {} as Node
+  const inside = {} as Node
+  const selection = (fields: Partial<Selection> & { text?: string }): Selection => ({
+    isCollapsed: false,
+    rangeCount: 1,
+    getRangeAt: () => ({ startContainer: inside, endContainer: inside }) as Range,
+    toString: () => fields.text ?? '',
+    ...fields,
+  }) as unknown as Selection
+
+  it('quotes a selection that lies inside the plan body', () => {
+    expect(quotedSelection(selection({ text: '  1. Ship it  ' }), body)).toBe('1. Ship it')
+  })
+
+  it('ignores a selection that is not the reader marking up the plan', () => {
+    expect(quotedSelection(null, body)).toBeUndefined()
+    expect(quotedSelection(selection({ text: 'x' }), null)).toBeUndefined()
+    expect(quotedSelection(selection({ text: 'x', isCollapsed: true }), body)).toBeUndefined()
+    expect(quotedSelection(selection({ text: 'x', rangeCount: 0 }), body)).toBeUndefined()
+    // Whitespace is not a passage.
+    expect(quotedSelection(selection({ text: '   \n ' }), body)).toBeUndefined()
+  })
+
+  it('ignores a selection that starts or ends outside the plan', () => {
+    const straddling = selection({
+      text: 'half of this is the transcript',
+      getRangeAt: () => ({ startContainer: outside, endContainer: inside }) as Range,
+    })
+    expect(quotedSelection(straddling, body)).toBeUndefined()
+  })
+
+  it('bounds a selection of the whole plan', () => {
+    expect(quotedSelection(selection({ text: 'q'.repeat(4_000) }), body)).toHaveLength(1_000)
   })
 })

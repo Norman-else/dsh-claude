@@ -532,6 +532,122 @@ export const planCount: CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 }
 
+/** The review composer: notes filed so far, the pending quote, and the box.
+ *  Docked below the plan body so the plan itself keeps the scrolling room. */
+export const planComposer: CSSProperties = {
+  flex: 'none',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  maxHeight: '45%',
+  overflowY: 'auto',
+  padding: '10px 14px 12px',
+  borderTop: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  background: 'var(--dsw-alias-bg-layer-1)',
+}
+
+export const planNoteList: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+}
+
+export const planNote: CSSProperties = {
+  position: 'relative',
+  padding: '6px 26px 6px 8px',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-bg-base)',
+}
+
+/** The quoted passage, marked as someone else's words by the rule down its
+ *  left edge rather than by quotation marks it may already contain. */
+export const planNoteQuote: CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 3,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  margin: 0,
+  paddingLeft: 8,
+  borderLeft: '2px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 24%, transparent))',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
+  whiteSpace: 'pre-wrap',
+}
+
+export const planNoteText: CSSProperties = {
+  margin: '4px 0 0',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '17px',
+  whiteSpace: 'pre-wrap',
+}
+
+export const planNoteRemove: CSSProperties = {
+  position: 'absolute',
+  top: 4,
+  right: 4,
+  width: 18,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
+  border: 0,
+  borderRadius: 5,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 14,
+  lineHeight: 1,
+  cursor: 'pointer',
+}
+
+/** The live selection, shown attached to the box it will be filed with. */
+export const planQuoteChip: CSSProperties = {
+  position: 'relative',
+  padding: '6px 26px 6px 8px',
+  borderRadius: 7,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+}
+
+export const planComposerInput: CSSProperties = {
+  boxSizing: 'border-box',
+  width: '100%',
+  minHeight: 56,
+  padding: '7px 9px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-bg-base)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontFamily: 'inherit',
+  fontSize: 12,
+  lineHeight: '18px',
+  resize: 'vertical',
+}
+
+export const planComposerActions: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+}
+
+export const planComposerHint: CSSProperties = {
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
+}
+
+export const planComposerError: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-state-error-primary)',
+  fontSize: 11,
+  lineHeight: '16px',
+}
+
 /** Maximize and close: the control group at the header's right end. */
 export const planHeaderEnd: CSSProperties = {
   flex: 'none',

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { IconCloseOutline16, IconFullscreenOutline16, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent } from '../events.ts'
@@ -6,9 +6,11 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
 import * as styles from './styles.ts'
+import { sendPlanForChanges, type PlanNote } from './plan-feedback-api.ts'
 
 export interface ClaudePlanPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
+  sessionId: string
   closeDetails: () => void
   /** Whether the panel is drawn in the shell overlay rather than the column. */
   maximized: boolean
@@ -17,6 +19,8 @@ export interface ClaudePlanPanelInjected {
 
 export interface ClaudePlanPanelProps extends ClaudePlanPanelInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
+  /** Seam for tests; defaults to the host route that answers the approval. */
+  submitChanges?: typeof sendPlanForChanges
 }
 
 const PLAN_TOOL = 'ExitPlanMode'
@@ -82,6 +86,20 @@ export function planTitle(plan: string): string {
 }
 
 const MAX_TITLE_CHARS = 80
+const MAX_QUOTE_CHARS = 1_000
+
+/** The passage under the current selection, when it lies inside the plan body.
+ *
+ *  Reads the live selection rather than mirroring the DOM: the body is the
+ *  Host's Markdown output, which this package renders but does not own, and
+ *  the only stable thing about it is that it is inside this element. */
+export function quotedSelection(selection: Selection | null, body: Node | null): string | undefined {
+  if (selection === null || body === null || selection.isCollapsed || selection.rangeCount === 0) return undefined
+  const range = selection.getRangeAt(0)
+  if (!body.contains(range.startContainer) || !body.contains(range.endContainer)) return undefined
+  const text = selection.toString().trim()
+  return text.length === 0 ? undefined : text.slice(0, MAX_QUOTE_CHARS)
+}
 
 /** The newest review as one primitive, for readers that only need to know
  *  whether it changed. A snapshot hook keeps its value only while the
@@ -155,7 +173,7 @@ const STATE_LABEL: Record<PlanState, ClaudeCodeSettingsKey> = {
 /** The plan behind an `ExitPlanMode` approval, as the document it was written
  *  as. The decision itself stays with the Host's approval dialog; this panel
  *  is where the plan is actually read, under the reader's own prose palette. */
-export function ClaudePlanPanel({ useClaudeProjection, t, closeDetails, maximized, toggleMaximized }: ClaudePlanPanelProps) {
+export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetails, maximized, toggleMaximized, submitChanges = sendPlanForChanges }: ClaudePlanPanelProps) {
   const markdownLabels = useClaudeMarkdownLabels(t)
   const owned = useClaudeProjection(projection => projection.owned)
   const activities = useClaudeProjection(projection => projection.activities)
@@ -172,6 +190,60 @@ export function ClaudePlanPanel({ useClaudeProjection, t, closeDetails, maximize
     if (pendingId !== undefined) setChosen(pendingId)
   }, [pendingId])
   const review = reviews.find(item => item.toolUseId === chosen) ?? reviews.at(-1)
+  const [notes, setNotes] = useState<readonly PlanNote[]>([])
+  const [draft, setDraft] = useState('')
+  const [quote, setQuote] = useState<string>()
+  const [sending, setSending] = useState(false)
+  const [failure, setFailure] = useState<'planSettled' | 'planFeedbackFailed'>()
+  const body = useRef<HTMLDivElement>(null)
+  const composer = useRef<HTMLTextAreaElement>(null)
+  // A selection inside the plan becomes the quote the next note hangs off.
+  // Watched rather than captured on a button press: by the time a toolbar
+  // button takes focus the selection is already gone.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const read = (): void => {
+      const selected = quotedSelection(document.getSelection(), body.current)
+      if (selected !== undefined) setQuote(selected)
+    }
+    document.addEventListener('selectionchange', read)
+    return () => { document.removeEventListener('selectionchange', read) }
+  }, [])
+  // Notes belong to the plan they were written about.
+  useEffect(() => {
+    setNotes([])
+    setDraft('')
+    setQuote(undefined)
+    setFailure(undefined)
+  }, [review?.toolUseId])
+  const addNote = useCallback((): void => {
+    const text = draft.trim()
+    if (text.length === 0) return
+    setNotes(current => [...current, quote === undefined ? { text } : { quote, text }])
+    setDraft('')
+    setQuote(undefined)
+  }, [draft, quote])
+  const send = useCallback((): void => {
+    if (review === undefined || sending) return
+    const text = draft.trim()
+    // Whatever is still in the box counts: nobody expects to have to press
+    // "add" before "send".
+    const pending = text.length === 0 ? notes : [...notes, quote === undefined ? { text } : { quote, text }]
+    if (pending.length === 0) return
+    setSending(true)
+    setFailure(undefined)
+    void submitChanges(sessionId, review.toolUseId, pending).then(() => {
+      setNotes([])
+      setDraft('')
+      setQuote(undefined)
+      setSending(false)
+    }, (error: unknown) => {
+      // The notes stay in the panel: the reviewer wrote them and the send is
+      // what failed.
+      setFailure(error instanceof Error && error.message === 'planSettled' ? 'planSettled' : 'planFeedbackFailed')
+      setSending(false)
+    })
+  }, [draft, notes, quote, review, sending, sessionId, submitChanges])
   // Nothing to read means nothing to hold the details column open for.
   useEffect(() => {
     if (!owned || review === undefined) closeDetails()
@@ -237,7 +309,7 @@ export function ClaudePlanPanel({ useClaudeProjection, t, closeDetails, maximize
           <button type="button" className={styles.panelIconButtonClass} aria-label={t('planClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
         </div>
       </div>
-      <div style={styles.tasksBody}>
+      <div style={styles.tasksBody} ref={body}>
         {review === undefined
           ? <p style={styles.tasksGroupEmpty}>{t('planEmpty')}</p>
           : <>
@@ -245,6 +317,58 @@ export function ClaudePlanPanel({ useClaudeProjection, t, closeDetails, maximize
             <ClaudeMarkdown key={review.toolUseId} text={review.plan} labels={markdownLabels} />
           </>}
       </div>
+      {review?.state !== 'pending' ? null : (
+        <div style={styles.planComposer}>
+          {notes.length === 0 ? null : (
+            <ul style={styles.planNoteList}>
+              {notes.map((note, index) => (
+                <li key={index} style={styles.planNote}>
+                  {note.quote === undefined ? null : <p style={styles.planNoteQuote}>{note.quote}</p>}
+                  <p style={styles.planNoteText}>{note.text}</p>
+                  <button
+                    type="button"
+                    style={styles.planNoteRemove}
+                    aria-label={t('planNoteRemove')}
+                    onClick={() => { setNotes(current => current.filter((_, at) => at !== index)) }}
+                  >×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {quote === undefined ? null : (
+            <div style={styles.planQuoteChip}>
+              <span style={styles.planNoteQuote}>{quote}</span>
+              <button type="button" style={styles.planNoteRemove} aria-label={t('planQuoteClear')} onClick={() => { setQuote(undefined) }}>×</button>
+            </div>
+          )}
+          <textarea
+            ref={composer}
+            value={draft}
+            placeholder={t(quote === undefined ? 'planNotePlaceholder' : 'planNoteQuotedPlaceholder')}
+            style={styles.planComposerInput}
+            onChange={event => { setDraft(event.currentTarget.value) }}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+              // Enter files the note, Cmd/Ctrl+Enter sends everything: the
+              // common case is several notes, so the plain key is the one that
+              // keeps you writing.
+              event.preventDefault()
+              if (event.metaKey || event.ctrlKey) send()
+              else addNote()
+            }}
+          />
+          {failure === undefined ? null : <p role="alert" style={styles.planComposerError}>{t(failure)}</p>}
+          <div style={styles.planComposerActions}>
+            <span style={styles.planComposerHint}>{t('planNoteHint')}</span>
+            <button
+              type="button"
+              style={{ ...styles.askButton, ...styles.askPrimaryButton }}
+              disabled={sending || (notes.length === 0 && draft.trim().length === 0)}
+              onClick={send}
+            >{t(sending ? 'planSending' : 'planSendForChanges')}</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

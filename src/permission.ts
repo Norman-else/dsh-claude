@@ -8,6 +8,7 @@ import {
   type ClaudeActivityCursor,
 } from './events.ts'
 import type { UserQuestionBridge } from './user-question.ts'
+import { planFeedbackMessage, type PlanFeedbackGate } from './plan-feedback.ts'
 
 export type ApprovalRequester = Pick<ApprovalService, 'request'>
 
@@ -118,6 +119,7 @@ export function createPermissionBridge(
   approval: ApprovalRequester,
   activeContext: ActivePermissionContextProvider,
   userQuestion?: UserQuestionBridge,
+  planFeedback?: PlanFeedbackGate,
 ): CanUseTool {
   return async (toolName, input, options) => {
     if (toolName === 'AskUserQuestion') {
@@ -143,6 +145,11 @@ export function createPermissionBridge(
     active.markActivity?.()
     const reason = permissionReason(toolName, input, options)
     const plan = planText(toolName, input)
+    const session = active.agent.session
+    // Tracked outside the try so a throw anywhere below still puts the
+    // session's own policy back; a failed ask must not leave Full access
+    // asking about everything else.
+    let silenced = false
     try {
       await active.appendActivity({
         kind: 'permission',
@@ -169,23 +176,60 @@ export function createPermissionBridge(
       // below is therefore not enough — the ask has to be un-silenced for as
       // long as it is open, and put back exactly as it was afterwards.
       const userDecides = plan !== undefined
-      const session = active.agent.session
-      const silenced = userDecides && approvalPolicyOf(session.events) === SILENT_POLICY
-      if (silenced) await session.append('approval/policy', { policy: ASKING_POLICY })
+      silenced = userDecides && approvalPolicyOf(session.events) === SILENT_POLICY
+      if (silenced) session.append('approval/policy', { policy: ASKING_POLICY })
       const alreadyFullAccess = !userDecides && await active.hasFullAccess?.() === true
-      const outcome = alreadyFullAccess
-        ? 'allowed-once'
-        : await approval.request({
+      // Approving and rejecting are the only answers the approval dialog has,
+      // and neither is "change this". A reviewer who wants an edit can only
+      // reject, which reaches Claude as a bare refusal it cannot act on. So a
+      // plan's approval is raced against the panel: the dialog and the panel's
+      // notes are two answers to the same question, and whichever arrives
+      // first ends it. The loser is aborted rather than left hanging, so a
+      // dialog nobody answered does not outlive the plan it was asking about.
+      const revision = new AbortController()
+      const notes = plan === undefined || planFeedback === undefined
+        ? undefined
+        : planFeedback.wait(options.toolUseID, AbortSignal.any([options.signal, revision.signal]))
+      const decided = new AbortController()
+      const asked = alreadyFullAccess
+        ? Promise.resolve<ApprovalOutcome>('allowed-once')
+        : approval.request({
             agent: active.agent,
             toolName,
             reason,
-            signal: options.signal,
-          }).finally(async () => {
-            // Only ever restores a policy this bridge itself lifted, so a user
-            // who switched away from Full access while reading keeps their own
-            // choice rather than having `never` written back over it.
-            if (silenced) await session.append('approval/policy', { policy: SILENT_POLICY })
+            signal: notes === undefined ? options.signal : AbortSignal.any([options.signal, decided.signal]),
           })
+      const answer = notes === undefined
+        ? { outcome: await asked }
+        : await Promise.race([
+            asked.then(outcome => { revision.abort(); return { outcome } }),
+            notes.then(value => value === undefined ? undefined : { revisions: value }),
+          ]).then(async first => {
+            if (first !== undefined && 'revisions' in first) decided.abort()
+            // `notes` resolving undefined means the wait was abandoned, which
+            // only happens once the dialog has answered.
+            return first ?? { outcome: await asked }
+          })
+      if ('revisions' in answer) {
+        const message = planFeedbackMessage(answer.revisions)
+        active.recordDenial?.(options.toolUseID)
+        await active.appendActivity({
+          kind: 'permission',
+          phase: 'denied',
+          toolUseId: options.toolUseID,
+          toolName,
+          title: options.displayName ?? toolName,
+          summary: 'Sent back for changes in DeepSeek Harness',
+          text: message,
+        })
+        return {
+          behavior: 'deny',
+          message,
+          toolUseID: options.toolUseID,
+          decisionClassification: 'user_reject',
+        }
+      }
+      const outcome = answer.outcome
       // The access selector can change while the approval UI is open. Re-read
       // its durable state so an explicit Full access choice wins over the stale
       // request being closed as rejected/cancelled by that mode transition.
@@ -231,6 +275,15 @@ export function createPermissionBridge(
         message,
         toolUseID: options.toolUseID,
         decisionClassification: 'user_reject',
+      }
+    } finally {
+      // Best effort: an append that fails here cannot be reported without
+      // overwriting the decision this call already reached.
+      try {
+        if (silenced) session.append('approval/policy', { policy: SILENT_POLICY })
+      } catch {
+        // The session log is the only place this could be recorded, and it is
+        // the thing that just failed.
       }
     }
   }
