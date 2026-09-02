@@ -2816,6 +2816,11 @@ export const diffFile: CSSProperties = {
 }
 
 export const diffFileHeader: CSSProperties = {
+  // Sticks to the top of the scroll area while its own file is in view; the next
+  // file's header pushes it out as that file scrolls up.
+  position: 'sticky',
+  top: 0,
+  zIndex: 1,
   width: '100%',
   minHeight: 38,
   display: 'flex',
