@@ -113,6 +113,9 @@ function fakeAgent(id = 'dsh-session-1', cwd = '/workspace', onAppend?: (type: s
 
 const sidecarRoots: string[] = []
 const sidecars = new WeakMap<ClaudeSupervisor, ClaudeSidecarRepository>()
+/** The live config object each supervisor reads, so a test can change a
+ *  setting mid-turn the way the settings route does. */
+const configs = new WeakMap<ClaudeSupervisor, { renderMode: ClaudeRenderMode }>()
 
 afterEach(async () => {
   resetClaudeModels()
@@ -130,21 +133,23 @@ function supervisor(
   const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
   sidecarRoots.push(root)
   const sidecar = suppliedSidecar ?? new ClaudeSidecarRepository({ root })
+  const config = {
+    executablePath: '/local/claude',
+    idleTimeoutMs,
+    maxProcesses,
+    defaultModel: 'default',
+    renderMode,
+  }
   const runtime = new ClaudeSupervisor({
     runtime: { spawn: () => { throw new Error('fake query must not spawn') } },
     approval: { request: async () => 'rejected' },
     userQuestions: { ask: async () => ({ answers: [] }) },
-    config: {
-      executablePath: '/local/claude',
-      idleTimeoutMs,
-      maxProcesses,
-      defaultModel: 'default',
-      renderMode,
-    },
+    config,
     queryFactory: create,
     sidecar,
   })
   sidecars.set(runtime, sidecar)
+  configs.set(runtime, config)
   return runtime
 }
 
@@ -1723,6 +1728,32 @@ describe('Claude native renderer mirroring', () => {
     // renderer, or the plugin transcript would redraw the natively streamed answer.
     expect(activities.filter(activity => activity.kind === 'text').length).toBeGreaterThan(0)
     expect(activities.every(activity => activity.renderer === 'native')).toBe(true)
+    await runtime.dispose()
+  })
+
+  it('keeps a running turn on the renderer it was admitted with when the setting flips', async () => {
+    // The reported break: switching the renderer while a turn was streaming
+    // left the step half-stamped. The Client reads one native record as "the
+    // whole step is DSH's to draw" and folds the plugin transcript away, while
+    // the adapter -- which froze its own answer at turn start -- had streamed
+    // no native blocks. The turn finished with nothing on screen.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'look around', renderMode: 'plugin' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('Checking.'))
+    configs.get(runtime)!.renderMode = 'native'
+    query.push(toolCallMessage)
+    query.push(toolResultMessage)
+    query.push(result('done'))
+    await collect(output)
+
+    const activities = (await projection(runtime)).activities
+    expect(activities.length).toBeGreaterThan(0)
+    expect(activities.some(activity => activity.renderer !== undefined)).toBe(false)
+    expect(owner.events.some(event => event.type === 'tool/call')).toBe(false)
     await runtime.dispose()
   })
 

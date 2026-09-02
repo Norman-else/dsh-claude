@@ -234,10 +234,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ...defaultLimits,
   }
   // Settings overrides win over the plugin config; the supervisor reads the
-  // shared config object on every admission, idle schedule, and rendered
-  // message, so updates take effect without a restart. The Client still
-  // decides its own conversation nodes at boot, which is why the renderer
-  // setting is declared as restart-scoped.
+  // shared config object on every admission and idle schedule, so updates take
+  // effect without a restart. The renderer is the exception: the adapter reads
+  // it once per turn and pins it to that turn, because both halves of a turn
+  // -- the records the supervisor stamps and the blocks the adapter streams --
+  // have to agree about who is drawing it.
   const applySettingsOverrides = async (): Promise<void> => {
     const overrides = await readSupervisorLimitOverrides()
     supervisorConfig.idleTimeoutMs = overrides.idleTimeoutMs ?? defaultLimits.idleTimeoutMs

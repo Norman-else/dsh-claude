@@ -334,20 +334,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return
     }
-    const events = await this.#supervisor.runTurn({
-      agent,
-      prompt: injectReviewComments(prompt, this.#drainReviewComments(agent.id as string)),
-      model: options.model,
-      ...(thinkingMode === undefined ? {} : { thinkingMode }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    })
-
     // The plugin renderer draws the visible transcript from the sidecar, so
     // prose and Claude tool groups share one exact ordinal stream and DSH
     // receives only an empty assistant completion anchor plus usage/lifecycle
     // metadata. The native renderer needs the opposite: every visible span
     // arrives as ordinary DSH content blocks.
-    const native = this.#renderMode() === 'native'
+    //
+    // Read once, here, and handed to the supervisor: the setting is live, and
+    // the two halves of a turn must agree. Deciding separately let a switch
+    // mid-turn leave the prose buffered for a renderer that was no longer
+    // drawing it, so the turn finished with nothing on screen.
+    const renderMode = this.#renderMode()
+    const native = renderMode === 'native'
+    const events = await this.#supervisor.runTurn({
+      agent,
+      prompt: injectReviewComments(prompt, this.#drainReviewComments(agent.id as string)),
+      model: options.model,
+      renderMode,
+      ...(thinkingMode === undefined ? {} : { thinkingMode }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    })
     let pendingUsage: TokenUsage | undefined
     let completed = false
     let blockIndex = 0

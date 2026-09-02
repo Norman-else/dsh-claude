@@ -99,6 +99,13 @@ export interface ClaudeTurnRequest {
   prompt: SDKUserMessage['message']['content']
   model?: string
   thinkingMode?: ClaudeThinkingMode
+  /** The renderer this turn is produced for, frozen by the caller before the
+   *  turn starts. The setting is live, so reading it per record would let a
+   *  mid-turn switch stamp one step's records with both renderers -- which the
+   *  Client reads as "natively drawn" for the whole step, while the adapter,
+   *  which froze its own answer at turn start, streamed nothing natively.
+   *  Omitted falls back to the shared config. */
+  renderMode?: ClaudeRenderMode
   signal?: AbortSignal
 }
 
@@ -149,6 +156,9 @@ export type ClaudeQueryFactory = (params: {
 interface ActiveTurn {
   agent: Agent
   cursor: ClaudeActivityCursor
+  /** Whether this turn is produced for DSH's own renderer. Frozen at admission
+   *  so every record of the turn carries one answer. */
+  native: boolean
   output: AsyncQueue<ClaudeTurnStreamEvent>
   promptUuid: ReturnType<typeof randomUUID>
   phase: 'primary' | 'waiting-tasks' | 'follow-up'
@@ -455,6 +465,7 @@ export class ClaudeSupervisor {
     const active: ActiveTurn = {
       agent: request.agent,
       cursor,
+      native: (request.renderMode ?? this.#config.renderMode ?? DEFAULT_CLAUDE_RENDER_MODE) === 'native',
       output: new AsyncQueue<ClaudeTurnStreamEvent>(),
       promptUuid,
       phase: 'primary',
@@ -851,7 +862,7 @@ export class ClaudeSupervisor {
         })
         // The plugin transcript reads thinking off the sidecar; the native
         // renderer needs it on the stream to build a reasoning block.
-        if (this.#nativeRendering()) active.output.push({ type: 'thinking', text: message.text })
+        if (active.native) active.output.push({ type: 'thinking', text: message.text })
         return
       case 'tool-call':
         if (message.parentToolUseId === undefined) this.#closeTranscriptTextSegment(active)
@@ -870,7 +881,7 @@ export class ClaudeSupervisor {
           // Only root calls are mirrored: a subagent's nested tools belong to
           // the Task card that dispatched them, and the native channel has no
           // nesting to hang them under.
-          if (this.#nativeRendering()) {
+          if (active.native) {
             this.#ensureDynamicPresenter(active.agent, message.toolName)
             await this.#appendNativeToolCall(active, message)
           }
@@ -887,7 +898,7 @@ export class ClaudeSupervisor {
           detail: message.output,
           isError: message.isError,
         })
-        if (message.parentToolUseId === undefined && this.#nativeRendering()) {
+        if (message.parentToolUseId === undefined && active.native) {
           await this.#appendNativeToolResult(active, message)
         }
         return
@@ -945,7 +956,7 @@ export class ClaudeSupervisor {
         })
         // A denied call never produces a tool result, so the native card would
         // stay pending forever. Settle it as the failure it is.
-        if (this.#nativeRendering()) {
+        if (active.native) {
           await this.#appendNativeToolResult(active, {
             kind: 'tool-result',
             toolUseId: message.toolUseId,
@@ -967,10 +978,6 @@ export class ClaudeSupervisor {
       durationMs: Math.max(0, now - active.startedAt),
       ...(active.firstOutputAt === undefined ? {} : { ttftMs: Math.max(0, active.firstOutputAt - active.startedAt) }),
     }
-  }
-
-  #nativeRendering(): boolean {
-    return (this.#config.renderMode ?? DEFAULT_CLAUDE_RENDER_MODE) === 'native'
   }
 
   /** Register one presenter-only mirror for a tool name the static preset
@@ -1368,7 +1375,7 @@ export class ClaudeSupervisor {
       // coalesced inside the repository and flushed at segment/turn edges.
       this.#sidecar.appendTranscriptText(active.agent.id as string, {
         text: active.transcriptText,
-        ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
+        ...(active.native ? { renderer: 'native' as const } : {}),
         turn: active.cursor.turn,
         step: active.cursor.step,
         ordinal,
@@ -1395,7 +1402,7 @@ export class ClaudeSupervisor {
       // Stamp the renderer this record was produced for. The Client reads it
       // back per step, so a step drawn natively is never also drawn by the
       // plugin transcript -- and history keeps whichever renderer produced it.
-      ...(this.#nativeRendering() ? { renderer: 'native' as const } : {}),
+      ...(active.native ? { renderer: 'native' as const } : {}),
       turn: active.cursor.turn,
       step: active.cursor.step,
       ordinal,
@@ -1438,7 +1445,7 @@ export class ClaudeSupervisor {
         isError: true,
       })
       // The native card has the same hole, and the same fix as a denied call.
-      if (this.#nativeRendering()) {
+      if (active.native) {
         await this.#appendNativeToolResult(active, {
           kind: 'tool-result',
           toolUseId,
