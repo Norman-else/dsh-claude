@@ -205,7 +205,21 @@ export function registerClaudeProjectionRoute(
     for (const sessionId of sessionIds) {
       void writeSnapshot(sessionId).catch(() => undefined)
     }
+    // One sweep at a time. Each lane's probe chains git commands and a network
+    // `gh pr view`, and the interval has no idea how long the last one took --
+    // so a tick that lands on a sweep still in flight starts a second set of
+    // the same probes rather than waiting. At a lane or two that never showed;
+    // at a full carrier it is sixteen serial probes per tick, arriving faster
+    // than they drain. Skipping a tick costs at most one refresh of metadata
+    // that is deliberately off the transcript's hot path.
+    let sweeping = false
     const timer = setInterval(() => {
+      // The heartbeat leads, and does not ride the sweep. It is the only thing
+      // keeping bytes on a carrier between turns, and an idle connection the
+      // far end reaps is the ending that costs the Client its transcript.
+      writeLine({ type: 'ping' })
+      if (sweeping) return
+      sweeping = true
       void (async () => {
         for (const sessionId of sessionIds) {
           if (closed) return
@@ -214,8 +228,7 @@ export function registerClaudeProjectionRoute(
           if (JSON.stringify(next) === JSON.stringify(metas.get(sessionId))) continue
           writeMeta(sessionId, next)
         }
-        writeLine({ type: 'ping' })
-      })().catch(() => undefined)
+      })().catch(() => undefined).finally(() => { sweeping = false })
     }, META_REFRESH_MS)
     timer.unref?.()
     // Teardown rides the wrapper's signal, which is armed before any await —

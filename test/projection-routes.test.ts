@@ -155,6 +155,56 @@ describe('Claude sidecar projection route', () => {
     expect(method.statusCode).toBe(405)
   })
 
+  it('never starts a metadata sweep while the last one is still running', async () => {
+    // The sweep probes git and `gh pr view` per lane -- seconds of work -- on
+    // a five second interval with nothing stopping the ticks from stacking.
+    // At one or two lanes that never showed; once a standing watcher put every
+    // listed session on the carrier it became sixteen serial network probes
+    // per tick, piling up faster than they drain.
+    vi.useFakeTimers()
+    const ctx = context()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 1, activities: [] }),
+      sequence: () => 0,
+      subscribe: () => () => {},
+    } as unknown as ClaudeSidecarRepository
+    let probes = 0
+    registerClaudeProjectionRoute(ctx, sidecar, () => true, () => [], async () => {
+      probes += 1
+      // A probe that is still out when the next tick lands.
+      return await new Promise(() => {})
+    })
+    void ctx.handler(request(multi('session/a')), response())
+    await vi.advanceTimersByTimeAsync(0)
+    const afterFirstPaint = probes
+    // Five intervals with the first sweep still in flight.
+    await vi.advanceTimersByTimeAsync(5 * 5_000)
+
+    expect(probes - afterFirstPaint).toBe(1)
+    vi.useRealTimers()
+  })
+
+  it('keeps the heartbeat going while a metadata sweep is stuck', async () => {
+    // The heartbeat is the only thing that keeps bytes on an idle carrier, and
+    // an idle connection reaped by the far end is precisely the ending that
+    // leaked the client's permit. It must not sit behind a `gh` probe.
+    vi.useFakeTimers()
+    const ctx = context()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 1, activities: [] }),
+      sequence: () => 0,
+      subscribe: () => () => {},
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(ctx, sidecar, () => true, () => [], async () => await new Promise(() => {}))
+    const res = response()
+    void ctx.handler(request(multi('session/a')), res)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(3 * 5_000)
+
+    expect(lines(res).filter(line => line.type === 'ping')).toHaveLength(3)
+    vi.useRealTimers()
+  })
+
   it('carries every session on one stream, stamping each line with its session', async () => {
     const ctx = context()
     const listeners = new Map<string, (delta: unknown) => void>()
