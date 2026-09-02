@@ -147,6 +147,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true)
@@ -164,11 +165,15 @@ describe('repository setup service', () => {
     expect(fake.spawn.mock.calls[4]?.[0].argv).toEqual([
       '/bin/git', '-c', 'credential.interactive=never', 'fetch', '--all', '--prune',
     ])
-    const worktreeAdd = fake.spawn.mock.calls[5]?.[0].argv
+    expect(fake.spawn.mock.calls[5]?.[0].argv).toEqual([
+      '/bin/git', 'for-each-ref', '--format=%(upstream:short)', 'refs/heads/main',
+    ])
+    const worktreeAdd = fake.spawn.mock.calls[6]?.[0].argv
     expect(worktreeAdd?.slice(0, 4)).toEqual(['/bin/git', 'worktree', 'add', '-b'])
+    // No upstream reported, so the local branch stays the base.
     expect(worktreeAdd?.at(-1)).toBe('refs/heads/main')
-    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual(['/bin/git', 'worktree', 'remove', '--force', '--', result.path])
-    expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'branch', '-D', '--', result.branch])
+    expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'worktree', 'remove', '--force', '--', result.path])
+    expect(fake.spawn.mock.calls[8]?.[0].argv).toEqual(['/bin/git', 'branch', '-D', '--', result.branch])
   })
 
   it('uses a configured prefix for generated branches and preserves an explicit branch name', async () => {
@@ -177,6 +182,7 @@ describe('repository setup service', () => {
       { stdout: `${first.root}\n` },
       { stdout: '# branch.head main\n' },
       { stdout: 'main\n' },
+      { stdout: '' },
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
@@ -196,6 +202,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const explicit = await new RepositorySetupService(explicitRuntime, {
       leasePath: second.leasePath,
@@ -203,7 +210,7 @@ describe('repository setup service', () => {
       branchPrefix: async () => 'ignored',
     }).setup(second.root, 'main', true, 'feature/exact-name')
     expect(explicit.branch).toBe('feature/exact-name')
-    expect(explicitRuntime.spawn.mock.calls[5]?.[0].argv).toContain('feature/exact-name')
+    expect(explicitRuntime.spawn.mock.calls[6]?.[0].argv).toContain('feature/exact-name')
   })
 
   it('names the worktree directory after the repository and branch, flattened and case-kept', async () => {
@@ -214,6 +221,7 @@ describe('repository setup service', () => {
       { stdout: `${root}\n` },
       { stdout: '# branch.head main\n' },
       { stdout: 'main\n' },
+      { stdout: '' },
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
@@ -234,6 +242,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
     const result = await service.setup(root, 'main', true, 'PSOS-5683')
@@ -246,6 +255,7 @@ describe('repository setup service', () => {
       { stdout: `${root}\n` },
       { stdout: '# branch.head main\n' },
       { stdout: 'claude/fix-login-redirect\nmain\n' },
+      { stdout: '' },
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
@@ -272,6 +282,7 @@ describe('repository setup service', () => {
         { stdout: 'main\n' },
         { stdout: '' },
         { stdout: '' },
+      { stdout: '' },
         { stdout: '' },
       ])
       const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, summarizeBranch })
@@ -308,6 +319,7 @@ describe('repository setup service', () => {
       { stdout: 'main\n' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
       { exitCode: 128, stderr: "Preparing worktree\nfatal: a branch named 'PSOS-5694' already exists\n" },
     ])
     await expect(new RepositorySetupService(fake, { leasePath, worktreeRoot }).setup(root, 'main', true, 'PSOS-5694'))
@@ -327,6 +339,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true, 'feature/user-owned')
@@ -340,9 +353,9 @@ describe('repository setup service', () => {
     await service.cleanupOrphans([])
 
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
-    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual(['/bin/git', 'worktree', 'remove', '--force', '--', result.path])
+    expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'worktree', 'remove', '--force', '--', result.path])
     // A branch the user named is theirs; only generated ones are deleted.
-    expect(fake.spawn.mock.calls).toHaveLength(7)
+    expect(fake.spawn.mock.calls).toHaveLength(8)
   })
 
   it('creates a Worktree directly from a remote-tracking ref', async () => {
@@ -354,11 +367,48 @@ describe('repository setup service', () => {
       { stdout: 'origin/feature/remote \n' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
     const result = await service.setup(root, 'origin/feature/remote', true)
     expect(result.branch).toMatch(/^claude\/origin-feature-remote-/)
-    expect(fake.spawn.mock.calls[5]?.[0].argv.at(-1)).toBe('refs/remotes/origin/feature/remote')
+    expect(fake.spawn.mock.calls[6]?.[0].argv.at(-1)).toBe('refs/remotes/origin/feature/remote')
+  })
+
+  it('branches a Worktree off the fetched upstream when the local base branch has one', async () => {
+    // The local branch is whatever it last pulled; a new worktree is meant to
+    // start from the tip the fetch above just refreshed.
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: 'origin/main \n' },
+      { stdout: '' },
+      { stdout: 'origin/main\n' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    const result = await service.setup(root, 'main', true)
+    expect(result).toMatchObject({ mode: 'worktree', branch: expect.stringMatching(/^claude\/main-/u) })
+    expect(fake.spawn.mock.calls[6]?.[0].argv.at(-1)).toBe('refs/remotes/origin/main')
+  })
+
+  it('keeps the local base branch when its upstream is gone', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: 'origin/main\n' },
+      { stdout: '' },
+    ])
+    const service = new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    await service.setup(root, 'main', true)
+    // The prune dropped origin/main, so branching off it would fail outright.
+    expect(fake.spawn.mock.calls[6]?.[0].argv.at(-1)).toBe('refs/heads/main')
   })
 
   it('stops Worktree creation when remote reference refresh fails', async () => {
@@ -433,6 +483,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const service = new RepositorySetupService(fake, { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     const result = await service.setup(root, 'main', true)
@@ -443,7 +494,7 @@ describe('repository setup service', () => {
     await service.cleanupOrphans([])
 
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toEqual([])
-    const cleanup = fake.spawn.mock.calls.slice(6).map(call => call[0].argv)
+    const cleanup = fake.spawn.mock.calls.slice(7).map(call => call[0].argv)
     expect(cleanup).toContainEqual(['/bin/git', 'worktree', 'remove', '--force', '--', result.path])
     // The tree is never inspected: nothing decides to keep it.
     expect(cleanup.flat()).not.toContain('status')
@@ -527,6 +578,7 @@ describe('repository setup service', () => {
       { stdout: '' },
       { stdout: '' },
       { stdout: '' },
+      { stdout: '' },
     ])
     const fresh = new RepositorySetupService(fake, { leasePath, worktreeRoot })
     const result = await fresh.setup(root, 'main', true)
@@ -538,7 +590,7 @@ describe('repository setup service', () => {
     const aged = new RepositorySetupService(runtime([]), { leasePath, worktreeRoot, cleanupGraceMs: 0 })
     await aged.cleanupOrphans([result.path.toUpperCase()])
     expect(JSON.parse(await readFile(leasePath, 'utf8')).leases).toHaveLength(1)
-    expect(fake.spawn.mock.calls).toHaveLength(6)
+    expect(fake.spawn.mock.calls).toHaveLength(7)
   })
 
   // Spawning in a directory that is gone throws ENOENT, which used to leave

@@ -455,6 +455,15 @@ export class RepositorySetupService {
     }
   }
 
+  /** The remote-tracking ref a local base branch follows, when that ref still
+   *  exists. Falls back to the local branch for a branch with no upstream. */
+  async #upstreamRef(git: string, info: RepositoryBranchList, branch: string): Promise<string | undefined> {
+    const upstream = await this.#run(git, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${branch}`], info.root)
+    if (upstream.exitCode !== 0 || upstream.lossy) return undefined
+    const name = upstream.stdout.trim()
+    return name.length > 0 && info.remoteBranches.includes(name) ? `refs/remotes/${name}` : undefined
+  }
+
   async #checkout(info: RepositoryBranchList, branch: string): Promise<RepositorySetupResult> {
     if (info.current !== branch) {
       if (info.dirty) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before switching branches.')
@@ -484,6 +493,9 @@ export class RepositorySetupService {
     const git = await this.#git()
     progress('fetching')
     await this.#fetchRemotes(git, root)
+    // A fresh worktree is meant to start from the remote tip the fetch just
+    // refreshed, not from whatever the local base branch last pulled.
+    const startRef = reuseExistingBranch ? baseRef : (await this.#upstreamRef(git, info, baseBranch)) ?? baseRef
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
     const branch = explicitBranchName ?? await this.#generatedBranch(info, baseBranch, intent, stamp, suffix, progress)
@@ -495,7 +507,7 @@ export class RepositorySetupService {
     if (reuseExistingBranch) await this.#run(git, ['worktree', 'prune'], root).catch(() => undefined)
     const created = await this.#run(
       git,
-      reuseExistingBranch ? ['worktree', 'add', '--', path, branch] : ['worktree', 'add', '-b', branch, path, baseRef],
+      reuseExistingBranch ? ['worktree', 'add', '--', path, branch] : ['worktree', 'add', '-b', branch, path, startRef],
       root,
     )
     if (created.exitCode !== 0) {
