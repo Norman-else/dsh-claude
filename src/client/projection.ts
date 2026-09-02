@@ -514,9 +514,13 @@ export function createClaudeProjectionSource(
     feed: applyLine,
     subscribe(listener) {
       if (disposed) return () => {}
-      const wasIdle = listeners.size === 0
       listeners.add(listener)
-      if (wasIdle) onDemand(true)
+      // EVERY subscriber renews the interest, not just the first one. The lane
+      // set is an LRU, and a standing background watcher holds a listener on
+      // sessions nobody is looking at -- so a first-subscriber-only signal let
+      // the session the user then opened stay at the cold end and lose its
+      // lane, which is a transcript that renders nothing.
+      onDemand(true)
       return () => {
         listeners.delete(listener)
         if (listeners.size !== 0) return
@@ -531,6 +535,14 @@ export function createClaudeProjectionSource(
       onDemand(false)
     },
   }
+}
+
+/** Whether two lane sets carry the same sessions. Order is the LRU's business,
+ *  not the carrier's: the server reads `sessions=` as a set. */
+function sameLanes(before: readonly string[], after: readonly string[]): boolean {
+  if (before.length !== after.length) return false
+  const held = new Set(before)
+  return after.every(sessionId => held.has(sessionId))
 }
 
 /**
@@ -617,11 +629,16 @@ export class ClaudeProjectionStore {
    *  a session list would otherwise reopen it once per row. */
   #demand(sessionId: string, active: boolean): void {
     if (this.#disposed) return
+    const before = this.#lanes()
     if (active) {
       // Re-inserting moves it to the end, so the LRU drops the coldest lane.
       this.#wanted.delete(sessionId)
       this.#wanted.add(sessionId)
     } else if (!this.#wanted.delete(sessionId)) return
+    // Renewed interest in a session that already holds a lane changes nothing
+    // the carrier can see; reopening for it would restate every lane on every
+    // session the user opens.
+    if (sameLanes(before, this.#lanes())) return
     if (this.#settle !== undefined) clearTimeout(this.#settle)
     const timer = setTimeout(() => {
       this.#settle = undefined

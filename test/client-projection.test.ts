@@ -6,6 +6,7 @@ import {
   selectStepActivities,
 } from '../src/client/projection.ts'
 import { CLAUDE_PROJECTION_PATH } from '../src/constants.ts'
+import { MAX_MULTIPLEX_SESSIONS } from '../src/plugin-budget.ts'
 
 const valid = {
   schemaVersion: 1 as const,
@@ -83,6 +84,11 @@ function projectionStore(planned: readonly Carrier[] = []) {
 
 async function flush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0)
+}
+
+/** The sessions one carrier open asked for. */
+function lanesOf(path: string | undefined): readonly string[] {
+  return new URL(path ?? '', 'http://carrier').searchParams.get('sessions')?.split(',') ?? []
 }
 
 afterEach(() => {
@@ -178,6 +184,36 @@ describe('Claude client sidecar projection', () => {
     expect(opened).toHaveLength(1)
     for (const unsubscribe of stop) unsubscribe()
     stream.close()
+    store.dispose()
+  })
+
+  it('gives a renewed subscriber a lane, and reopens for nothing else', async () => {
+    // A standing background watcher holds a listener on every listed session,
+    // so the session the user opens is never the FIRST subscriber to its
+    // source. While only a first subscriber renewed interest, an opened
+    // session stayed at the cold end of the LRU, sat outside the lane cap, and
+    // rendered an empty transcript.
+    vi.useFakeTimers()
+    const { store, opened } = projectionStore()
+    const watched = Array.from({ length: MAX_MULTIPLEX_SESSIONS + 1 }, (_value, index) => `session-${index}`)
+    const stop = watched.map(id => store.source(id).subscribe(() => {}))
+    await flush()
+    expect(opened).toHaveLength(1)
+    expect(lanesOf(opened[0])).not.toContain('session-0')
+
+    const open = store.source('session-0').subscribe(() => {})
+    await flush()
+    expect(opened).toHaveLength(2)
+    expect(lanesOf(opened[1])).toContain('session-0')
+    expect(lanesOf(opened[1])).not.toContain('session-1')
+
+    // Renewing a session that already holds a lane costs no reconnect: every
+    // other lane would be restated on every session the user opens.
+    const again = store.source('session-0').subscribe(() => {})
+    await flush()
+    expect(opened).toHaveLength(2)
+
+    for (const unsubscribe of [...stop, open, again]) unsubscribe()
     store.dispose()
   })
 
