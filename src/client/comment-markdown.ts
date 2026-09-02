@@ -27,7 +27,9 @@ const ALLOWED_TAGS = [
 
 const ALLOWED_ATTR = ['href', 'src', 'alt', 'title', 'align', 'colspan', 'rowspan', 'start', 'type', 'checked', 'disabled', 'open', 'class']
 
-const marked = new Marked({ gfm: true, breaks: false, async: false })
+// GitHub's comment fields render a single newline as a line break, so a bot's
+// `**Low Severity**` heading line stays on its own line here too.
+const marked = new Marked({ gfm: true, breaks: true, async: false })
 
 /** Parse one comment body into HTML. Bot machinery written as HTML comments
  *  disappears here: the sanitizer strips comment nodes, and this drops the

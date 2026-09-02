@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { commentBodyHtml, installCommentSanitizerHooks, renderCommentBody } from '../src/client/comment-markdown.ts'
 
 describe('review comment renderer', () => {
+  it('keeps a bot\'s single newline as a line break, the way GitHub shows it', () => {
+    const html = renderCommentBody('**Low Severity**\nThese additions exercise several cases.')
+
+    expect(html).toContain('<br>')
+    expect(html).not.toContain('</strong> These')
+  })
+
   it('renders GitHub-flavoured Markdown the way the comment was written', () => {
     const html = renderCommentBody([
       '### Large exports cannot be uploaded back',
