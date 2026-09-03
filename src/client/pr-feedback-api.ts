@@ -137,6 +137,28 @@ export async function loadFailingChecks(sessionId: string, pullNumber: number, s
   return checks
 }
 
+/** Review bots sign a comment with an attribution line and an actions checklist
+ *  aimed at the bot itself; in a prompt both are noise, and "apply fix" reads as
+ *  an instruction Claude cannot follow. */
+function commentText(body: string): string {
+  const lines = body.replaceAll(/<!--[\s\S]*?-->/g, '').split('\n')
+    .filter(line => !/^\s*<sup>[\s\S]*<\/sup>\s*$/.test(line))
+  let end = lines.length
+  while (end > 0 && /^\s*(?:-{3,}|\*\*[^*]+\*\*|[-*] \[[ xX]\].*)?\s*$/.test(lines[end - 1] ?? '')) end -= 1
+  // Only a block that actually holds a checkbox is a bot footer; a comment
+  // ending in a bold sentence or a rule keeps it.
+  const trailer = lines.slice(end)
+  return (trailer.some(line => /^\s*[-*] \[[ xX]\]/.test(line)) ? lines.slice(0, end) : lines).join('\n').trim()
+}
+
+/** A one-line comment sits after the author; anything longer starts on its own
+ *  line, so its headings and lists keep meaning instead of running into ours. */
+function attributed(prefix: string, body: string): string {
+  const text = commentText(body)
+  const indented = text.split('\n').map(line => (line.length === 0 ? line : `  ${line}`)).join('\n')
+  return text.includes('\n') ? `${prefix}\n\n${indented}` : `${prefix} ${text}`
+}
+
 /** Draft handed to Claude when the user forwards GitHub review comments. A
  *  resolved thread is a settled conversation: forwarding it would ask Claude to
  *  redo work the reviewers already signed off. */
@@ -147,12 +169,12 @@ export function composeCommentsPrompt(threads: readonly PullRequestReviewThread[
     const [first, ...rest] = thread.comments
     if (first === undefined) return ''
     const anchor = `${thread.path}${thread.line === undefined ? '' : `:${thread.line}`}`
-    const head = `- ${anchor} (@${first.author}): ${first.body.replaceAll('\n', '\n  ')}`
+    const head = attributed(`- ${anchor} (@${first.author}):`, first.body)
     // Later comments are the rest of that conversation, indented under it.
-    const replies = rest.map(reply => `  (@${reply.author}): ${reply.body.replaceAll('\n', '\n  ')}`)
+    const replies = rest.map(reply => attributed(`  (@${reply.author}):`, reply.body))
     return [head, ...replies].join('\n')
   }).filter(block => block.length > 0)
-  return `Please address the following GitHub pull request review comments. Make the requested changes, or explain briefly when a comment should not be applied.\n\n${blocks.join('\n')}`
+  return `Please address the following GitHub pull request review comments. Make the requested changes, or explain briefly when a comment should not be applied.\n\n${blocks.join('\n\n')}`
 }
 
 /** Draft handed to Claude when the user forwards failing CI checks. */

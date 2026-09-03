@@ -77,4 +77,31 @@ describe('pull request feedback client', () => {
     expect(prompt).not.toContain('Old news')
     expect(composeCommentsPrompt([thread('T2', true, [comment(3, 'carol', 'Old news')])])).toBe('')
   })
+
+  it('keeps a bot review readable and drops the checklist meant for the bot', () => {
+    const body = [
+      '### Per-order preflight exhausts rate limits',
+      '**Medium Severity**',
+      'Fetch transaction details only for ineligible orders.',
+      '',
+      '<sup>Reviewed by Navi for commit `c834761`.</sup>',
+      '',
+      '---',
+      '',
+      '**Actions** <!-- navi-autofix -->',
+      '',
+      '- [ ] <!-- navi-autofix --> **Apply fix** — Navi pushes a fix commit to this PR',
+    ].join('\n')
+
+    const prompt = composeCommentsPrompt([thread('T1', false, [comment(1, 'mercoder-dev', body)])])
+
+    // The heading starts a line of its own instead of running into the author.
+    expect(prompt).toContain('- src/a.ts:3 (@mercoder-dev):\n\n  ### Per-order preflight exhausts rate limits')
+    expect(prompt).toContain('  Fetch transaction details only for ineligible orders.')
+    expect(prompt).not.toContain('Apply fix')
+    expect(prompt).not.toContain('Reviewed by Navi')
+    expect(prompt).not.toContain('navi-autofix')
+    // A plain comment still reads as one line.
+    expect(composeCommentsPrompt([thread('T2', false, [comment(2, 'alice', 'Fix it')])])).toContain('(@alice): Fix it')
+  })
 })
