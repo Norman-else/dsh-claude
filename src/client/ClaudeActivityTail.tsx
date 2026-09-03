@@ -5,9 +5,12 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeTurnMarker } from './conversation-sidecar.ts'
 import { summarizeTurnTasks, tasksForTurn } from './ClaudeTasksPanel.tsx'
+import { ClaudeTurnUsage } from './ClaudeActivityNode.tsx'
+import { latestTurnUsage } from './conversation-sidecar.ts'
 import * as styles from './styles.ts'
 
 const MAX_HOVER_TASKS = 6
+const EMPTY_TASKS: readonly ClaudeTaskInfo[] = []
 
 export interface ClaudeActivityTailInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
@@ -22,6 +25,11 @@ export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected {
 export interface ClaudeTaskLauncherProps extends ClaudeActivityTailInjected {
   turn: number
   tasks: readonly ClaudeTaskInfo[]
+}
+
+export interface ClaudeTurnFooterProps extends ClaudeActivityTailInjected {
+  turn: number
+  useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
 }
 
 function taskGlyph(status: ClaudeTaskInfo['status']): { glyph: string; style: CSSProperties } {
@@ -107,7 +115,19 @@ export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLaun
   )
 }
 
+/** Everything that closes a turn, in the order it reads: what the turn is
+ *  still doing, then what it cost. */
+export function ClaudeTurnFooter({ turn, useClaudeProjection, t, openTasks }: ClaudeTurnFooterProps) {
+  const tasks = useClaudeProjection(value => value.tasks?.tasks ?? EMPTY_TASKS)
+  const usage = useClaudeProjection(value => latestTurnUsage(value.activities, turn))
+  return (
+    <>
+      <ClaudeTaskLauncher turn={turn} tasks={tasks} t={t} openTasks={openTasks} />
+      {usage === undefined ? null : <ClaudeTurnUsage usage={usage} t={t} />}
+    </>
+  )
+}
+
 export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
-  const tasks = useClaudeProjection(value => value.tasks?.tasks ?? [])
-  return <ClaudeTaskLauncher turn={matched.turn} tasks={tasks} t={t} openTasks={openTasks} />
+  return <ClaudeTurnFooter turn={matched.turn} useClaudeProjection={useClaudeProjection} t={t} openTasks={openTasks} />
 }

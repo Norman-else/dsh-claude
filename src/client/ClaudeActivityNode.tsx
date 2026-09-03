@@ -440,8 +440,10 @@ export function turnUsageParts(usage: ClaudeUsage, t: Translate): readonly strin
 }
 
 /** The footer the Host draws under its own assistant message, drawn here for
- *  the steps the Host never had a message for. */
+ *  the steps the Host never had a message for. Mounted at the turn's foot, so
+ *  it closes the turn under the task badge rather than above it. */
 export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate }) {
+  ensureCss()
   const parts = turnUsageParts(usage, t)
   if (parts.length === 0) return null
   return (
@@ -470,8 +472,6 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
         ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><ClaudeMarkdown text={item.text} labels={markdownLabels} /></div>
         : item.kind === 'compaction'
         ? <ClaudeCompactionDivider key={`compaction:${item.ordinal}`} compaction={item.compaction} t={t} />
-        : item.kind === 'usage'
-        ? <ClaudeTurnUsage key={`usage:${item.ordinal}`} usage={item.usage} t={t} />
         : item.kind === 'tools'
           ? <ClaudeTranscriptToolGroup
               key={`tools:${item.ordinal}`}

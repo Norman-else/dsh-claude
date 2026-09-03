@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ClaudeTurnUsage, cacheHitRate, formatTurnDuration, turnUsageParts } from '../src/client/ClaudeActivityNode.tsx'
-import { transcriptItemsForStep } from '../src/client/conversation-sidecar.ts'
+import { latestTurnUsage, transcriptItemsForStep } from '../src/client/conversation-sidecar.ts'
 import type { ClaudeActivityEvent } from '../src/events.ts'
 import { en } from '../src/client/locales.ts'
 
@@ -60,24 +60,34 @@ describe('ClaudeTurnUsage', () => {
   })
 })
 
-describe('transcriptItemsForStep', () => {
-  it('closes the step with the turn accounting', () => {
+describe('latestTurnUsage', () => {
+  it('leaves the accounting to the turn footer instead of the step', () => {
     const activities: ClaudeActivityEvent[] = [
       { turn: 1, step: 1, ordinal: 0, kind: 'text', text: 'done' },
       { turn: 1, step: 1, ordinal: 1, kind: 'usage', phase: 'completed', title: 'Claude usage', usage: USAGE },
     ]
 
-    expect(transcriptItemsForStep(activities, 1, 1)).toEqual([
-      { kind: 'text', ordinal: 0, text: 'done' },
-      { kind: 'usage', ordinal: 1, usage: USAGE },
-    ])
+    expect(transcriptItemsForStep(activities, 1, 1)).toEqual([{ kind: 'text', ordinal: 0, text: 'done' }])
+    expect(latestTurnUsage(activities, 1)).toBe(USAGE)
   })
 
-  it('keeps a usage record with nothing in it out of the transcript', () => {
+  it('supersedes each segment report with the newest one', () => {
+    const later = { ...USAGE, cumulativeCostUsd: 9 }
     const activities: ClaudeActivityEvent[] = [
-      { turn: 1, step: 1, ordinal: 0, kind: 'usage', phase: 'completed', title: 'Claude usage' },
+      { turn: 1, step: 1, ordinal: 1, kind: 'usage', phase: 'completed', title: 'Claude usage', usage: USAGE },
+      { turn: 1, step: 2, ordinal: 2, kind: 'usage', phase: 'completed', title: 'Claude usage', usage: later },
+      { turn: 2, step: 1, ordinal: 3, kind: 'usage', phase: 'completed', title: 'Claude usage', usage: USAGE },
     ]
 
-    expect(transcriptItemsForStep(activities, 1, 1)).toEqual([])
+    expect(latestTurnUsage(activities, 1)).toBe(later)
+  })
+
+  it('keeps an empty record, and a natively drawn turn, out of the footer', () => {
+    expect(latestTurnUsage([
+      { turn: 1, step: 1, ordinal: 0, kind: 'usage', phase: 'completed', title: 'Claude usage' },
+    ], 1)).toBeUndefined()
+    expect(latestTurnUsage([
+      { turn: 1, step: 1, ordinal: 0, kind: 'usage', phase: 'completed', title: 'Claude usage', usage: USAGE, renderer: 'native' },
+    ], 1)).toBeUndefined()
   })
 })

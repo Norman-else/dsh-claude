@@ -53,7 +53,6 @@ export type ClaudeTranscriptItem =
   | { kind: 'tools'; ordinal: number; tools: readonly ClaudeTranscriptTool[]; additions?: number; deletions?: number; files?: number }
   | { kind: 'activity'; ordinal: number; row: ClaudeActivityChatData }
   | { kind: 'compaction'; ordinal: number; compaction: ClaudeCompaction }
-  | { kind: 'usage'; ordinal: number; usage: ClaudeUsage }
 
 export interface ClaudeTurnMarker {
   readonly turn: number
@@ -421,6 +420,26 @@ export function nativelyRenderedStep(
     && activity.renderer === 'native')
 }
 
+/** The turn's own accounting, drawn as a footer.
+ *
+ *  It hangs off the turn rather than the step that reported it: a turn waiting
+ *  on background tasks reports usage per settled segment, and the task badge
+ *  the plugin draws at the turn's foot would otherwise sit *under* a line that
+ *  reads as a closing total. Every report is cumulative, so the newest one
+ *  supersedes the ones before it. Natively drawn steps keep the Host's footer.
+ */
+export function latestTurnUsage(
+  activities: readonly ClaudeActivityEvent[],
+  turn: number,
+): ClaudeUsage | undefined {
+  let latest: ClaudeUsage | undefined
+  for (const activity of activities) {
+    if (activity.turn !== turn || activity.kind !== 'usage' || activity.renderer === 'native') continue
+    if (activity.usage !== undefined) latest = activity.usage
+  }
+  return latest
+}
+
 /** Fold one step's shared ordinal stream into Claude Code-style prose and tool groups. */
 export function transcriptItemsForStep(
   activities: readonly ClaudeActivityEvent[],
@@ -486,14 +505,6 @@ export function transcriptItemsForStep(
     if (activity.kind === 'compaction') {
       flushGroup()
       items.push({ kind: 'compaction', ordinal: activity.ordinal, compaction: compactionOf(activity) })
-      continue
-    }
-    // The turn's own accounting, drawn as a footer. The Host puts this under
-    // its native assistant message; a step the plugin draws has no such
-    // message to hang it on, so the transcript carries it instead.
-    if (activity.kind === 'usage' && activity.usage !== undefined) {
-      flushGroup()
-      items.push({ kind: 'usage', ordinal: activity.ordinal, usage: activity.usage })
       continue
     }
     if (activity.kind === 'tool-call' && activity.toolUseId !== undefined && activity.toolName !== undefined) {
