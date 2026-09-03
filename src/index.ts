@@ -25,6 +25,7 @@ import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
 import { registerEditorOpenRoute } from './editor-open-routes.ts'
+import { PromptNamingService, registerClaudePromptNameRoute, registerClaudePromptsRoute } from './prompts.ts'
 import { EditorOpenService } from './editor-open.ts'
 import { PullRequestFeedbackService } from './pr-feedback.ts'
 import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
@@ -442,6 +443,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
     registerEditorOpenRoute(webCtx, new EditorOpenService(webCtx.subprocess), cwdForClaudeSession)
+    registerClaudePromptsRoute(webCtx)
+    registerClaudePromptNameRoute(webCtx, new PromptNamingService(webCtx.subprocess, () => supervisorConfig.executablePath))
     registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(webCtx.subprocess), cwdForClaudeSession)
     registerAskRoute(webCtx, new AskService(webCtx.subprocess, supervisorConfig.executablePath), cwdForClaudeSession, sessionId => {
       const snapshot = supervisor.snapshots().find(item => item.sessionId === sessionId)

@@ -27,6 +27,8 @@ export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
 export const CLAUDE_EDITOR_OPEN_PATH = '/plugins/dsh-claude/editor/open'
 export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
 export const CLAUDE_PLAN_FEEDBACK_PATH = '/plugins/dsh-claude/plan/feedback'
+export const CLAUDE_PROMPTS_PATH = '/plugins/dsh-claude/prompts'
+export const CLAUDE_PROMPT_NAME_PATH = '/plugins/dsh-claude/prompts/name'
 
 /** Which renderer draws Claude's visible output.
  *

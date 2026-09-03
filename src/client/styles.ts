@@ -2849,6 +2849,110 @@ export const reviewCommentHoverText: CSSProperties = {
   overflowWrap: 'anywhere',
 }
 
+export const promptSaveTriggerClass = 'dshClaudePromptSaveTrigger'
+export const promptSaveFieldClass = 'dshClaudePromptSaveField'
+
+/** The composer's own attach button geometry (InputBar.module.css `.add`:
+ *  28x28 circle on --dsw-specific-selector, 14px glyph). The primitives'
+ *  Button has no icon-only form — its `sm` is a 36px-wide capsule around a
+ *  16px slot, which is why this reads oversized beside its neighbours. */
+export const promptSaveTriggerCss = `
+.${promptSaveTriggerClass} {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-specific-selector);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+/* With no draft there is nothing to keep, so the control drops its seat
+ * entirely rather than sitting there as a filled-but-dead circle. */
+.${promptSaveTriggerClass}:disabled {
+  cursor: default;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+}
+.${promptSaveTriggerClass}:focus-visible { outline: none; }
+.${promptSaveFieldClass} {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 7px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  line-height: 20px;
+}
+/* Not --dsw-alias-brand-primary: in the dark theme that alias resolves to
+ * neutral-bluish-50, so a focused field draws a near-white slab around
+ * itself. The focus ring is a step up in the same greys the card is made of. */
+.${promptSaveFieldClass}:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+.${promptSaveFieldClass}:disabled { opacity: 0.6; }
+`
+
+/** The naming card hangs off the composer tool row, portaled so the composer
+ *  card cannot clip it and positioned by useAnchoredPosition. */
+export const promptSaveCard: CSSProperties = {
+  position: 'fixed',
+  zIndex: 120,
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  width: 340,
+  maxWidth: 'calc(100vw - 32px)',
+  padding: '10px 12px',
+  // The same popup surface the session menu uses: --dsw-alias-border-l2 falls
+  // back to a mix of currentColor, which on this dark card reads as a white
+  // hairline rather than an edge.
+  border: '1px solid var(--dsw-alias-border-inverted)',
+  borderRadius: 11,
+  background: 'var(--dsw-specific-menu)',
+  boxShadow: 'var(--dsw-shadow-lv3)',
+  color: 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '20px',
+}
+
+export const promptSaveHeading: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
+}
+
+export const promptSaveActions: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 6,
+}
+
+/** The saved file, wrapped rather than truncated: a path the user cannot read
+ *  in full does not tell them where to go and edit it. */
+export const promptSaveLocation: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
+  overflowWrap: 'anywhere',
+}
+
+export const promptSaveError: CSSProperties = {
+  color: 'var(--dsw-static-red-450, #d64545)',
+  overflowWrap: 'anywhere',
+}
+
 export const diffAhead: CSSProperties = {
   color: 'var(--dsw-static-blue-450)',
 }

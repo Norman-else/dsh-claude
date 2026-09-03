@@ -44,6 +44,8 @@ import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-ros
 import { PanelOpenStore } from './panel-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
+import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './ClaudePromptSaveAction.tsx'
+import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
@@ -192,6 +194,9 @@ export function apply(ctx: ClientContext): void {
     report: (kind, detail) => { diagnostics.report(kind, detail) },
   })
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
+  // ponytail: the group title is fixed at registration, so a language switch
+  // needs a reload to relabel it; subscribe to the locale if anyone minds.
+  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudePromptSource(t('promptSource'))), 'dsh-claude: Claude prompt source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   // Desktop 0.1.2 split the Workspace runtime in two: the `workspaces`
@@ -580,6 +585,16 @@ ${error.stack ?? ''}`
     locale: namespace,
     inject: (): ClaudeSessionMenuInjected => ({ t }),
   }, ClaudeSessionMenu))
+  // In the composer's own tool row beside the attach and access controls: the
+  // owner hands this slot the live draft, and an icon there costs the layout
+  // nothing, where a docked row would move the composer on every keystroke.
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'claude-prompt-save',
+    order: 40,
+    locale: namespace,
+    inject: (): ClaudePromptSaveActionInjected => ({ t }),
+  }, ClaudePromptSaveAction))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-review-comments',
