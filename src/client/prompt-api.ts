@@ -1,4 +1,4 @@
-import { CLAUDE_PROMPTS_PATH, CLAUDE_PROMPT_NAME_PATH } from '../constants.ts'
+import { CLAUDE_PROMPTS_PATH, CLAUDE_PROMPT_NAME_PATH, CLAUDE_PROMPT_REFINE_PATH } from '../constants.ts'
 import type { ClaudePromptView } from '../prompts.ts'
 import { pluginRead, pluginWrite } from './plugin-transport.ts'
 
@@ -48,6 +48,14 @@ export async function suggestClaudePromptName(draft: string, cancel?: AbortSigna
   } catch {
     return undefined
   }
+}
+
+/** Rewrite a draft into something an agent can act on. Unlike the name
+ *  suggestion this one throws: the user asked for it and is waiting, so a
+ *  failure is theirs to see rather than ours to swallow. */
+export async function refineClaudePrompt(draft: string, cancel?: AbortSignal): Promise<string> {
+  const answer = await pluginWrite<{ text: string }>(CLAUDE_PROMPT_REFINE_PATH, 'git', cancel, { json: { draft } })
+  return answer.text
 }
 
 /** Characters the host's `PROMPT_NAME` guard rejects; scrubbed rather than

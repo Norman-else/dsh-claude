@@ -2850,6 +2850,8 @@ export const reviewCommentHoverText: CSSProperties = {
 }
 
 export const promptSaveTriggerClass = 'dshClaudePromptSaveTrigger'
+export const promptSpinClass = 'dshClaudePromptSpin'
+export const promptUndoClass = 'dshClaudePromptUndo'
 export const promptSaveFieldClass = 'dshClaudePromptSaveField'
 
 /** The composer's own attach button geometry (InputBar.module.css `.add`:
@@ -2901,6 +2903,17 @@ export const promptSaveTriggerCss = `
   background: var(--dsw-alias-interactive-bg-active);
 }
 .${promptSaveFieldClass}:disabled { opacity: 0.6; }
+/* ic_ds_loading_outline_16 is a bare open ring and nothing in the primitives
+ * turns it, so a four-second rewrite sat behind a frozen glyph that reads as
+ * the letter C. The spin is what makes it a spinner. */
+.${promptSpinClass} { animation: dshClaudePromptSpin 900ms linear infinite; }
+@keyframes dshClaudePromptSpin { to { transform: rotate(360deg); } }
+/* The icon set has no undo arrow, and ic_ds_refresh_outline_16 turns
+ * clockwise — the redo direction. Mirrored, it is the ordinary undo glyph. */
+.${promptUndoClass} { transform: scaleX(-1); }
+@media (prefers-reduced-motion: reduce) {
+  .${promptSpinClass} { animation: none; }
+}
 `
 
 /** The naming card hangs off the composer tool row, portaled so the composer

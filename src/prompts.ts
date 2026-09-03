@@ -4,7 +4,7 @@ import { extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import { CLAUDE_PROMPTS_PATH, CLAUDE_PROMPT_NAME_PATH } from './constants.ts'
+import { CLAUDE_PROMPTS_PATH, CLAUDE_PROMPT_NAME_PATH, CLAUDE_PROMPT_REFINE_PATH } from './constants.ts'
 import { redactText } from './events.ts'
 import { registerPluginRoute } from './http.ts'
 
@@ -128,7 +128,9 @@ export async function writeClaudePrompt(directory: string, name: unknown, body: 
 const MAX_NAME_DRAFT_CHARS = 4_000
 const MAX_NAME_OUTPUT_BYTES = 4 * 1024
 const MAX_SUGGESTED_NAME_CHARS = 48
-const NAME_TIMEOUT_MS = 40_000
+const MAX_REFINE_DRAFT_CHARS = 16_000
+const MAX_REFINED_BYTES = 32 * 1024
+const ASSIST_TIMEOUT_MS = 40_000
 
 /**
  * Ask for a file name and nothing else, with the draft fenced as data.
@@ -160,15 +162,55 @@ export function promptNamePrompt(draft: string): string {
   ].join('\n')
 }
 
-/** One turn, no tools, no MCP: naming a piece of text needs neither, and both
+/**
+ * Rewrite the draft into something an agent can act on, with the draft fenced
+ * as data for the same reason the naming prompt fences it.
+ *
+ * The rule about people and places is not politeness. Asked to rewrite
+ * "后端 assign 给我", the model reached into Claude Code's ambient system
+ * prompt and substituted the operator's actual email address — inventing a
+ * detail the original never carried, and putting a personal address into a
+ * message the user had not written it into. Naming the failure explicitly is
+ * what stopped it; stripping the ambient context with `--system-prompt` also
+ * stopped it but cost a fresh prefill and produced looser rewrites.
+ */
+export function promptRefinePrompt(draft: string): string {
+  const text = draft.trim().slice(0, MAX_REFINE_DRAFT_CHARS)
+  return [
+    'Below is a prompt a user is about to send to a coding agent. Rewrite it so the agent can act on it without coming back with questions.',
+    '',
+    `"""\n${text.replaceAll('"""', '" " "')}\n"""`,
+    '',
+    'Keep the intent and every concrete detail exactly as given — names, paths, branches, identifiers, numbers.',
+    'Leave every reference to a person or place as the original wrote it ("me", "我", "the usual branch");',
+    'you do not know who or what they resolve to, and guessing puts a wrong name in the user\'s message.',
+    'Do not invent requirements the original does not imply, do not answer the prompt, do not add a preamble or sign-off.',
+    'Write the rewrite in the same language the original is written in.',
+    'Reply with the rewritten prompt alone.',
+  ].join('\n')
+}
+
+/** One turn, no tools, no MCP: neither of these tasks needs them, and both
  *  cost seconds of cold start. Variadic `--tools` stays last. */
-export function promptNameArguments(): readonly string[] {
+export function promptAssistArguments(): readonly string[] {
   return [
     '-p', '--output-format', 'text',
     '--model', 'haiku',
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     '--tools', '',
   ]
+}
+
+/** The rewrite in a model reply, or undefined when the reply is unusable.
+ *
+ *  A model told to answer with the text alone still sometimes wraps it in a
+ *  markdown fence, so one is peeled off; anything else is the user's to read
+ *  and edit, and is passed through untouched. */
+export function refinedPrompt(output: string): string | undefined {
+  const trimmed = output.trim()
+  const fenced = /^```[^\n]*\n([\s\S]*?)\n?```$/u.exec(trimmed)
+  const text = (fenced?.[1] ?? trimmed).trim()
+  return text.length === 0 || Buffer.byteLength(text) > MAX_REFINED_BYTES ? undefined : text
 }
 
 /**
@@ -198,8 +240,8 @@ function wordBounded(name: string): string {
   return (boundary > 0 ? cut.slice(0, boundary) : cut).trim()
 }
 
-/** Names a draft with Claude Code's cheapest model. */
-export class PromptNamingService {
+/** Runs Claude Code's cheapest model over the draft: names it, or rewrites it. */
+export class PromptAssistService {
   readonly #runtime: Pick<SubprocessRuntime, 'spawn'>
   readonly #executablePath: () => string
 
@@ -208,38 +250,54 @@ export class PromptNamingService {
     this.#executablePath = executablePath
   }
 
-  /** The suggested name, or undefined whenever one cannot be had. The caller
-   *  already has a name derived locally, so every failure here is a
-   *  non-event: nothing is reported, and nothing is retried. */
-  async suggest(draft: string, signal?: AbortSignal): Promise<string | undefined> {
+  /** One bounded, tool-less turn; undefined whenever it cannot be had. */
+  async #ask(prompt: string, maxOutputBytes: number, signal?: AbortSignal): Promise<string | undefined> {
     const executablePath = this.#executablePath()
-    if (executablePath.length === 0 || draft.trim().length === 0) return undefined
-    const timeout = AbortSignal.timeout(NAME_TIMEOUT_MS)
+    if (executablePath.length === 0) return undefined
+    const timeout = AbortSignal.timeout(ASSIST_TIMEOUT_MS)
     try {
       const handle = this.#runtime.spawn({
-        argv: [executablePath, ...promptNameArguments()],
+        argv: [executablePath, ...promptAssistArguments()],
         // Nowhere in particular: no tool can reach the file system, and a
         // project directory would only pull that project's CLAUDE.md in.
         cwd: homedir(),
         stdio: {
-          stdin: { data: promptNamePrompt(draft) },
-          stdout: { maxBytes: MAX_NAME_OUTPUT_BYTES },
+          stdin: { data: prompt },
+          stdout: { maxBytes: maxOutputBytes },
           stderr: { maxBytes: MAX_NAME_OUTPUT_BYTES },
         },
         graceMs: 1_000,
         signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-        // Extended thinking was 340 of this call's 358 output tokens and most
-        // of its ten seconds, spent deliberating over a file name. Turning it
-        // off takes the call from ~10s to ~3s. A CLI that stops honouring the
-        // variable is slow again, never wrong.
+        // Extended thinking was 340 of the naming call's 358 output tokens and
+        // most of its ten seconds, spent deliberating over a file name.
+        // Turning it off takes that call from ~10s to ~3s. A CLI that stops
+        // honouring the variable is slow again, never wrong.
         env: { MAX_THINKING_TOKENS: '0' },
       })
       const outcome = await handle.done
       if (outcome.exitCode !== 0) return undefined
-      return suggestedName(handle.collected.stdout?.readFrom(0).text ?? '')
+      return handle.collected.stdout?.readFrom(0).text ?? ''
     } catch {
       return undefined
     }
+  }
+
+  /** The suggested file name, or undefined whenever one cannot be had. The
+   *  caller already has a name derived locally, so every failure here is a
+   *  non-event: nothing is reported, and nothing is retried. */
+  async suggest(draft: string, signal?: AbortSignal): Promise<string | undefined> {
+    if (draft.trim().length === 0) return undefined
+    const output = await this.#ask(promptNamePrompt(draft), MAX_NAME_OUTPUT_BYTES, signal)
+    return output === undefined ? undefined : suggestedName(output)
+  }
+
+  /** The rewritten draft, or undefined when the rewrite could not be had.
+   *  Unlike naming, this failure is worth reporting: the user asked for it and
+   *  is waiting on it. */
+  async refine(draft: string, signal?: AbortSignal): Promise<string | undefined> {
+    if (draft.trim().length === 0) return undefined
+    const output = await this.#ask(promptRefinePrompt(draft), MAX_REFINED_BYTES, signal)
+    return output === undefined ? undefined : refinedPrompt(output)
   }
 }
 
@@ -269,7 +327,7 @@ export function registerClaudePromptsRoute(ctx: Context, directory: string = cla
 
 /** Suggest a file name for a draft. Answers `{}` when no name could be had:
  *  the caller keeps the name it derived locally, so this is never an error. */
-export function registerClaudePromptNameRoute(ctx: Context, service: Pick<PromptNamingService, 'suggest'>): void {
+export function registerClaudePromptNameRoute(ctx: Context, service: Pick<PromptAssistService, 'suggest'>): void {
   registerPluginRoute(ctx, {
     mode: 'unary',
     kind: 'exact',
@@ -282,6 +340,29 @@ export function registerClaudePromptNameRoute(ctx: Context, service: Pick<Prompt
       const draft = typeof payload.draft === 'string' ? payload.draft : ''
       const name = await service.suggest(draft, io.signal)
       return { status: 200, value: name === undefined ? {} : { name } }
+    },
+  })
+}
+
+/** Rewrite a draft into something an agent can act on. */
+export function registerClaudePromptRefineRoute(ctx: Context, service: Pick<PromptAssistService, 'refine'>): void {
+  registerPluginRoute(ctx, {
+    mode: 'unary',
+    kind: 'exact',
+    path: CLAUDE_PROMPT_REFINE_PATH,
+    methods: ['POST'],
+    // Not Git, but the same order of magnitude: one cold Claude Code start.
+    budget: 'git',
+    handler: async (io) => {
+      const payload = await io.body<{ draft?: unknown }>(MAX_REQUEST_BYTES)
+      const draft = typeof payload.draft === 'string' ? payload.draft : ''
+      if (draft.trim().length === 0) {
+        return { status: 400, value: { error: 'empty-draft', message: 'There is nothing to rewrite.' } }
+      }
+      const text = await service.refine(draft, io.signal)
+      return text === undefined
+        ? { status: 503, value: { error: 'refine-unavailable', message: 'Claude could not rewrite the prompt.' } }
+        : { status: 200, value: { text } }
     },
   })
 }

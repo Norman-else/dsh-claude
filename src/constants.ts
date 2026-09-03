@@ -29,6 +29,7 @@ export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
 export const CLAUDE_PLAN_FEEDBACK_PATH = '/plugins/dsh-claude/plan/feedback'
 export const CLAUDE_PROMPTS_PATH = '/plugins/dsh-claude/prompts'
 export const CLAUDE_PROMPT_NAME_PATH = '/plugins/dsh-claude/prompts/name'
+export const CLAUDE_PROMPT_REFINE_PATH = '/plugins/dsh-claude/prompts/refine'
 
 /** Which renderer draws Claude's visible output.
  *

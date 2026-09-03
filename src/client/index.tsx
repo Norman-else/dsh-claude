@@ -45,6 +45,7 @@ import { PanelOpenStore } from './panel-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './ClaudePromptSaveAction.tsx'
+import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from './ClaudePromptRefineAction.tsx'
 import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
@@ -595,6 +596,23 @@ ${error.stack ?? ''}`
     locale: namespace,
     inject: (): ClaudePromptSaveActionInjected => ({ t }),
   }, ClaudePromptSaveAction))
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'claude-prompt-refine',
+    order: 41,
+    locale: namespace,
+    inject: (sessionId: string): ClaudePromptRefineActionInjected => {
+      if (sessions === undefined || conversation === undefined) return { t }
+      const scope = sessions.scope(sessionId as SessionId)
+      if (scope === undefined) return { t }
+      const facade = sessionInput(conversation, scope)
+      return {
+        t,
+        replaceDraft: text => { facade.setDraft(text) },
+        notify: (level, text) => { facade.notify(level, text) },
+      }
+    },
+  }, ClaudePromptRefineAction))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-review-comments',
