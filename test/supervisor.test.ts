@@ -743,6 +743,8 @@ describe('Claude supervisor', () => {
     } as SDKMessage)
     query.push(result('Both deployments are running in the background.'))
     await vi.waitFor(() => expect(runtime.snapshots()[0]?.state).toBe('running'))
+    // The turn is still running, so it has no closing total to show yet.
+    expect((await projection(runtime)).activities.filter(activity => activity.kind === 'usage')).toEqual([])
 
     query.push({
       type: 'system',
@@ -787,6 +789,8 @@ describe('Claude supervisor', () => {
       { type: 'complete', text: 'Service one deployed; service two failed.' },
     ]))
     expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle' })
+    // ... and one once it is over, not one per settled segment.
+    expect((await projection(runtime)).activities.filter(activity => activity.kind === 'usage')).toHaveLength(1)
     await runtime.dispose()
   })
 

@@ -1537,18 +1537,7 @@ export class ClaudeSupervisor {
   async #completeProgressSegment(
     active: ActiveTurn,
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
-    recordUsage = true,
   ): Promise<void> {
-    if (recordUsage && (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined || result.usage.cumulativeCostUsd !== undefined)) {
-      await this.#appendSafely(active, {
-        kind: 'usage',
-        phase: 'completed',
-        title: 'Claude usage',
-        summary: usageSummary(result.usage),
-        usage: this.#timedUsage(active, result.usage),
-      })
-      active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
-    }
     if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
       active.text = result.text
       active.transcriptText = result.text
@@ -1561,6 +1550,26 @@ export class ClaudeSupervisor {
     active.text = ''
     this.#closeTranscriptTextSegment(active)
     active.thinking = ''
+  }
+
+  /** The turn's accounting, recorded once the turn is actually over.
+   *
+   *  A turn that hands off to background tasks passes through the same result
+   *  handling on its way to `waiting-tasks`, and recording there drew a closing
+   *  total under a turn that was still running. */
+  async #recordTurnUsage(
+    active: ActiveTurn,
+    result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
+  ): Promise<void> {
+    if (result.usage.inputTokens === undefined && result.usage.outputTokens === undefined && result.usage.cumulativeCostUsd === undefined) return
+    await this.#appendSafely(active, {
+      kind: 'usage',
+      phase: 'completed',
+      title: 'Claude usage',
+      summary: usageSummary(result.usage),
+      usage: this.#timedUsage(active, result.usage),
+    })
+    active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
   }
 
   async #completeTurn(
@@ -1588,16 +1597,6 @@ export class ClaudeSupervisor {
       this.#scheduleLimitReconciliation()
       return
     }
-    if (result.usage.inputTokens !== undefined || result.usage.outputTokens !== undefined || result.usage.cumulativeCostUsd !== undefined) {
-      await this.#appendSafely(active, {
-        kind: 'usage',
-        phase: 'completed',
-        title: 'Claude usage',
-        summary: usageSummary(result.usage),
-        usage: this.#timedUsage(active, result.usage),
-      })
-      active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
-    }
     const unmatchedDenials = (result.permissionDenials ?? [])
       .filter(denial => !active.deniedToolUseIds.has(denial.toolUseId))
     if (unmatchedDenials.length > 0) {
@@ -1609,6 +1608,7 @@ export class ClaudeSupervisor {
       })
     }
     if (!result.success) {
+      await this.#recordTurnUsage(active, result)
       if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
         active.text = result.text
         active.transcriptText = result.text
@@ -1642,9 +1642,10 @@ export class ClaudeSupervisor {
           phase: 'updated',
           title: 'Claude Code is waiting for background tasks',
         })
-        await this.#completeProgressSegment(active, result, false)
+        await this.#completeProgressSegment(active, result)
         return
       }
+      await this.#recordTurnUsage(active, result)
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'completed',
