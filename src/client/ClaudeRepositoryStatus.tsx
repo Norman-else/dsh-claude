@@ -7,6 +7,7 @@ import { executeRepositoryAction, loadRepositoryActionPreview } from './reposito
 import { useActionToast } from './action-toast.tsx'
 import { cleanupMergedRepository } from './repository-setup-api.ts'
 import { relativeAge } from './relative-age.ts'
+import { branchLabel } from './branch-label.ts'
 import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestThreads, type FailingCheck, type PullRequestReviewThread } from './pr-feedback-api.ts'
 import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, rememberAutoFix, setAutoFixEnabled } from './auto-fix.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -36,8 +37,13 @@ export function repositorySummary(repository: RepositoryStatus, t: ClaudeReposit
   if (repository.status === 'unavailable') return [t('repositoryUnavailable')]
   const pullRequest = repository.pullRequest
   return [
-    repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch'),
+    branchLabel(repository, t),
     ...(repository.worktree === true ? [t('repositoryWorktree')] : []),
+    ...(repository.operation === undefined
+      ? []
+      : [(repository.conflicts ?? []).length > 0
+          ? t('conflictBadge', { operation: t(`conflictOperation_${repository.operation}` as ClaudeCodeSettingsKey), count: (repository.conflicts ?? []).length })
+          : t('conflictBadgeReady', { operation: t(`conflictOperation_${repository.operation}` as ClaudeCodeSettingsKey) })]),
     repository.dirty === true ? t('repositoryModified') : t('repositoryClean'),
     ...(pullRequest === undefined
       ? [t('repositoryNoPr')]
@@ -321,6 +327,116 @@ export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }:
   )
 }
 
+interface ResolveDialogState {
+  readonly submitting: boolean
+  readonly confirmAbort: boolean
+  readonly push: boolean
+  readonly error?: string
+}
+
+/** The way out of a stopped merge or rebase. A rebase detaches HEAD, which
+ *  hides every other control on this bar, and the update-branch dialog that
+ *  started it takes its conflict list along when it closes -- so this one is
+ *  mounted from repository state instead, and survives being dismissed. */
+export function ConflictControl({ sessionId, repository, t, report, submitPrompt }: {
+  sessionId: string
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+  report: (text: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+}) {
+  const [dialog, setDialog] = useState<ResolveDialogState>()
+  const operation = repository.operation
+  if (operation === undefined) return null
+  const conflicts = repository.conflicts ?? []
+  const operationName = t(`conflictOperation_${operation}` as ClaudeCodeSettingsKey)
+  const closeDialog = (): void => {
+    if (dialog?.submitting !== true) setDialog(undefined)
+  }
+  const run = (action: 'resolve-continue' | 'resolve-abort'): void => {
+    if (dialog === undefined || dialog.submitting) return
+    const { error: _error, ...pending } = dialog
+    setDialog({ ...pending, submitting: true })
+    void executeRepositoryAction(sessionId, {
+      action,
+      fingerprint: '',
+      message: '',
+      includeUnstaged: false,
+      push: dialog.push,
+    }).then(result => {
+      // A rebase replays commit by commit, so continuing can stop again on the
+      // next one: the bar picks the new conflicts up, the panel stays put.
+      if (result.conflicts !== undefined && result.conflicts.length > 0) {
+        setDialog({ ...pending, submitting: false, confirmAbort: false })
+        return
+      }
+      report(action === 'resolve-abort'
+        ? t('conflictAborted', { operation: operationName })
+        : t(result.pushed ? 'conflictPushed' : 'conflictContinued', { operation: operationName }))
+      setDialog(undefined)
+    }, (reason: unknown) => {
+      setDialog({ ...pending, submitting: false, error: reason instanceof Error ? reason.message : t('diffActionFailed') })
+    })
+  }
+  const openDialog = (): void => {
+    setDialog({
+      submitting: false,
+      confirmAbort: false,
+      // The branch this finishes on is a pull request branch that already lives
+      // on the remote, so pushing it is the rest of the interrupted update.
+      push: repository.remote !== undefined && repository.pullRequest?.state === 'open',
+    })
+  }
+  return (
+    <>
+      <button
+        type="button"
+        style={styles.repositoryConflictTrigger}
+        title={t('conflictDescription', { operation: operationName })}
+        onClick={openDialog}
+      >{conflicts.length > 0
+          ? t('conflictBadge', { operation: operationName, count: conflicts.length })
+          : t('conflictBadgeReady', { operation: operationName })}</button>
+      {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('conflictTitle')} closeLabel={t('diffCancel')} description={t('conflictDescription', { operation: operationName })} footer={
+        <div style={styles.diffModalFooter}>
+          <button
+            type="button"
+            style={{ ...styles.button, ...styles.diffModalButton }}
+            disabled={dialog?.submitting === true}
+            onClick={() => { if (dialog?.confirmAbort === true) run('resolve-abort'); else setDialog(current => current === undefined ? current : { ...current, confirmAbort: true }) }}
+          >{t('conflictAbort', { operation: operationName })}</button>
+          <button
+            type="button"
+            style={{ ...styles.primaryButton, ...styles.diffModalButton }}
+            disabled={dialog?.submitting === true || conflicts.length > 0}
+            onClick={() => run('resolve-continue')}
+          >{dialog?.submitting === true ? t('diffSubmitting') : t('conflictContinue', { operation: operationName })}</button>
+        </div>
+      }>
+        {dialog === undefined ? null : <div style={styles.diffModalBody}>
+          <div style={styles.diffModalMeta}>
+            <strong style={styles.diffModalMetaText}>{operationName} · {branchLabel(repository, t)}</strong>
+            <span style={styles.diffModalFileState}>{conflicts.length > 0 ? t('conflictFiles') : t('conflictReady')}</span>
+          </div>
+          {conflicts.length === 0 ? null : <ul style={styles.diffModalConflicts}>{conflicts.map(file => <li key={file}>{file}</li>)}</ul>}
+          {conflicts.length === 0 || submitPrompt === undefined ? null : (
+            <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(conflicts, operation, repository.pullRequest?.baseBranch)); closeDialog() }}>{t('conflictResolve')}</button>
+          )}
+          {repository.remote === undefined ? null : (
+            <label style={styles.diffModalCheckbox}>
+              <input type="checkbox" checked={dialog.push} disabled={dialog.submitting} onChange={event => { const { checked } = event.currentTarget; setDialog(current => current === undefined ? current : { ...current, push: checked }) }} />
+              {t('conflictPush')}
+            </label>
+          )}
+          {!dialog.confirmAbort ? null : <p role="alert" style={styles.diffModalStatus}>{t('conflictAbortConfirm', { operation: operationName })}</p>}
+          {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
+        </div>}
+      </Modal>
+    </>
+  )
+}
+
 interface UpdateDialogState {
   readonly loading: boolean
   readonly submitting: boolean
@@ -422,7 +538,7 @@ export function UpdateBranchControl({ sessionId, repository, t, report, submitPr
             <p style={styles.diffModalStatus}>{t('diffUpdateBranchConflicts')}</p>
             <ul style={styles.diffModalConflicts}>{dialog.conflicts.map(file => <li key={file}>{file}</li>)}</ul>
             {submitPrompt === undefined ? null : (
-              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(base, dialog.conflicts ?? [], method)); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
+              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(dialog.conflicts ?? [], method, base)); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
             )}
           </>}
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
@@ -577,7 +693,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // completion notice belongs here, not inside them.
   const { toast, report } = useActionToast()
   if (blank || !projection.owned || repository === undefined) return null
-  const branch = repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch')
+  const branch = branchLabel(repository, t)
   const pullRequest = repository.pullRequest
   const merged = pullRequest?.state === 'merged'
   const mergedAge = merged ? relativeAge(pullRequest.mergedAt) : undefined
@@ -608,6 +724,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
         </Tooltip>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
         <span style={styles.repositoryStatusItems}>
+          <ConflictControl sessionId={sessionId} repository={repository} t={t} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
           {hasDiff || pushable ? (
             <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
               {hasDiff && repository.diff !== undefined ? <>

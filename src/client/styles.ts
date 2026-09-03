@@ -1876,6 +1876,15 @@ export const repositoryUpdateTrigger: CSSProperties = {
   cursor: 'pointer',
 }
 
+/** A stopped rebase is the one bar control that reports a blocked checkout
+ *  rather than an available action, so it carries the warning tone. */
+export const repositoryConflictTrigger: CSSProperties = {
+  ...repositoryUpdateTrigger,
+  borderColor: 'color-mix(in srgb, var(--dsw-alias-state-warning-primary, #d69e2e) 55%, transparent)',
+  background: 'color-mix(in srgb, var(--dsw-alias-state-warning-primary, #d69e2e) 14%, transparent)',
+  color: 'var(--dsw-alias-state-warning-primary, #d69e2e)',
+}
+
 export const repositoryChecksFrame: CSSProperties = {
   position: 'relative',
   display: 'inline-flex',

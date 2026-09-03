@@ -3,6 +3,7 @@ import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ClaudeActivityEvent } from '../events.ts'
 import { autoFixEnabled } from './auto-fix.ts'
+import { branchLabel } from './branch-label.ts'
 import { sessionRowPreset } from './session-preset.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -178,7 +179,7 @@ export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStat
           const repository = row.cwd === undefined ? undefined : statuses[row.cwd]
           const pullRequest = repository?.pullRequest
           const branch = repository?.status === 'ready'
-            ? (repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch'))
+            ? branchLabel(repository, t)
             : repository === undefined ? t('overviewLoading') : t('repositoryUnavailable')
           return (
             <button key={row.id} type="button" style={styles.overviewRow} onClick={() => { openSession(row.id) }}>

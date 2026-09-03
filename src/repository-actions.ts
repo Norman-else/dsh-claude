@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { detectRepositoryOperation } from './repository-status.ts'
 
 const MAX_OUTPUT_BYTES = 256 * 1024
 const MAX_PATCH_CHARS = 64 * 1024
@@ -24,7 +25,7 @@ const GENERATE_ARGUMENTS: readonly string[] = [
 ]
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
-export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch'
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch' | 'resolve-continue' | 'resolve-abort'
 export type RepositoryMergeMethod = 'merge' | 'squash' | 'rebase'
 
 interface CommandResult {
@@ -72,13 +73,16 @@ export interface RepositoryActionRequest {
   readonly baseBranch?: string
   readonly draft?: boolean
   readonly mergeMethod?: RepositoryMergeMethod
+  /** Push once `resolve-continue` finishes the operation it resumed. */
+  readonly push?: boolean
 }
 
 export interface RepositoryActionResult {
   readonly commit: string
   readonly pushed: boolean
   readonly pullRequestUrl?: string
-  /** Conflicted paths left in the working tree by an update-branch merge or rebase. */
+  /** Conflicted paths left in the working tree by an update-branch merge or
+   *  rebase, or by the commit a resumed one stopped on next. */
   readonly conflicts?: readonly string[]
 }
 
@@ -139,6 +143,11 @@ export function parseRepositoryActionStatus(output: string): readonly Repository
     })
   }
   return [...files.values()].sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function conflictPaths(result: CommandResult): readonly string[] {
+  if (result.exitCode !== 0 || result.lossy) return []
+  return result.stdout.split(/\r?\n/u).filter(line => line.length > 0).slice(0, 100)
 }
 
 function fallbackCommitMessage(files: readonly RepositoryActionFile[]): string {
@@ -214,6 +223,9 @@ export class RepositoryActionService {
   }
 
   async #execute(cwd: string, request: RepositoryActionRequest): Promise<RepositoryActionResult> {
+    // A stopped rebase leaves a detached HEAD and an unmerged tree, which the
+    // preview refuses outright -- so resuming one has to run before it.
+    if (request.action === 'resolve-continue' || request.action === 'resolve-abort') return this.#resolve(cwd, request.action, request.push === true)
     const before = await this.#preview(cwd)
     if (before.fingerprint !== request.fingerprint) throw new RepositoryActionError('repository-changed', 'Repository changes have changed. Refresh the commit panel.')
     if (request.action === 'push') {
@@ -256,10 +268,7 @@ export class RepositoryActionService {
       await this.#mustRun(git, ['fetch', 'origin', '--', base], before.root, REMOTE_TIMEOUT_MS, 'fetch-failed', 'Git could not fetch the base branch.')
       const merged = await this.#run(git, method === 'rebase' ? ['rebase', '--', `origin/${base}`] : ['merge', '--no-edit', '--', `origin/${base}`], before.root, REMOTE_TIMEOUT_MS)
       if (merged.exitCode !== 0 || merged.lossy) {
-        const conflicted = await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], before.root, GIT_TIMEOUT_MS)
-        const conflicts = conflicted.exitCode === 0 && !conflicted.lossy
-          ? conflicted.stdout.split(/\r?\n/u).filter(line => line.length > 0).slice(0, 100)
-          : []
+        const conflicts = conflictPaths(await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], before.root, GIT_TIMEOUT_MS))
         if (conflicts.length === 0) {
           await this.#run(git, [method, '--abort'], before.root, GIT_TIMEOUT_MS).catch(() => undefined)
           throw new RepositoryActionError('merge-failed', `Git could not ${method} the base branch.`)
@@ -324,6 +333,58 @@ export class RepositoryActionService {
     const url = created.exitCode === 0 && !created.lossy ? validPrUrl(created.stdout) : undefined
     if (url === undefined) throw new RepositoryActionError('pr-failed', 'The pull request could not be created.', oid)
     return { commit: oid, pushed: true, pullRequestUrl: url }
+  }
+
+  /** Finishes or discards the merge, rebase, cherry-pick or revert git is
+   *  waiting on. The operation is read from the git dir rather than taken from
+   *  the caller: `--continue` and `--abort` are only safe against the one that
+   *  is actually in progress. */
+  async #resolve(cwd: string, action: 'resolve-continue' | 'resolve-abort', push: boolean): Promise<RepositoryActionResult> {
+    const git = await this.#git()
+    const paths = await this.#mustRun(git, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir'], cwd, GIT_TIMEOUT_MS, 'not-repository', 'The session directory is not a Git repository.')
+    const [rootValue, gitDirValue] = paths.stdout.split(/\r?\n/u)
+    const root = (rootValue ?? '').trim()
+    const gitDir = (gitDirValue ?? '').trim()
+    if (root.length === 0 || gitDir.length === 0) throw new RepositoryActionError('repository-unavailable', 'Repository state is unavailable.')
+    const state = await detectRepositoryOperation(gitDir)
+    if (state === undefined) throw new RepositoryActionError('no-operation', 'No merge, rebase, cherry-pick or revert is in progress.')
+    const operation = state.operation
+    if (action === 'resolve-abort') {
+      await this.#mustRun(git, [operation, '--abort'], root, GIT_TIMEOUT_MS, 'abort-failed', `Git could not abort the ${operation}.`)
+      this.#invalidate(root)
+      return { commit: await this.#head(git, root), pushed: false }
+    }
+    const unmerged = conflictPaths(await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], root, GIT_TIMEOUT_MS))
+    if (unmerged.length > 0) throw new RepositoryActionError('unresolved-conflicts', 'Resolve and stage every conflicted file before continuing.')
+    // `core.editor=true` accepts the prepared message: nothing here can host an
+    // editor, and a rebase that opens one would hang until the timeout.
+    const continued = await this.#run(git, ['-c', 'core.editor=true', operation, '--continue'], root, REMOTE_TIMEOUT_MS)
+    this.#invalidate(root)
+    if (continued.exitCode !== 0 || continued.lossy) {
+      // A rebase replays commit by commit, so the next one can stop on its own
+      // conflicts: that is progress, not a failure, and it keeps the panel open.
+      const next = conflictPaths(await this.#run(git, ['diff', '--name-only', '--diff-filter=U', '--'], root, GIT_TIMEOUT_MS))
+      if (next.length > 0) return { commit: await this.#head(git, root), pushed: false, conflicts: next }
+      const reason = continued.stderr.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0).at(-1)
+      throw new RepositoryActionError('continue-failed', reason === undefined || reason.length === 0 ? `Git could not continue the ${operation}.` : reason)
+    }
+    const head = await this.#head(git, root)
+    if (!push) return { commit: head, pushed: false }
+    const branch = await this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root, GIT_TIMEOUT_MS)
+    if (branch.exitCode !== 0 || branch.lossy) throw new RepositoryActionError('detached-head', 'The finished operation left a detached HEAD, so nothing was pushed.', head)
+    try {
+      // A rebase rewrote the branch, so its push has to replace the remote ref.
+      await this.#push(git, root, branch.stdout.trim(), operation === 'rebase')
+    } catch (error) {
+      throw new RepositoryActionError('push-failed', error instanceof Error ? error.message : 'Git push failed.', head)
+    }
+    this.#invalidate(root)
+    return { commit: head, pushed: true }
+  }
+
+  async #head(git: string, root: string): Promise<string> {
+    const head = await this.#run(git, ['rev-parse', 'HEAD'], root, GIT_TIMEOUT_MS)
+    return head.exitCode === 0 && !head.lossy ? head.stdout.trim() : ''
   }
 
   async #preview(cwd: string): Promise<RepositoryActionPreview> {

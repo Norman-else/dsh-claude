@@ -1,4 +1,5 @@
 import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../constants.ts'
+import type { RepositoryOperation } from '../repository-status.ts'
 import { githubAvatarUrl } from '../github-url.ts'
 import type { FailingCheck, MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from '../pr-feedback.ts'
 import { pluginRead, pluginWrite } from './plugin-transport.ts'
@@ -165,11 +166,23 @@ export function composeChecksPrompt(checks: readonly FailingCheck[]): string {
   return `The following CI checks are failing on the current pull request. Investigate the failure logs, fix the underlying problems, and re-run the relevant commands locally when possible.\n\n${sections.join('\n\n')}`
 }
 
-/** Draft handed to Claude after an update-branch merge left conflicts behind. */
-export function composeConflictsPrompt(baseBranch: string, conflicts: readonly string[], method: 'merge' | 'rebase' = 'merge'): string {
+/** Draft handed to Claude for a stopped merge, rebase, cherry-pick or revert --
+ *  from the update-branch dialog that caused one, or from the repository bar
+ *  for one already in the tree, where the base branch is not always known. */
+export function composeConflictsPrompt(
+  conflicts: readonly string[],
+  operation: RepositoryOperation = 'merge',
+  baseBranch?: string,
+): string {
   const list = conflicts.map(file => `- ${file}`).join('\n')
-  if (method === 'rebase') {
-    return `Rebasing the current branch onto origin/${baseBranch} stopped on conflicts in the files below. Resolve each conflict preserving the intent of both sides, stage the files, run \`git rebase --continue\` until the rebase finishes, then push with \`git push --force-with-lease\`.\n\n${list}`
-  }
-  return `Merging origin/${baseBranch} into the current branch left merge conflicts in the files below. Resolve each conflict preserving the intent of both sides, then commit the merge.\n\n${list}`
+  const base = baseBranch === undefined ? undefined : `origin/${baseBranch}`
+  const head = operation === 'rebase'
+    ? `Rebasing the current branch${base === undefined ? '' : ` onto ${base}`} stopped on conflicts in the files below.`
+    : operation === 'merge'
+      ? `Merging ${base ?? 'the base branch'} into the current branch left conflicts in the files below.`
+      : `A ${operation} stopped on conflicts in the files below.`
+  const push = operation === 'rebase' && baseBranch !== undefined
+    ? ' Once it finishes, push with `git push --force-with-lease`.'
+    : ''
+  return `${head} Resolve each conflict preserving the intent of both sides, stage the resolved files, then run \`git ${operation} --continue\` until the ${operation} finishes.${push}\n\n${list}`
 }

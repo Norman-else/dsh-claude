@@ -166,3 +166,28 @@ describe('repository merge route validation', () => {
     expect(actions.execute).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('repository conflict route validation', () => {
+  it('accepts resolve actions without a commit message and checks the push flag', async () => {
+    const ctx = context()
+    const actions = service()
+    registerRepositoryActionRoute(ctx, actions as unknown as RepositoryActionService, () => '/repo')
+
+    const ok = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'resolve-continue', fingerprint: '', includeUnstaged: false, push: true,
+    }), ok)
+    expect(ok.statusCode).toBe(200)
+    expect(actions.execute).toHaveBeenCalledWith('/repo', expect.objectContaining({
+      action: 'resolve-continue', message: '', push: true,
+    }))
+
+    const bad = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'resolve-abort', fingerprint: '', includeUnstaged: false, push: 'yes',
+    }), bad)
+    expect(bad.statusCode).toBe(409)
+    expect(JSON.parse(bad.body)).toMatchObject({ error: 'invalid-request' })
+    expect(actions.execute).toHaveBeenCalledTimes(1)
+  })
+})

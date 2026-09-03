@@ -14,6 +14,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryActionKind, RepositoryActionPreview } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
+import { branchLabel } from './branch-label.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { useActionToast } from './action-toast.tsx'
@@ -483,12 +484,18 @@ export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInje
   return label.replace(/[….]+$/u, '')
 }
 
-export type RepositoryActionAvailability = Readonly<Record<RepositoryActionKind, boolean>>
+/** The panel's own menu. Resuming a stopped merge or rebase belongs to the
+ *  repository bar, which is the surface that can still be reached from one. */
+export type PanelActionKind = Exclude<RepositoryActionKind, 'resolve-continue' | 'resolve-abort'>
+export type RepositoryActionAvailability = Readonly<Record<PanelActionKind, boolean>>
 
 export function repositoryActionAvailability(
-  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest' | 'upstream' | 'ahead' | 'baseBehind'> | undefined,
+  repository: Pick<RepositoryStatus, 'status' | 'dirty' | 'detached' | 'remote' | 'pullRequest' | 'upstream' | 'ahead' | 'baseBehind' | 'conflicts'> | undefined,
 ): RepositoryActionAvailability {
+  // Unmerged paths read as dirty, and a conflicted merge keeps HEAD attached:
+  // without this every commit button would offer work git is going to refuse.
   const ready = repository?.status === 'ready' && repository.detached !== true
+    && (repository.conflicts ?? []).length === 0
   const committable = ready && repository.dirty === true
   const hasRemote = repository?.remote !== undefined
   const hasOpenPullRequest = repository?.pullRequest?.state === 'open'
@@ -760,7 +767,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     if (!projection.owned || repository?.status !== 'ready' || diff === undefined) closeDetails()
   }, [closeDetails, diff, projection.owned, repository?.status])
   if (!projection.owned || repository?.status !== 'ready' || diff === undefined) return null
-  const branch = repository.detached === true ? t('repositoryDetached') : repository.branch ?? t('repositoryUnknownBranch')
+  const branch = branchLabel(repository, t)
   const availability = repositoryActionAvailability(repository)
   const anyActionAvailable = availability['commit'] || availability['commit-push'] || availability['push'] || availability['create-pr']
   const menuItems: readonly MenuEntry[] = [
@@ -799,7 +806,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
           <div style={styles.diffHeaderActions}>
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
-              <Menu open={menuOpen} items={menuItems} onSelect={(id: string) => { if (availability[id as RepositoryActionKind]) openAction(id as RepositoryActionKind) }} onClose={() => setMenuOpen(false)} align="end" portal anchor={
+              <Menu open={menuOpen} items={menuItems} onSelect={(id: string) => { if (availability[id as PanelActionKind]) openAction(id as PanelActionKind) }} onClose={() => setMenuOpen(false)} align="end" portal anchor={
                 <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutline14 /></button>
               } />
             </div>

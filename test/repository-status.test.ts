@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,7 @@ import {
   parseGitHubRemote,
   parseGitStatus,
   parsePullRequest,
+  detectRepositoryOperation,
 } from '../src/repository-status.ts'
 
 function handle(stdout: string, exitCode = 0, lossy = false): SubprocessHandle {
@@ -60,6 +61,21 @@ describe('repository status parsing', () => {
       upstream: true,
       ahead: 2,
       behind: 1,
+    })
+  })
+
+  it('collects the unmerged paths a stopped operation is waiting on', () => {
+    expect(parseGitStatus([
+      '# branch.head (detached)',
+      'u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 src/conflict.ts',
+      'u UU N... 100644 100644 100644 100644 1111111 2222222 3333333 src/with space.ts',
+      '',
+    ].join('\n'))).toEqual({
+      detached: true,
+      // Unmerged paths are changes too: the tree belongs to the merge.
+      dirty: true,
+      upstream: false,
+      conflicts: ['src/conflict.ts', 'src/with space.ts'],
     })
   })
 
@@ -289,6 +305,56 @@ describe('repository status service', () => {
     await expect(new RepositoryStatusService(fake).inspect('/repo')).resolves.toMatchObject({
       status: 'ready', branch: 'main', worktree: false, dirty: false, remote: 'owner/repo',
     })
+  })
+})
+
+describe('in-progress operations', () => {
+  it('names the stopped operation and the branch a rebase parked', async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    expect(await detectRepositoryOperation(gitDir)).toBeUndefined()
+    await mkdir(join(gitDir, 'rebase-merge'))
+    await writeFile(join(gitDir, 'rebase-merge', 'head-name'), 'refs/heads/feature/status\n', 'utf8')
+    expect(await detectRepositoryOperation(gitDir)).toEqual({ operation: 'rebase', branch: 'feature/status' })
+  })
+
+  it('reports a merge without inventing a branch for it', async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    await writeFile(join(gitDir, 'MERGE_HEAD'), 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n', 'utf8')
+    expect(await detectRepositoryOperation(gitDir)).toEqual({ operation: 'merge' })
+  })
+
+  it('keeps the branch and its pull request through a conflicted rebase', async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    await mkdir(join(gitDir, 'rebase-merge'))
+    await writeFile(join(gitDir, 'rebase-merge', 'head-name'), 'refs/heads/feature/status\n', 'utf8')
+    const fake = runtime([
+      { stdout: `/repo\n${gitDir}\n${gitDir}\n` },
+      { stdout: '# branch.head (detached)\nu UU N... 100644 100644 100644 100644 1 2 3 src/a.ts\n' },
+      { stdout: 'git@github.com:owner/repo.git\n' },
+      { stdout: JSON.stringify({
+        number: 12,
+        title: 'Repository status',
+        url: 'https://github.com/owner/repo/pull/12',
+        state: 'OPEN',
+        baseRefName: 'master',
+      }) },
+      { stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '0\n' },
+    ])
+    const status = await new RepositoryStatusService(fake, 60_000).inspect('/repo')
+    // Git only says `(detached)` while it replays, so the bar would otherwise
+    // lose the branch, its pull request and every control keyed on them.
+    expect(status).toMatchObject({
+      branch: 'feature/status',
+      detached: true,
+      operation: 'rebase',
+      conflicts: ['src/a.ts'],
+      pullRequest: { number: 12, baseBranch: 'master' },
+    })
+    expect(fake.spawn.mock.calls[3]?.[0].argv).toContain('feature/status')
   })
 })
 

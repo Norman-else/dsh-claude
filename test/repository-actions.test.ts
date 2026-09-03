@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import {
@@ -349,5 +352,84 @@ describe('repository branch update', () => {
     await expect(missingService.execute('C:/repo', {
       action: 'update-branch', fingerprint: missingPreview.fingerprint, message: '', includeUnstaged: false,
     })).rejects.toMatchObject({ code: 'invalid-request' })
+  })
+})
+
+describe('stopped operation resolution', () => {
+  const head = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+
+  async function rebaseDir(): Promise<string> {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    await mkdir(join(gitDir, 'rebase-merge'))
+    await writeFile(join(gitDir, 'rebase-merge', 'head-name'), 'refs/heads/feature/actions\n', 'utf8')
+    return gitDir
+  }
+
+  it('continues the operation git is actually holding and pushes the rewritten branch', async () => {
+    const gitDir = await rebaseDir()
+    const fake = runtime([
+      { stdout: `C:/repo\n${gitDir}\n` },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: `${head}\n` },
+      { stdout: 'feature/actions\n' },
+      { stdout: 'origin/feature/actions\n' },
+      { stdout: '' },
+    ])
+    const service = new RepositoryActionService(fake, 'claude')
+    // No preview: a stopped rebase detaches HEAD, which the preview refuses.
+    await expect(service.execute('C:/repo', {
+      action: 'resolve-continue', fingerprint: '', message: '', includeUnstaged: false, push: true,
+    })).resolves.toEqual({ commit: head, pushed: true })
+    expect(fake.spawn.mock.calls[2]?.[0].argv).toEqual(['C:/bin/git.exe', '-c', 'core.editor=true', 'rebase', '--continue'])
+    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual(['C:/bin/git.exe', 'push', '--force-with-lease'])
+  })
+
+  it('refuses to continue while paths are still unmerged', async () => {
+    const gitDir = await rebaseDir()
+    const fake = runtime([
+      { stdout: `C:/repo\n${gitDir}\n` },
+      { stdout: 'src/a.ts\n' },
+    ])
+    await expect(new RepositoryActionService(fake, 'claude').execute('C:/repo', {
+      action: 'resolve-continue', fingerprint: '', message: '', includeUnstaged: false,
+    })).rejects.toMatchObject({ code: 'unresolved-conflicts' })
+  })
+
+  it('reports the next commit that stops instead of failing the resume', async () => {
+    const gitDir = await rebaseDir()
+    const fake = runtime([
+      { stdout: `C:/repo\n${gitDir}\n` },
+      { stdout: '' },
+      { stdout: '', exitCode: 1 },
+      { stdout: 'src/b.ts\n' },
+      { stdout: `${head}\n` },
+    ])
+    await expect(new RepositoryActionService(fake, 'claude').execute('C:/repo', {
+      action: 'resolve-continue', fingerprint: '', message: '', includeUnstaged: false, push: true,
+    })).resolves.toEqual({ commit: head, pushed: false, conflicts: ['src/b.ts'] })
+  })
+
+  it('aborts the operation and never pushes what it rolled back', async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    await writeFile(join(gitDir, 'MERGE_HEAD'), `${head}\n`, 'utf8')
+    const fake = runtime([
+      { stdout: `C:/repo\n${gitDir}\n` },
+      { stdout: '' },
+      { stdout: `${head}\n` },
+    ])
+    await expect(new RepositoryActionService(fake, 'claude').execute('C:/repo', {
+      action: 'resolve-abort', fingerprint: '', message: '', includeUnstaged: false, push: true,
+    })).resolves.toEqual({ commit: head, pushed: false })
+    expect(fake.spawn.mock.calls[1]?.[0].argv).toEqual(['C:/bin/git.exe', 'merge', '--abort'])
+    expect(fake.spawn.mock.calls.every(call => !call[0].argv.includes('push'))).toBe(true)
+  })
+
+  it('refuses when git is holding no operation at all', async () => {
+    const gitDir = await mkdtemp(join(tmpdir(), 'dsh-claude-gitdir-'))
+    const fake = runtime([{ stdout: `C:/repo\n${gitDir}\n` }])
+    await expect(new RepositoryActionService(fake, 'claude').execute('C:/repo', {
+      action: 'resolve-abort', fingerprint: '', message: '', includeUnstaged: false,
+    })).rejects.toMatchObject({ code: 'no-operation' })
   })
 })

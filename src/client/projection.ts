@@ -53,6 +53,7 @@ const MAX_ACTIVITIES = 10_000
 const MAX_COMMANDS = 2_000
 const MAX_REPOSITORY_TEXT_CHARS = 1_024
 const MAX_DIFF_CHARS = 256 * 1024
+const MAX_CONFLICT_PATHS = 100
 const MAX_REVIEW_COMMENTS = 50
 const MAX_REVIEW_COMMENT_CHARS = 2_000
 const MAX_TRANSCRIPT_CHARS = 64_000
@@ -85,7 +86,11 @@ function validateRepository(value: unknown): value is RepositoryStatus {
     || (repository.dirty !== undefined && typeof repository.dirty !== 'boolean')
     || (repository.upstream !== undefined && typeof repository.upstream !== 'boolean')
     || (repository.ahead !== undefined && !nonNegativeInteger(repository.ahead))
-    || (repository.behind !== undefined && !nonNegativeInteger(repository.behind))) return false
+    || (repository.behind !== undefined && !nonNegativeInteger(repository.behind))
+    || (repository.operation !== undefined && !['rebase', 'merge', 'cherry-pick', 'revert'].includes(String(repository.operation)))
+    || (repository.conflicts !== undefined && (!Array.isArray(repository.conflicts)
+      || repository.conflicts.length > MAX_CONFLICT_PATHS
+      || repository.conflicts.some(path => typeof path !== 'string' || path.length > MAX_REPOSITORY_TEXT_CHARS)))) return false
   if (repository.diff !== undefined) {
     const diff = record(repository.diff)
     if (diff === undefined

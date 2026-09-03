@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
@@ -11,7 +11,11 @@ const GIT_TIMEOUT_MS = 5_000
 const GH_TIMEOUT_MS = 8_000
 const CACHE_TTL_MS = 5_000
 const MAX_TEXT_CHARS = 1_024
+const MAX_CONFLICT_PATHS = 100
 
+/** A git operation left half-finished in the working tree, waiting for the
+ *  user to resolve conflicts and continue -- or to abort. */
+export type RepositoryOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert'
 export type RepositoryCheckState = 'passing' | 'pending' | 'failing' | 'none'
 export type RepositoryReviewState = 'approved' | 'changes-requested' | 'review-required' | 'none'
 
@@ -54,6 +58,10 @@ export interface RepositoryStatus {
   readonly diff?: RepositoryDiffStatus
   /** Commits on origin/<base> that are not on HEAD, for open pull requests. */
   readonly baseBehind?: number
+  /** Unmerged paths: the files a stopped merge or rebase is waiting on. */
+  readonly conflicts?: readonly string[]
+  /** The stopped operation itself, present even once every conflict is staged. */
+  readonly operation?: RepositoryOperation
 }
 
 type RepositoryRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
@@ -112,6 +120,7 @@ export function parseGitStatus(output: string): {
   upstream: boolean
   ahead?: number
   behind?: number
+  conflicts?: readonly string[]
 } {
   let branch: string | undefined
   let detached = false
@@ -119,6 +128,7 @@ export function parseGitStatus(output: string): {
   let upstream = false
   let ahead: number | undefined
   let behind: number | undefined
+  const conflicts: string[] = []
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith('# branch.head ')) {
       const head = bounded(line.slice('# branch.head '.length))
@@ -138,6 +148,13 @@ export function parseGitStatus(output: string): {
       }
       continue
     }
+    // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`: unmerged paths
+    // are the only conflict signal the status carries, and they also read as
+    // dirty below -- a stopped merge owns the tree until it is resolved.
+    if (line.startsWith('u ')) {
+      const path = line.split(' ').slice(10).join(' ')
+      if (path.length > 0 && conflicts.length < MAX_CONFLICT_PATHS) conflicts.push(bounded(path))
+    }
     if (line.length > 0 && !line.startsWith('# ')) dirty = true
   }
   return {
@@ -147,7 +164,43 @@ export function parseGitStatus(output: string): {
     upstream,
     ...(ahead === undefined ? {} : { ahead }),
     ...(behind === undefined ? {} : { behind }),
+    ...(conflicts.length === 0 ? {} : { conflicts }),
   }
+}
+
+/** Ordered so the rebase directories win: a conflicted rebase also writes
+ *  MERGE_HEAD-like state, and the two are resumed by different commands. */
+const OPERATION_MARKERS: readonly (readonly [string, RepositoryOperation])[] = [
+  ['rebase-merge', 'rebase'],
+  ['rebase-apply', 'rebase'],
+  ['MERGE_HEAD', 'merge'],
+  ['CHERRY_PICK_HEAD', 'cherry-pick'],
+  ['REVERT_HEAD', 'revert'],
+]
+
+export interface RepositoryOperationState {
+  readonly operation: RepositoryOperation
+  /** The branch the rebase parked. Git status only reports `(detached)` while
+   *  it replays, so `head-name` is the only place the real branch survives. */
+  readonly branch?: string
+}
+
+/** Reads the in-progress operation out of the worktree's own git dir -- linked
+ *  worktrees keep their own, so this must not be handed the common dir. */
+export async function detectRepositoryOperation(gitDir: string): Promise<RepositoryOperationState | undefined> {
+  for (const [marker, operation] of OPERATION_MARKERS) {
+    const path = join(gitDir, marker)
+    try {
+      await stat(path)
+    } catch {
+      continue
+    }
+    const headName = operation === 'rebase' ? await readFile(join(path, 'head-name'), 'utf8').catch(() => '') : ''
+    const branch = bounded(headName).replace(/^refs\/heads\//u, '')
+    // A rebase started from a detached HEAD writes exactly that as the name.
+    return { operation, ...(branch.length === 0 || branch.includes(' ') ? {} : { branch }) }
+  }
+  return undefined
 }
 
 export function parseDiffNumstat(value: string): Omit<RepositoryDiffStatus, 'patch' | 'truncated'> {
@@ -368,11 +421,16 @@ export class RepositoryStatusService {
       const statusResult = await run(this.#runtime, git, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal'], cwd, GIT_TIMEOUT_MS)
       if (statusResult.exitCode !== 0) return { status: 'unavailable', cwd: safeCwd }
       const status = parseGitStatus(statusResult.stdout)
+      const operation = await detectRepositoryOperation(gitDir)
+      // A stopped rebase detaches HEAD, which would otherwise drop the branch,
+      // its pull request and every control keyed on them for as long as the
+      // conflict lasts -- exactly when the user needs them most.
+      const branch = operation?.branch ?? status.branch
       const remoteResult = await run(this.#runtime, git, ['remote', 'get-url', 'origin'], cwd, GIT_TIMEOUT_MS)
       const remote = remoteResult.exitCode === 0 ? parseGitHubRemote(remoteResult.stdout) : undefined
-      const pullRequest = status.branch === undefined || remote === undefined
+      const pullRequest = branch === undefined || remote === undefined
         ? undefined
-        : await this.#pullRequest(cwd, remote, status.branch)
+        : await this.#pullRequest(cwd, remote, branch)
       const diffBase = pullRequest?.baseBranch === undefined
         ? 'HEAD'
         : await this.#mergeBase(cwd, git, pullRequest.baseBranch) ?? 'HEAD'
@@ -387,6 +445,8 @@ export class RepositoryStatusService {
         cwd: safeCwd,
         root,
         ...status,
+        ...(branch === undefined ? {} : { branch }),
+        ...(operation === undefined ? {} : { operation: operation.operation }),
         worktree: normalizedPath(gitDir) !== normalizedPath(commonDir),
         ...(remote === undefined ? {} : { remote }),
         ...(pullRequest === undefined ? {} : { pullRequest }),

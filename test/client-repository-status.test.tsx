@@ -65,6 +65,10 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   repositoryBranch: 'Branch',
   repositoryWorktree: 'Worktree',
   repositoryWorktreeLabel: 'Git worktree',
+  conflictBadge: '{operation}: {count} conflict(s)',
+  conflictBadgeReady: 'Continue {operation}',
+  conflictOperation_rebase: 'Rebase',
+  repositoryDetached: 'Detached HEAD',
   repositoryChanges: 'Changes',
   repositoryModified: 'Modified',
   repositoryClean: 'Clean',
@@ -556,6 +560,38 @@ describe('pull request merge control', () => {
   })
 })
 
+describe('conflict control', () => {
+  const render = (overrides: Partial<typeof repository>): string => renderToStaticMarkup(<ClaudeRepositoryStatus
+    sessionId="session"
+    useSessions={sessionsHook(false)}
+    useClaudeProjection={hook({ ...projection, repository: { ...repository, ...overrides } as never })}
+    t={t}
+    openDiff={vi.fn()}
+    submitPrompt={vi.fn()}
+  />)
+
+  it('surfaces a stopped operation on the bar for as long as git holds it', () => {
+    const stopped = render({ detached: true, branch: 'feature/status', operation: 'rebase', conflicts: ['src/a.ts', 'src/b.ts'] })
+    expect(stopped).toContain('Rebase: 2 conflict(s)')
+    // The branch, not `Detached HEAD`: the rebase still knows where it parked.
+    expect(stopped).toContain('feature/status')
+    expect(stopped).not.toContain('Detached HEAD')
+    // Staged resolutions leave the operation waiting with nothing conflicted.
+    expect(render({ detached: true, operation: 'rebase' })).toContain('Continue Rebase')
+    expect(render({})).not.toContain('Continue Rebase')
+  })
+
+  it('refuses every commit action while paths are unmerged', () => {
+    const none = {
+      'commit': false, 'commit-push': false, 'push': false, 'create-pr': false, 'merge-pr': false, 'update-branch': false,
+    }
+    // A conflicted merge keeps HEAD attached and reads as dirty, so only the
+    // unmerged paths keep the panel from offering a commit git would refuse.
+    expect(repositoryActionAvailability({ ...repository, conflicts: ['src/a.ts'] })).toEqual(none)
+    expect(repositoryActionAvailability({ ...repository, conflicts: [] })).toMatchObject({ 'commit': true })
+  })
+})
+
 describe('update branch control', () => {
   const clean = { ...repository, dirty: false, baseBehind: 2 }
 
@@ -583,9 +619,16 @@ describe('pull request feedback controls', () => {
   />)
 
   it('tells Claude how to finish a conflicted rebase versus a conflicted merge', () => {
-    expect(composeConflictsPrompt('master', ['src/a.ts'], 'rebase')).toContain('git rebase --continue')
-    expect(composeConflictsPrompt('master', ['src/a.ts'], 'rebase')).toContain('--force-with-lease')
-    expect(composeConflictsPrompt('master', ['src/a.ts'])).toContain('commit the merge')
+    expect(composeConflictsPrompt(['src/a.ts'], 'rebase', 'master')).toContain('git rebase --continue')
+    expect(composeConflictsPrompt(['src/a.ts'], 'rebase', 'master')).toContain('--force-with-lease')
+    expect(composeConflictsPrompt(['src/a.ts'], 'merge', 'master')).toContain('origin/master')
+    expect(composeConflictsPrompt(['src/a.ts'], 'merge', 'master')).toContain('git merge --continue')
+    // The bar reaches operations nobody started from the update dialog, so the
+    // base branch is not always known and must not be invented.
+    const orphan = composeConflictsPrompt(['src/a.ts'], 'cherry-pick')
+    expect(orphan).toContain('git cherry-pick --continue')
+    expect(orphan).not.toContain('origin/')
+    expect(orphan).not.toContain('--force-with-lease')
   })
 
   it('offers Update branch only for clean checkouts behind the base', () => {

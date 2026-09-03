@@ -12,7 +12,9 @@ import {
 
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SESSION_ID_CHARS = 1_024
-const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch'])
+const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
+/** Actions that commit nothing of their own, so the panel sends no message. */
+const MESSAGELESS = new Set<RepositoryActionKind>(['push', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -63,12 +65,13 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
   return {
     action: action as RepositoryActionKind,
     fingerprint: string(input, 'fingerprint'),
-    message: action === 'push' || action === 'merge-pr' || action === 'update-branch' ? optionalString(input, 'message') ?? '' : string(input, 'message'),
+    message: MESSAGELESS.has(action as RepositoryActionKind) ? optionalString(input, 'message') ?? '' : string(input, 'message'),
     includeUnstaged: input.includeUnstaged,
     ...(optionalString(input, 'prTitle') === undefined ? {} : { prTitle: optionalString(input, 'prTitle')! }),
     ...(optionalString(input, 'prBody') === undefined ? {} : { prBody: optionalString(input, 'prBody')! }),
     ...(optionalString(input, 'baseBranch') === undefined ? {} : { baseBranch: optionalString(input, 'baseBranch')! }),
     ...(input.draft === undefined ? {} : typeof input.draft === 'boolean' ? { draft: input.draft } : (() => { throw new RepositoryActionError('invalid-request', 'The draft field must be a boolean.') })()),
+    ...(input.push === undefined ? {} : typeof input.push === 'boolean' ? { push: input.push } : (() => { throw new RepositoryActionError('invalid-request', 'The push field must be a boolean.') })()),
     ...(input.mergeMethod === undefined
       ? {}
       : input.mergeMethod === 'merge' || input.mergeMethod === 'squash' || input.mergeMethod === 'rebase'
