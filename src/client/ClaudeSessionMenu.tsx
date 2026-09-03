@@ -10,9 +10,16 @@ import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { EditorId } from '../editor-open.ts'
 import { openProjectInEditor } from './editor-open-api.ts'
+import { useActionToast } from './action-toast.tsx'
+import { PluginRequestError } from './plugin-transport.ts'
+import { defaultPromptName, saveClaudePrompt } from './prompt-api.ts'
 
 export interface ClaudeSessionMenuInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
+  /** The session's current composer text, which the menu can save as a prompt
+   *  snippet. Absent when this Host exposes no input facade — the row then
+   *  never renders rather than offering an action that cannot work. */
+  draftOf?: (sessionId: string) => string
 }
 
 export interface ClaudeSessionMenuProps extends ClaudeSessionMenuInjected {
@@ -20,6 +27,8 @@ export interface ClaudeSessionMenuProps extends ClaudeSessionMenuInjected {
   sessionId: string
   /** Seam for tests; defaults to the host route that launches the editor. */
   openInEditor?: (sessionId: string, editor: EditorId) => Promise<void>
+  /** Seam for tests; defaults to the host route that writes the prompt file. */
+  savePrompt?: (name: string, body: string) => Promise<void>
 }
 
 /** Trigger matches the neighbouring diff action; the cards reproduce the
@@ -67,6 +76,12 @@ const MENU_CSS = [
   '.dsh-claude-header-menu-item>svg{flex:none;color:var(--dsw-alias-label-tertiary)}',
   '.dsh-claude-header-menu-heading{padding:4px 7px;font-family:var(--dsw-font-family);font-size:11px;',
     'line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+  // The naming field takes the place of the row it replaces, so it has to sit
+  // on the same 26px cell and inherit the card's own type.
+  '.dsh-claude-header-menu-input{box-sizing:border-box;width:100%;min-height:26px;margin:0;padding:3px 7px;',
+    'border:1px solid var(--dsw-alias-border-inverted);border-radius:5px;background:var(--dsw-alias-interactive-bg-hover);',
+    'font-family:var(--dsw-font-family);font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
+  '.dsh-claude-header-menu-input:focus-visible{outline:none;border-color:var(--dsw-alias-label-tertiary)}',
 ].join('')
 
 let cssInjected = false
@@ -92,12 +107,21 @@ const EDITORS: readonly { readonly id: EditorId; readonly label: string }[] = [
 
 /** The open menu, split out so the SSR tests can render it without a DOM to
  *  drive the hover that opens the submenu. */
-export function ClaudeSessionMenuCard({ openIn, submenuOpen, failure, onSubmenuOpen, onSelect }: {
+export function ClaudeSessionMenuCard({
+  openIn, submenuOpen, failure, saveLabel, saveName, onSubmenuOpen, onSelect, onSaveOpen, onSaveName, onSaveSubmit,
+}: {
   openIn: string
   submenuOpen: boolean
   failure?: string | undefined
+  /** Absent when this Host exposes no composer draft to save. */
+  saveLabel?: string | undefined
+  /** Present while the naming field is open; it holds the field's value. */
+  saveName?: string | undefined
   onSubmenuOpen: (open: boolean) => void
   onSelect: (editor: EditorId) => void
+  onSaveOpen?: () => void
+  onSaveName?: (value: string) => void
+  onSaveSubmit?: () => void
 }) {
   return (
     <div className="dsh-claude-header-menu-card" role="menu">
@@ -126,6 +150,28 @@ export function ClaudeSessionMenuCard({ openIn, submenuOpen, failure, onSubmenuO
           ><span>{editor.label}</span></button>)}
         </div> : null}
       </div>
+      {/* The row becomes its own naming field rather than opening a dialog: the
+          only thing left to decide is the file name, and the draft it saves is
+          already on screen behind the menu. */}
+      {saveLabel === undefined ? null : saveName === undefined ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="dsh-claude-header-menu-item"
+          onClick={onSaveOpen}
+        ><span>{saveLabel}</span></button>
+      ) : (
+        <form onSubmit={(event) => { event.preventDefault(); onSaveSubmit?.() }}>
+          <input
+            className="dsh-claude-header-menu-input"
+            aria-label={saveLabel}
+            value={saveName}
+            maxLength={128}
+            autoFocus
+            onChange={event => onSaveName?.(event.currentTarget.value)}
+          />
+        </form>
+      )}
       {/* A launch that never happened has to say so somewhere, and the menu
           is the only surface still on screen when it fails. */}
       {failure === undefined ? null : <div className="dsh-claude-header-menu-heading">{failure}</div>}
@@ -134,17 +180,21 @@ export function ClaudeSessionMenuCard({ openIn, submenuOpen, failure, onSubmenuO
 }
 
 export function ClaudeSessionMenu({
-  t, sessionId, useClaudeProjection, openInEditor = openProjectInEditor,
+  t, sessionId, useClaudeProjection, draftOf, openInEditor = openProjectInEditor, savePrompt = saveClaudePrompt,
 }: ClaudeSessionMenuProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   const root = useRef<HTMLSpanElement>(null)
   const [open, setOpen] = useState(false)
   const [submenuOpen, setSubmenuOpen] = useState(false)
   const [failure, setFailure] = useState<string | undefined>(undefined)
+  const [saveName, setSaveName] = useState<string | undefined>(undefined)
+  const saving = useRef(false)
+  const { toast, report } = useActionToast()
   const close = (): void => {
     setOpen(false)
     setSubmenuOpen(false)
     setFailure(undefined)
+    setSaveName(undefined)
   }
   useDismissOnOutsidePointer(root, open, next => { if (!next) close() })
   useEffect(() => {
@@ -168,8 +218,38 @@ export function ClaudeSessionMenu({
       (error: unknown) => setFailure(t('sessionMenuOpenFailed', { message: error instanceof Error ? error.message : String(error) })),
     )
   }
+  const beginSave = (): void => {
+    const draft = draftOf?.(sessionId) ?? ''
+    if (draft.trim() === '') {
+      setFailure(t('promptSaveEmpty'))
+      return
+    }
+    setFailure(undefined)
+    setSaveName(defaultPromptName(draft))
+  }
+  const commitSave = (): void => {
+    // The draft is read again here rather than captured at open: the composer
+    // stays live behind the menu, and the text on screen is what the user
+    // means to keep.
+    const draft = draftOf?.(sessionId) ?? ''
+    const name = saveName?.trim() ?? ''
+    if (saving.current || name === '' || draft.trim() === '') return
+    saving.current = true
+    setFailure(undefined)
+    savePrompt(name, draft).then(() => {
+      close()
+      report(t('promptSaved', { name }))
+    }, (error: unknown) => {
+      // A name collision is the one failure the user fixes right here, so the
+      // field stays open holding what they typed.
+      setFailure(error instanceof PluginRequestError && error.code === 'name-taken'
+        ? t('promptSaveExists')
+        : t('promptSaveFailed', { message: error instanceof Error ? error.message : String(error) }))
+    }).finally(() => { saving.current = false })
+  }
   return (
     <span className="dsh-claude-header-menu-root" ref={root}>
+      {toast}
       {/* The open card already names the action; a bubble on top of it is
           noise. `disabled` keeps the anchor mounted, so toggling it never
           remounts the trigger mid-press. */}
@@ -188,8 +268,13 @@ export function ClaudeSessionMenu({
         openIn={openIn}
         submenuOpen={submenuOpen}
         failure={failure}
+        saveLabel={draftOf === undefined ? undefined : t('promptSave')}
+        saveName={saveName}
         onSubmenuOpen={setSubmenuOpen}
         onSelect={select}
+        onSaveOpen={beginSave}
+        onSaveName={setSaveName}
+        onSaveSubmit={commitSave}
       /> : null}
     </span>
   )

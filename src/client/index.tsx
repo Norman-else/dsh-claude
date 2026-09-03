@@ -44,6 +44,7 @@ import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-ros
 import { PanelOpenStore } from './panel-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
+import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
@@ -192,6 +193,9 @@ export function apply(ctx: ClientContext): void {
     report: (kind, detail) => { diagnostics.report(kind, detail) },
   })
   ctx.effect(() => ctx.inputTriggers.registerSource(createClaudeCommandSource(ctx, projections)), 'dsh-claude: Claude slash source')
+  // ponytail: the group title is fixed at registration, so a language switch
+  // needs a reload to relabel it; subscribe to the locale if anyone minds.
+  ctx.effect(() => ctx.inputTriggers.registerSource(createClaudePromptSource(t('promptSource'))), 'dsh-claude: Claude prompt source')
   const sessions = ctx.get('sessions') as ISessions | undefined
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   // Desktop 0.1.2 split the Workspace runtime in two: the `workspaces`
@@ -578,7 +582,15 @@ ${error.stack ?? ''}`
     id: 'claude-session-menu',
     order: 31,
     locale: namespace,
-    inject: (): ClaudeSessionMenuInjected => ({ t }),
+    inject: (): ClaudeSessionMenuInjected => ({
+      t,
+      ...(sessions === undefined || conversation === undefined ? {} : {
+        draftOf: (id: string) => {
+          const scope = sessions.scope(id as SessionId)
+          return scope === undefined ? '' : sessionInput(conversation, scope).state.getSnapshot().draft
+        },
+      }),
+    }),
   }, ClaudeSessionMenu))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
