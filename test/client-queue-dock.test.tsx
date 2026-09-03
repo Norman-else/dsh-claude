@@ -30,7 +30,7 @@ describe('Claude queue dock', () => {
     expect(idle).toContain('aria-label="queueRemove"')
     expect(idle).toContain('aria-label="queueSteer"')
     expect(idle.match(/disabled=""/g)).toHaveLength(1)
-    expect(idle).toContain('width:calc(100% - 64px)')
+    expect(idle).toContain('width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))')
     expect(render([row('a', 'hello world')], true)).not.toContain('disabled=""')
   })
 

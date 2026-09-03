@@ -1407,9 +1407,14 @@ export const heroRepositoryError: CSSProperties = {
  * with `max-width: var(--dsh-composer-card-max-width)` and republishes that
  * property as the divider moves. The old --dsh-conversation-composer-max-width
  * is gone, and because a var() fallback cannot tell "absent" from "narrow",
- * these bars silently froze at 782px instead of following the drag. */
+ * these bars silently froze at 782px instead of following the drag.
+ *
+ * The width mirrors the composer wrapper's side clearance, not the Host queue
+ * dock's `100% - 64px`: that dock is deliberately inset to peek out from behind
+ * the card, so borrowing its width left these bars 16px short per side once the
+ * column narrowed enough that the max-width stopped binding. */
 export const repositoryBarFrame: CSSProperties = {
-  width: 'calc(100% - 64px)',
+  width: 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))',
   maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
   minWidth: 0,
   margin: '0 auto',
@@ -2743,7 +2748,7 @@ export const diffCommentError: CSSProperties = {
 }
 
 export const reviewCommentBarFrame: CSSProperties = {
-  width: 'calc(100% - 64px)',
+  width: 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))',
   maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
   margin: '0 auto',
   boxSizing: 'border-box',

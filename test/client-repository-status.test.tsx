@@ -173,7 +173,10 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).not.toContain('⑂')
     expect(statusMarkup).toContain('+2')
     expect(statusMarkup).toContain('−1')
-    expect(statusMarkup).toContain('width:calc(100% - 64px)')
+    // Matches the composer wrapper's side clearance. The Host queue dock's
+    // wider `100% - 64px` inset leaves the bar 16px short per side once the
+    // column is too narrow for the max-width to bind.
+    expect(statusMarkup).toContain('width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))')
     // Desktop 2.0 renamed this and made the composer card resizable; the bar
     // has to read the live property or it freezes at the fallback width.
     expect(statusMarkup).toContain('max-width:var(--dsh-composer-card-max-width, 782px)')
