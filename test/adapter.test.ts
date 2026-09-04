@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { ReasoningEffortId, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm'
 import { ClaudeCodeAdapter, resolveDirectUserPrompt } from '../src/adapter.ts'
 import { CLAUDE_CODE_PROVIDER_IDS } from '../src/constants.ts'
-import { recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
+import { claudeModelRow, claudeModelValue, latestClaudeModels, recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 import type { ClaudeSupervisor, ClaudeTurnStreamEvent } from '../src/supervisor.ts'
 
 const user = (text: string, kind: 'user' | 'plugin' = 'user') => ({
@@ -366,7 +367,7 @@ describe('Claude Code model catalog', () => {
     expect(models.every(model => model.inputModalities?.join(',') === 'text,image')).toBe(true)
     expect(models.map(model => ({ id: model.id, name: model.name }))).toEqual([
       { id: 'default', name: 'Default (recommended)' },
-      { id: 'claude-nextthing-9', name: 'Nextthing' },
+      { id: 'nextthing', name: 'Nextthing' },
     ])
   })
 
@@ -402,6 +403,56 @@ describe('Claude Code model catalog', () => {
     const adapter = new ClaudeCodeAdapter(supervisor, { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
     for await (const _chunk of adapter.stream({ ...options(), model: 'opus[1m]' })) { /* drain */ }
     expect(calls[0]).toMatchObject({ model: 'opus[1m]' })
+  })
+
+  it('never advertises a CLI model id, so a version bump cannot dangle a persisted selection', async () => {
+    // DSH persists the row id verbatim and matches it back by string equality.
+    // An id carrying the version (`claude-fable-5-1[1m]`) stops resolving the
+    // day Anthropic ships `-5-2`, and the composer prints the raw id instead.
+    recordClaudeModels([
+      { value: 'claude-fable-5-1[1m]', resolvedModel: 'claude-fable-5-1[1m]', displayName: 'Fable', description: '' },
+      { value: 'claude-3-5-sonnet-20241022', displayName: 'Sonnet', description: '' },
+    ])
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['fable[1m]', 'sonnet'])
+    expect(claudeModelValue('fable[1m]')).toBe('claude-fable-5-1[1m]')
+  })
+
+  it('keeps a family apart from its 1M route, and keeps a repeated family addressable', () => {
+    recordClaudeModels([
+      { value: 'claude-opus-5', displayName: 'Opus', description: '' },
+      { value: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: '' },
+      { value: 'claude-opus-4-8', displayName: 'Opus 4.8', description: '' },
+    ])
+    expect(latestClaudeModels().map(row => row.id)).toEqual(['opus', 'opus[1m]', 'claude-opus-4-8'])
+  })
+
+  it('still resolves a concrete id persisted before the selector aliased anything', () => {
+    recordClaudeModels([{ value: 'claude-fable-5-1[1m]', displayName: 'Fable', description: '' }])
+    // The old session holds the CLI id; dispatch has to keep working on it.
+    expect(claudeModelValue('claude-fable-5-1[1m]')).toBe('claude-fable-5-1[1m]')
+    expect(claudeModelRow('claude-fable-5-2[1m]')?.id).toBe('fable[1m]')
+  })
+
+  it('learns the lineup from a throwaway CLI probe, without waiting for a session', async () => {
+    // DSH loads the catalog once per Host generation, at connect. Left on the
+    // seed until a session starts, the selector hands out seed ids that the
+    // next launch cannot resolve.
+    let probes = 0
+    const probe = async (): Promise<readonly ModelInfo[]> => {
+      probes += 1
+      return [{ value: 'claude-nextthing-9', displayName: 'Nextthing', description: '' }]
+    }
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, undefined, undefined, undefined, probe)
+    const [first, second] = await Promise.all([adapter.listModels('claude'), adapter.listModels('claude')])
+    expect(first.map(model => model.id)).toEqual(['nextthing'])
+    expect(second.map(model => model.id)).toEqual(['nextthing'])
+    expect(probes).toBe(1)
+  })
+
+  it('falls back to the seed when the probe cannot answer', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, undefined, undefined, undefined, async () => { throw new Error('claude: not logged in') })
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'fable', 'sonnet', 'haiku'])
   })
 })
 

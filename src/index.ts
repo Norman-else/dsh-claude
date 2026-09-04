@@ -42,6 +42,7 @@ import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
+import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
@@ -274,7 +275,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.executablePath = resolution.path
     ctx.llm.registerAdapter(
       [...CLAUDE_CODE_PROVIDER_IDS],
-      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request)),
+      createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath)),
     )
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
@@ -450,7 +451,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(webCtx.subprocess), cwdForClaudeSession)
     registerAskRoute(webCtx, new AskService(webCtx.subprocess, supervisorConfig.executablePath), cwdForClaudeSession, sessionId => {
       const snapshot = supervisor.snapshots().find(item => item.sessionId === sessionId)
-      return snapshot === undefined ? undefined : { model: snapshot.model, ...(snapshot.thinkingMode === undefined ? {} : { thinkingMode: snapshot.thinkingMode }) }
+      return snapshot === undefined ? undefined : { model: claudeModelValue(snapshot.model), ...(snapshot.thinkingMode === undefined ? {} : { thinkingMode: snapshot.thinkingMode }) }
     })
     const ownsClaudeSession = (sessionId: string): boolean => {
       const agent = webCtx.agents.get(sessionId as never)

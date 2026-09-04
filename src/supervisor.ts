@@ -33,7 +33,7 @@ import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
-import { recordClaudeModels } from './model-catalog.ts'
+import { claudeModelValue, recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
@@ -1044,7 +1044,9 @@ export class ClaudeSupervisor {
         resume: binding.claudeSessionId,
         ...(forkAt === undefined ? {} : { resumeSessionAt: forkAt }),
       }),
-      model,
+      // `model` is the selector alias DSH persists; the CLI is given the id
+      // that alias currently stands for.
+      model: claudeModelValue(model),
       ...(thinkingMode === undefined
         ? {}
         : thinkingMode === 'off'

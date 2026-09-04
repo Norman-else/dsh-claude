@@ -12,11 +12,11 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { ModelInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER, DEFAULT_CLAUDE_RENDER_MODE, type ClaudeRenderMode } from './constants.ts'
 import type { ClaudeSupervisor, ClaudeThinkingMode } from './supervisor.ts'
 import type { ClaudeUsage } from './events.ts'
-import { claudeModelRow, latestClaudeModels } from './model-catalog.ts'
+import { claudeModelRow, ensureClaudeModels } from './model-catalog.ts'
 import { formatReviewComments, type ReviewComment } from './review-comments.ts'
 import { summarizeSessionTitle, type SessionTitleRequest } from './session-title.ts'
 
@@ -220,6 +220,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  Settings dialog, and the read is dwarfed by the process the turn spawns. */
   readonly #renderMode: () => Promise<ClaudeRenderMode>
   readonly #summarizeTitle: (request: SessionTitleRequest) => Promise<string>
+  /** Reads the CLI's own `/model` rows, so the selector never has to advertise
+   *  the seed vocabulary once the CLI can answer for itself. */
+  readonly #probeModels: () => Promise<readonly ModelInfo[]>
 
   constructor(
     supervisor: ClaudeSupervisor,
@@ -229,6 +232,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
     renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
     summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
+    probeModels: () => Promise<readonly ModelInfo[]> = async () => [],
   ) {
     super()
     this.#supervisor = supervisor
@@ -238,6 +242,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.#drainReviewComments = drainReviewComments
     this.#renderMode = renderMode
     this.#summarizeTitle = summarizeTitle
+    this.#probeModels = probeModels
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -249,7 +254,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return latestClaudeModels().map(model => ({
+    const models = await ensureClaudeModels(this.#probeModels)
+    return models.map(model => ({
       provider,
       id: model.id,
       name: model.name,
@@ -428,6 +434,7 @@ export function createClaudeCodeAdapter(
   drainReviewComments: (sessionId: string) => readonly ReviewComment[] = () => [],
   renderMode: () => Promise<ClaudeRenderMode> = async () => DEFAULT_CLAUDE_RENDER_MODE,
   summarizeTitle: (request: SessionTitleRequest) => Promise<string> = request => summarizeSessionTitle('', request),
+  probeModels: () => Promise<readonly ModelInfo[]> = async () => [],
 ): ClaudeCodeAdapter {
-  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle)
+  return new ClaudeCodeAdapter(supervisor, agents, attachments, presetIdFor, drainReviewComments, renderMode, summarizeTitle, probeModels)
 }
