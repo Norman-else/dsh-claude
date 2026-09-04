@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { diffFuncnameArgs } from './diff-funcname.ts'
 import { detectRepositoryOperation } from './repository-status.ts'
 
 const MAX_OUTPUT_BYTES = 256 * 1024
@@ -391,12 +392,13 @@ export class RepositoryActionService {
     const git = await this.#git()
     const rootResult = await this.#mustRun(git, ['rev-parse', '--path-format=absolute', '--show-toplevel'], cwd, GIT_TIMEOUT_MS, 'not-repository', 'The session directory is not a Git repository.')
     const root = rootResult.stdout.trim()
+    const funcname = await diffFuncnameArgs()
     const [branchResult, headResult, statusResult, stagedPatch, unstagedPatch] = await Promise.all([
       this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root, GIT_TIMEOUT_MS),
       this.#run(git, ['rev-parse', 'HEAD'], root, GIT_TIMEOUT_MS),
       this.#run(git, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], root, GIT_TIMEOUT_MS),
-      this.#run(git, ['diff', '--cached', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
-      this.#run(git, ['diff', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
+      this.#run(git, [...funcname, 'diff', '--cached', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
+      this.#run(git, [...funcname, 'diff', '--no-ext-diff', '--no-color', '--unified=3', '--', ':(exclude)WARP.md', ':(exclude)**/WARP.md'], root, GIT_TIMEOUT_MS, MAX_OUTPUT_BYTES),
     ])
     if (branchResult.exitCode !== 0) throw new RepositoryActionError('detached-head', 'A detached HEAD cannot be committed from this panel.')
     if (headResult.exitCode !== 0 || statusResult.exitCode !== 0 || statusResult.lossy) throw new RepositoryActionError('repository-unavailable', 'Repository state is unavailable.')

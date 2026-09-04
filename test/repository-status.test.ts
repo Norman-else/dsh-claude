@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { DSHWEB_FUNCNAME } from '../src/diff-funcname.ts'
 import {
   RepositoryStatusService,
   aggregateChecks,
@@ -195,8 +196,15 @@ describe('repository status service', () => {
     ])
     expect(fake.spawn.mock.calls[4]?.[0].argv).toEqual(['/bin/git', 'merge-base', 'HEAD', 'refs/remotes/origin/master'])
     expect(fake.spawn.mock.calls[5]?.[0].argv).toEqual(['/bin/git', 'diff', '--no-ext-diff', '--numstat', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--'])
+    // The funcname overrides run ahead of the subcommand, so hunk headers name
+    // the method a change sits in rather than the enclosing class.
     expect(fake.spawn.mock.calls[6]?.[0]).toMatchObject({
-      argv: ['/bin/git', 'diff', '--no-ext-diff', '--no-color', '--unified=3', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--'],
+      argv: [
+        '/bin/git',
+        '-c', expect.stringMatching(/^core\.attributesFile=.+diff-attributes$/u),
+        '-c', `diff.dshweb.xfuncname=${DSHWEB_FUNCNAME}`,
+        'diff', '--no-ext-diff', '--no-color', '--unified=3', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--',
+      ],
       stdio: { stdout: { maxBytes: 262_144 } },
     })
     expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'ls-files', '--others', '--exclude-standard', '-z'])

@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { diffFuncnameArgs } from './diff-funcname.ts'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
 const MAX_DIFF_BYTES = 256 * 1024
@@ -485,7 +486,7 @@ export class RepositoryStatusService {
       const numstat = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--numstat', base, '--'], cwd, GIT_TIMEOUT_MS)
       if (numstat.exitCode !== 0 || numstat.lossy) return undefined
       const summary = parseDiffNumstat(numstat.stdout)
-      const patch = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
+      const patch = await run(this.#runtime, git, [...await diffFuncnameArgs(), 'diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
       if (patch.exitCode !== 0) return { ...summary, truncated: true }
       const untracked = await this.#untrackedDiff(cwd, git, signal)
       const combinedPatch = `${patch.stdout}${untracked.patch}`
