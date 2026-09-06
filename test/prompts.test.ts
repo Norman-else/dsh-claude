@@ -31,7 +31,9 @@ describe('Claude prompt snippet directory', () => {
       name: '写单测',
       description: '照现有测试风格补单测。',
       body: '照现有测试风格补单测。\n\n只覆盖新增分支。\n',
-      location: join(dir, '写单测.md'),
+      // The temp directory sits under the home directory on Windows, so the
+      // location goes through the same collapse the UI shows.
+      location: displayPath(join(dir, '写单测.md')),
     }])
   })
 
