@@ -10,7 +10,7 @@ Claude Code remains responsible for its agent loop, tools, `CLAUDE.md`, Skills, 
 
 ### Requirements
 
-- DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.1-rc.2` package line.
+- DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.2-rc.1` package line (DSH Desktop 2.0.5). Plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`; a Host still on that line must pin `@norman-else/dsh-claude@0.1.36`.
 - A local Claude Code installation that is already authenticated.
 - Node.js 20 or later when installing from a source checkout.
 

@@ -39,7 +39,18 @@ describe('published package contract', () => {
     const dshDevelopmentVersions = Object.entries(packageJson.devDependencies)
       .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
       .map(([, version]) => version)
-    expect(packageJson.peerDependencies['@deepseek-ai/dsh-attachment']).toBe('*')
+    // Issue #19: a `*` peer let a 0.1.1-rc.2 Host install 0.1.37+ and die on
+    // `import { ToolCallId } from '@deepseek-ai/dsh-llm'`. Every dsh-* peer
+    // must name the line the plugin is built on; the two packages that never
+    // got a 0.1.2-rc.1 release stay on the rc.2 floor.
+    const dshPeers = Object.entries(packageJson.peerDependencies).filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+    expect(dshPeers.length).toBeGreaterThan(0)
+    for (const [name, range] of dshPeers) {
+      expect(range, name).not.toBe('*')
+      expect(range, name).toBe(name === '@deepseek-ai/dsh-client-runtime' ? '>=0.1.1-rc.2' : '>=0.1.2-rc.1')
+    }
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-llm']).toBe('>=0.1.2-rc.1')
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-session']).toBe('>=0.1.2-rc.1')
     expect(dshDevelopmentVersions.length).toBeGreaterThan(0)
     // The Desktop 2.0.5 graph is 0.1.2-rc.1 except for the two packages that
     // never got that release; the Host ships the same pair, so a stray third
@@ -52,6 +63,13 @@ describe('published package contract', () => {
     expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.2-rc.1")
     expect(host).toContain("'attachments'")
     expect(host).toContain('ctx.attachments')
+  })
+
+  it('documents the DSH package line the plugin is actually built on', async () => {
+    const readme = await readFile(join(root, 'README.md'), 'utf8')
+    expect(readme).toContain('developed against the DSH `0.1.2-rc.1` package line')
+    expect(readme).not.toContain('developed against the DSH `0.1.1-rc.2` package line')
+    expect(readme).toContain('0.1.36')
   })
 
   it('declares every required client service provider in the boot graph', async () => {

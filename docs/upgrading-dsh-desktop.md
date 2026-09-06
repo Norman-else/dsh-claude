@@ -154,6 +154,108 @@ through the upgrade by green tests:
 `supervisor.test.ts` asserted the wrong reported output-token count. When an
 assertion encodes a Host contract, re-derive it from the Host before trusting it.
 
+## 6. The full audit, in order
+
+The 2.0.5 upgrade showed that sections 1 and 2 are necessary but not
+sufficient: a slot whose owner stopped passing a prop leaves a button
+permanently disabled, and nothing crashes, so no log line ever appears. The
+sequence below is what finally found everything. Run all of it; do not stop at
+the first fix.
+
+`H` below is the Host package directory from section 2.
+
+**Step 1. Pin the development graph to the Host, then trust `tsc`.**
+
+```bash
+for p in "$H"/*/package.json; do node -e "const p=require('$p');console.log(p.name,p.version)"; done | sort -u -k2 | head
+pnpm view @deepseek-ai/dsh-session versions --json | tail -3
+```
+
+If the Host version is on npm: bump every `@deepseek-ai/*` devDependency, the
+`overrides` and `minimumReleaseAgeExclude` lists in `pnpm-workspace.yaml`, and
+the expectation in `test/package-contract.test.ts`. Reinstall, then confirm the
+installed copies are the Host's copies — this is what makes typecheck mean
+something:
+
+```bash
+for p in dsh-session dsh-commands dsh-client-ui-chat dsh-client-ui-conversation; do
+  diff -r -x '*.map' node_modules/@deepseek-ai/$p/lib "$H/$p/lib" | grep -cE '^[<>]'
+done
+```
+
+Zero, or CSS-hash noise only (`\0dsh-css:` regions from a different build
+machine), is the target. A transitive package that stays on the old version
+despite the override (`pnpm peers check` names it) is fixed by adding it as an
+explicit devDependency.
+
+**Step 2. Diff the Host against what the plugin was built on.**
+
+Before reinstalling, or from the old lockfile, diff each package the plugin
+imports (`grep -rhoE "from '@deepseek-ai/[^']+'" src preset | sort -u`) and
+read the JS changes with the typert declaration noise stripped:
+
+```bash
+diff -ru -x '*.map' node_modules/@deepseek-ai/$p/lib "$H/$p/lib" \
+  | grep -v '"declaration"\|"name":\|sourceLocation' | grep -E '^[+-]'
+```
+
+Every removed or renamed export, method, getter, or field becomes a grep over
+`src/` and `test/`. In 2.0.5 that was `Session.events` (six host-side reads),
+`seedLength`, `effectiveApprovalPolicy`, and the `MessageSourceMap` kinds.
+
+**Step 3. Owner props, slot by slot.** The Host decides per release what an
+entry receives. For every key in `ctx.slots.inject(...)`:
+
+```bash
+grep -hoE 'renderSlot\("conversation.input.left", [^)]*\)' "$H"/dsh-client-ui-*/lib/client.js
+```
+
+`{}` means the entry gets standard props only (`useInput`, `useSession`,
+`useSessions`, `useWorkspaces`, `useChat`, `useConversation`, `sessionId`,
+`inputActions`); `zone` or a literal object is the owner currency. Compare with
+what each component destructures (`grep -hoE "^export function Claude[A-Za-z]+\(\{[^}]*\}" src/client/*.tsx`).
+Prefer the standard hooks: they are the stable channel, owner props are not.
+
+**Step 4. Definitions, snapshots, services, symbols.** Four mechanical greps
+against the Host bundles:
+
+- Conversation definitions: `grep -o "definition\.[a-zA-Z]*" "$H"/dsh-client-ui-conversation/lib/client.js | sort -u`
+  lists every hook the assembler calls; any new one must be optional-chained
+  (`definition.publication?.(...)`) or the plugin's definitions must gain it.
+- Snapshot fields the client reads (`running`, `blank`, `displayTitle`, `cwd`,
+  `origin`, `sessionIds`, `workspaceId`, `current`): grep each in
+  `dsh-api-session-controller` and `dsh-api-workspace-controller`.
+- Client service methods (`sessions.scope/open/binding`, `workspaces.*`,
+  `uiConversation.events.register`, `conversation.input.for/updateQueue`,
+  `remote.agentPresets.select`): grep the method name in the bundles.
+- Every runtime symbol imported from a Host package: extract the import lists,
+  grep each name in that package's `lib/*.js`. Type-only imports are exempt.
+
+**Step 5. DOM bridges.** `hero-dom-bridge`, `rewind-dom`, `host-chrome`,
+`preset-seat-mark`, `details-resize` read the Host's DOM. Grep every
+`data-*` attribute and every `[class*="localName"]` they use in the bundles.
+CSS-module hashes change every release; local names rarely do, but check.
+
+**Step 6. Host side.** `grep -rhoE "\b(ctx|webCtx)\.[a-zA-Z]+(\.[a-zA-Z]+)?\(" src/*.ts | sort -u`
+and `grep -rhoE "ctx\.on\('[^']+'" src/*.ts`; confirm each method and event
+name in `$H/dsh-*/lib/index.js`. The host-side plugin fails loudly
+(`dsh-claude: ... refresh failed`), so the log usually already names these.
+
+**Step 7. Fix in TDD order.** Change the test fakes to the new Host shape first
+and watch the suite go red for the same reason the Host log does; only then
+touch `src/`. A fake that still exposes the old shape is how green tests
+escort a breakage through.
+
+**Step 8. Read every plugin warning literally.** `preserving user-modified
+preset` meant the installer's legacy detection had failed on a Windows path,
+not that the user had edited anything. `resolves from multiple active Loader
+sources` was the consequence, not a separate problem.
+
+**Step 9. Rebuild, quit Desktop completely, start it, read the log of the new
+run only**, then exercise the features by hand: a turn, the composer buttons
+with a draft, rewind, the diff and plan panels. Absence of log lines is not
+evidence for the client side.
+
 ## Appendix: the Desktop 2.0 breakages, as worked examples
 
 | Symptom | Cause | Fix |
