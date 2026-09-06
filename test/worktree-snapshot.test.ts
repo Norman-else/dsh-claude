@@ -60,6 +60,9 @@ async function repository(): Promise<string> {
   await git(root, 'init', '--initial-branch=main')
   await git(root, 'config', 'user.email', 'test@example.invalid')
   await git(root, 'config', 'user.name', 'Test')
+  // A Windows-style checkout: git stores LF and writes CRLF. The snapshot
+  // must still hand back the bytes that were on disk, not git's translation.
+  await git(root, 'config', 'core.autocrlf', 'true')
   await writeFile(join(root, '.gitignore'), 'ignored/\n')
   await writeFile(join(root, 'tracked.txt'), 'committed\n')
   await git(root, 'add', '-A')

@@ -39,10 +39,13 @@ export function claudePromptsDir(): string {
   return join(homedir(), '.claude', 'prompts')
 }
 
-/** `~/.claude/prompts/x.md` rather than the absolute path it expands to. */
+/** `~/.claude/prompts/x.md` rather than the absolute path it expands to.
+ *  Windows joins with backslashes; the display form is the same on every OS. */
 export function displayPath(file: string): string {
   const home = homedir()
-  return file.startsWith(`${home}/`) ? `~${file.slice(home.length)}` : file
+  const separator = file.charAt(home.length)
+  if (!file.startsWith(home) || (separator !== '/' && separator !== '\\')) return file
+  return `~${file.slice(home.length).replaceAll('\\', '/')}`
 }
 
 /** The menu's second row: the first non-empty line, collapsed and bounded. */

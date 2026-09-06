@@ -21,6 +21,10 @@ const MAX_OUTPUT_BYTES = 64 * 1024
  *  status probes' five seconds, and this sits in front of every turn. */
 const GIT_TIMEOUT_MS = 30_000
 const OBJECT_NAME = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/u
+/** A snapshot holds the bytes on disk, not git's line-ending translation of
+ *  them. Under `core.autocrlf=true` a plain `add` would store LF and the
+ *  restore would write CRLF, so a rewind on Windows would flip every LF file. */
+const GIT_OPTIONS = ['-c', 'core.autocrlf=false'] as const
 
 type SnapshotRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
 
@@ -42,7 +46,7 @@ async function run(
   env: Record<string, string> = {},
 ): Promise<CommandResult> {
   return collect(runtime.spawn({
-    argv: [git, ...args],
+    argv: [git, ...GIT_OPTIONS, ...args],
     cwd,
     stdio: {
       stdin: 'ignore',
