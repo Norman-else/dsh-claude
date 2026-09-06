@@ -668,7 +668,7 @@ export class ClaudeSupervisor {
     await throwIfUnavailable()
 
     const promptUuid = randomUUID()
-    const cursor = currentClaudeActivityCursor(request.agent.session.events)
+    const cursor = currentClaudeActivityCursor(request.agent.session.snapshotEvents())
     const projection = await this.#sidecar.read(sessionId)
     await throwIfUnavailable()
     cursor.nextOrdinal = projection.activities.reduce((next, activity) => (
@@ -849,7 +849,7 @@ export class ClaudeSupervisor {
   }
 
   async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
-    const mode = claudePermissionMode(entry.ownerAgent.session.events)
+    const mode = claudePermissionMode(entry.ownerAgent.session.snapshotEvents())
     if (mode === entry.permissionMode) return
     await this.#control(entry, entry.query.setPermissionMode(mode), 'Claude Code permission mode switch')
     entry.permissionMode = mode
@@ -977,7 +977,7 @@ export class ClaudeSupervisor {
     const cwd = agent.session.header.cwd ?? process.cwd()
     const input = new AsyncQueue<SDKUserMessage>()
     const lifetime = new AbortController()
-    const projection = await this.#sidecar.importLegacy(sessionId, agent.session.events)
+    const projection = await this.#sidecar.importLegacy(sessionId, agent.session.snapshotEvents())
     if (signalAborted(signal) || signalAborted(cancellationSignal)) throw abortFailure()
     const binding = projection.binding
     // A rewound session resumes at the kept turn's chain anchor, or drops its
@@ -987,7 +987,7 @@ export class ClaudeSupervisor {
     const pendingRewind = projection.rewind?.pending
     const forkAt = pendingRewind !== undefined && 'resumeAt' in pendingRewind ? pendingRewind.resumeAt : undefined
     const startFresh = pendingRewind !== undefined && 'fresh' in pendingRewind
-    const permissionMode = claudePermissionMode(agent.session.events)
+    const permissionMode = claudePermissionMode(agent.session.snapshotEvents())
     const entry = {
       sessionId,
       ownerAgent: agent,

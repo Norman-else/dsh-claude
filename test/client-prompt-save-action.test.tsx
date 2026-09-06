@@ -40,7 +40,7 @@ function mount({ draft, owned = true, savePrompt, suggestName }: {
     mounted?.render(<ClaudePromptSaveAction
       t={t}
       useClaudeProjection={<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(snapshot)}
-      {...(draft === undefined ? {} : { input: { draft } })}
+      useInput={<S,>(selector: (value: { readonly draft: string }) => S): S => selector({ draft: draft ?? '' })}
       savePrompt={savePrompt ?? (async (name, body) => saved(name, body))}
       suggestName={suggestName ?? (async () => undefined)}
     />)

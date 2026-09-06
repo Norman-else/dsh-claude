@@ -15,9 +15,10 @@ export interface ClaudePromptSaveActionInjected {
 
 export interface ClaudePromptSaveActionProps extends ClaudePromptSaveActionInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
-  /** Composer state handed down by the tool row's owner; `draft` is the text
-   *  the button offers to keep. Absent only in the inert composer. */
-  input?: { readonly draft: string }
+  /** Standard session-scoped hook over the composer state; `draft` is the
+   *  text on screen. Host 0.1.2-rc.1 renders `conversation.input.left` with no
+   *  owner props, so the draft is only reachable through this hook. */
+  useInput: SnapshotSelectorHook<{ readonly draft: string }>
   /** Seam for tests; defaults to the host route that writes the prompt file. */
   savePrompt?: (name: string, body: string) => Promise<ClaudePromptView>
   /** Seam for tests; defaults to the host route that asks Claude for a name. */
@@ -116,7 +117,7 @@ type Panel =
  * improvement on a working answer, never something the user waits for.
  */
 export function ClaudePromptSaveAction({
-  t, useClaudeProjection, input, savePrompt = saveClaudePrompt, suggestName = suggestClaudePromptName,
+  t, useClaudeProjection, useInput, savePrompt = saveClaudePrompt, suggestName = suggestClaudePromptName,
 }: ClaudePromptSaveActionProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   const anchor = useRef<HTMLSpanElement>(null)
@@ -132,8 +133,10 @@ export function ClaudePromptSaveAction({
   const position = useAnchoredCard(panel !== undefined, anchor, panelRef, close)
   useEffect(() => () => { suggestion.current?.abort() }, [])
 
+  // Hooks stay above the early return: the inert composer still renders this
+  // entry, just with nothing to offer.
+  const draft = useInput(state => state.draft)
   if (!owned) return null
-  const draft = input?.draft ?? ''
   const label = t('promptSave')
   const open = (): void => {
     setPanel({ kind: 'naming', name: defaultPromptName(draft), touched: false, suggesting: true })

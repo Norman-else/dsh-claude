@@ -63,10 +63,12 @@ async function managedContents(paths: ManagedPresetPaths): Promise<ManagedConten
       // Earlier installers wrote either an unquoted specifier or an absolute
       // built-module path. Both are installer-owned and safe to converge to the
       // single profile package source used by Desktop 2.0.4.
+      // Older installers wrote the route as an absolute path; on Windows that
+      // path carries backslashes, so compare with separators normalized.
       isLegacy: current =>
         current.includes('id: claude-code-route')
         && (current.includes(legacyNameRow)
-          || current.includes('lib/preset-route.mjs')),
+          || current.replaceAll('\\', '/').includes('lib/preset-route.mjs')),
     }
   }))
 }

@@ -163,3 +163,13 @@ assertion encodes a Host contract, re-derive it from the Host before trusting it
 | Output vanished mid-render | `MarkdownText` replaced optional `codeLabels` with mandatory `labels`, no default; the code-block branch reads `labels.code.copyLabel` | Pass localized labels |
 | Status bar ignored the resize divider | `--dsh-conversation-composer-max-width` removed; styles froze on the fallback | Read `--dsh-composer-card-max-width` |
 | Overview panel crashed | `sessions` / `workspaces` became class instances; detached `getSnapshot` lost `this` | Bind through closures |
+
+## Appendix: the Desktop 2.0.5 breakages (Host 0.1.2-rc.1)
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Every Claude session failed before the CLI started: `command catalog refresh failed … Cannot read properties of undefined (reading 'filter')` | `Session.events` getter removed; the log is now read through `snapshotEvents(from?, to?)`, `ownEvents()`, `eventAt(seq)`. Six host-side reads got `undefined`, the first one in `importLegacy` on the spawn path | `agent.session.snapshotEvents()` everywhere; test fakes expose the method, not the property |
+| Installer logged `preserving user-modified preset` on every start and the client-module registry rejected the package for resolving from two Loader sources | An older installer had written the route as an absolute Windows path; the legacy check looked for `lib/preset-route.mjs` with forward slashes and never matched the backslashes | Normalize separators before the suffix check |
+| "Save prompt" and "Refine prompt" icons stayed disabled with a draft on screen | The composer now renders `conversation.input.left` with empty owner props (`renderSlot(key, {})` instead of `zone`), so `input.draft` was always undefined | Read the draft through the standard `useInput` hook the runner hands every session-scoped entry |
+
+Also in that Host: `SessionHeader.seedLength` is gone (`isSeeded` plus `Session.inheritedEventCount`, and a header still carrying `seedLength` is rejected), `seq` values are branded `SessionSeq` numbers validated as non-negative safe integers, `dsh-user-approval` no longer exports `effectiveApprovalPolicy`, and `MessageSourceMap` lost `coordinator` / `subagent-report` for `agent-message`. The devDependencies now pin `0.1.2-rc.1`, which is published, so `tsc` sees the new `Session` signature; `dsh-client-runtime` stays on `0.1.1-rc.2` because rc.1 was never published for it.

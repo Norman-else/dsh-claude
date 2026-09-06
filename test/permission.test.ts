@@ -11,7 +11,7 @@ function active(policy?: 'ask' | 'never') {
     : [{ type: 'approval/policy', data: { policy } }]
   const agent = {
     session: {
-      events: sessionEvents,
+      snapshotEvents: () => Object.freeze([...sessionEvents]),
       append: async (type: string, data: unknown) => { sessionEvents.push({ type, data }) },
     },
   } as unknown as Agent

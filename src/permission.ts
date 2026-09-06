@@ -176,7 +176,7 @@ export function createPermissionBridge(
       // below is therefore not enough — the ask has to be un-silenced for as
       // long as it is open, and put back exactly as it was afterwards.
       const userDecides = plan !== undefined
-      silenced = userDecides && approvalPolicyOf(session.events) === SILENT_POLICY
+      silenced = userDecides && approvalPolicyOf(session.snapshotEvents()) === SILENT_POLICY
       if (silenced) session.append('approval/policy', { policy: ASKING_POLICY })
       const alreadyFullAccess = !userDecides && await active.hasFullAccess?.() === true
       // Approving and rejecting are the only answers the approval dialog has,

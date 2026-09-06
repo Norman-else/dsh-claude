@@ -23,8 +23,10 @@ export interface ClaudePromptRefineActionInjected {
 
 export interface ClaudePromptRefineActionProps extends ClaudePromptRefineActionInjected {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
-  /** Composer state handed down by the tool row's owner. */
-  input?: { readonly draft: string }
+  /** Standard session-scoped hook over the composer state; `draft` is the
+   *  text on screen. Host 0.1.2-rc.1 renders `conversation.input.left` with no
+   *  owner props, so the draft is only reachable through this hook. */
+  useInput: SnapshotSelectorHook<{ readonly draft: string }>
   /** Seam for tests; defaults to the host route that asks Claude to rewrite. */
   refine?: (draft: string, cancel?: AbortSignal) => Promise<string>
 }
@@ -42,7 +44,7 @@ export interface ClaudePromptRefineActionProps extends ClaudePromptRefineActionI
  * offers it back over that window.
  */
 export function ClaudePromptRefineAction({
-  t, useClaudeProjection, input, replaceDraft, notify, refine = refineClaudePrompt,
+  t, useClaudeProjection, useInput, replaceDraft, notify, refine = refineClaudePrompt,
 }: ClaudePromptRefineActionProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   const attempt = useRef<AbortController | undefined>(undefined)
@@ -50,8 +52,8 @@ export function ClaudePromptRefineAction({
   const [applied, setApplied] = useState<{ readonly original: string; readonly refined: string }>()
   useEffect(() => () => { attempt.current?.abort() }, [])
 
+  const draft = useInput(state => state.draft)
   if (!owned || replaceDraft === undefined) return null
-  const draft = input?.draft ?? ''
   // The offer to undo lasts only while the rewrite is still on screen intact;
   // once the user edits or sends it, the original is no longer what they would
   // be getting back.

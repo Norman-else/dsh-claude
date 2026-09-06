@@ -88,6 +88,22 @@ describe('managed Agent Preset installation', () => {
     await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
   })
 
+  it('upgrades a Windows absolute route path left by an older installer', async () => {
+    const paths = await fixture()
+    await mkdir(paths.targetDir, { recursive: true })
+    // Older installers wrote the route as an absolute path; on Windows that path
+    // carries backslashes, so a forward-slash suffix check never matches it.
+    const route = String.raw`C:\Users\me\.dsh\profiles\web\node_modules\@norman-else\dsh-claude\lib\preset-route.mjs`
+    const legacy = `# managed\n- id: claude-code-route\n  name: '${route}'\n`
+    await writeFile(join(paths.targetDir, 'agent.cordis.yml'), legacy)
+    await writeFile(join(paths.targetDir, 'preset.yml'), '# managed\nname: Claude Code CLI\n')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('installed')
+    const upgraded = await readFile(join(paths.targetDir, 'agent.cordis.yml'), 'utf8')
+    expect(upgraded).toContain("name: '@norman-else/dsh-claude/preset-route'")
+    expect(upgraded).not.toContain('preset-route.mjs')
+    await expect(ensureManagedPreset(paths)).resolves.toBe('unchanged')
+  })
+
   it('upgrades legacy content even when template comments drifted', async () => {
     const paths = await fixture()
     await mkdir(paths.targetDir, { recursive: true })

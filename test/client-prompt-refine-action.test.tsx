@@ -39,7 +39,7 @@ function mount({ draft = '', owned = true, replaceDraft, notify, refine }: {
       root.render(<ClaudePromptRefineAction
         t={t}
         useClaudeProjection={<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(snapshot)}
-        input={{ draft: next }}
+        useInput={<S,>(selector: (value: { readonly draft: string }) => S): S => selector({ draft: next })}
         {...(replaceDraft === undefined ? {} : { replaceDraft })}
         {...(notify === undefined ? {} : { notify })}
         refine={refine ?? (async () => 'rewritten')}

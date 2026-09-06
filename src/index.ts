@@ -464,7 +464,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const agent = webCtx.agents.get(sessionId as never)
         return agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID
           ? undefined
-          : agent.session.events
+          : agent.session.snapshotEvents()
       },
       busy: sessionId => supervisor.snapshots().some(item => (
         item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')

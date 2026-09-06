@@ -85,7 +85,8 @@ function fakeAgent(id = 'dsh-session-1', cwd = '/workspace', onAppend?: (type: s
   let appendError: unknown
   const session = {
     header: { cwd },
-    get events() { return events },
+    // Host 0.1.2-rc.1: `Session.events` is gone; the snapshot is a method.
+    snapshotEvents: () => Object.freeze([...events]),
     append: async (type: string, data: unknown) => {
       onAppend?.(type, data)
       if (appendError !== undefined) throw appendError
@@ -984,7 +985,7 @@ describe('Claude supervisor', () => {
       time: 5,
     })
     const runtime = supervisor(transport.create)
-    await sidecars.get(runtime)!.importLegacy(owner.agent.id as string, owner.agent.session.events)
+    await sidecars.get(runtime)!.importLegacy(owner.agent.id as string, owner.agent.session.snapshotEvents())
     const output = await runtime.runTurn({ agent: owner.agent, prompt: 'continue' })
     expect(transport.queries[0]?.options.resume).toBe('persisted-claude-session')
     transport.queries[0]!.push(init('persisted-claude-session'))
