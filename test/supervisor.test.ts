@@ -1953,6 +1953,33 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('records an API retry notice as a settled warning, not an activity still running', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'pull latest' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'system',
+      subtype: 'api_retry',
+      attempt: 1,
+      max_retries: 10,
+      retry_delay_ms: 1000,
+      error_status: 529,
+      error: 'overloaded_error',
+    } as unknown as SDKMessage)
+    query.push(result('pulled'))
+    await collect(output)
+
+    await expect(projection(runtime)).resolves.toMatchObject({
+      activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'warning', title: 'Claude API retry', phase: 'completed' }),
+      ]),
+    })
+    await runtime.dispose()
+  })
+
   it('does not mirror subagent-nested tool calls into the native tool channel', async () => {
     const transport = factory()
     const owner = fakeAgent()

@@ -283,7 +283,7 @@ describe('Claude sidecar conversation projection', () => {
       { turn: 2, step: 1, ordinal: 0, kind: 'text', text: 'I will inspect this.' },
       { turn: 2, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started', toolUseId: 'read-1', toolName: 'Read', detail: 'file.ts' },
       { turn: 2, step: 1, ordinal: 2, kind: 'tool-result', phase: 'completed', toolUseId: 'read-1', detail: 'contents' },
-      { turn: 2, step: 1, ordinal: 3, kind: 'warning', phase: 'updated', title: 'Transient tool warning' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'warning', phase: 'completed', title: 'Transient tool warning' },
       { turn: 2, step: 1, ordinal: 4, kind: 'tool-call', phase: 'started', toolUseId: 'grep-1', toolName: 'Grep', detail: 'symbol' },
       { turn: 2, step: 1, ordinal: 5, kind: 'tool-result', phase: 'failed', toolUseId: 'grep-1', detail: 'not found', isError: true },
       { turn: 2, step: 1, ordinal: 6, kind: 'text', text: 'I found the cause.' },
@@ -299,7 +299,7 @@ describe('Claude sidecar conversation projection', () => {
         expect.objectContaining({ toolUseId: 'read-1', toolName: 'Read', output: 'contents', phase: 'completed' }),
         expect.objectContaining({ toolUseId: 'grep-1', toolName: 'Grep', output: 'not found', phase: 'failed', isError: true }),
       ] },
-      { kind: 'activity', ordinal: 3, row: expect.objectContaining({ activity: expect.objectContaining({ title: 'Transient tool warning' }) }) },
+      { kind: 'activity', ordinal: 3, row: expect.objectContaining({ running: false, activity: expect.objectContaining({ title: 'Transient tool warning' }) }) },
       { kind: 'text', ordinal: 6, text: 'I found the cause.' },
       { kind: 'tools', ordinal: 7, tools: [expect.objectContaining({
         toolUseId: 'bash-1', toolName: 'Bash', phase: 'denied', output: 'rejected', isError: true,

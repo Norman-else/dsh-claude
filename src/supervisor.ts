@@ -1281,9 +1281,12 @@ export class ClaudeSupervisor {
       case 'status':
       case 'warning':
       case 'unknown':
+        // One-shot notices (an API retry, a hook echo) have no later event to
+        // close them, so they must land settled: an 'updated' phase reads as
+        // still running in the transcript forever.
         await this.#appendActivity(active, {
           kind: message.kind === 'status' ? 'status' : 'warning',
-          phase: 'updated',
+          phase: 'completed',
           title: message.title,
           ...('summary' in message ? { summary: message.summary } : {}),
           ...('detail' in message ? { detail: message.detail } : {}),
