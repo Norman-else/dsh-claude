@@ -79,12 +79,19 @@ function DiffGlyph() {
   )
 }
 
+function diffTotal(projection: ClaudeClientProjection, key: 'additions' | 'deletions'): number {
+  return [projection.repository, ...(projection.repositories ?? [])]
+    .reduce((sum, repository) => sum + (repository?.diff?.[key] ?? 0), 0)
+}
+
 export function ClaudeDiffHeaderAction({ t, sessionId, toggleDiff, diffOpen, useClaudeProjection }: ClaudeDiffHeaderActionProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   // Selected one primitive at a time: a composite selector would allocate a
   // fresh object per snapshot and defeat the hook's equality check.
-  const additions = useClaudeProjection(projection => projection.repository?.diff?.additions ?? 0)
-  const deletions = useClaudeProjection(projection => projection.repository?.diff?.deletions ?? 0)
+  // Summed over every checkout the session wrote into: the button answers
+  // "did this session change anything", not "did it change this one folder".
+  const additions = useClaudeProjection(projection => diffTotal(projection, 'additions'))
+  const deletions = useClaudeProjection(projection => diffTotal(projection, 'deletions'))
   const open = useSyncExternalStore(diffOpen.subscribe, diffOpen.getSnapshot, diffOpen.getSnapshot)
   // The action row renders in every Session header, including ones driven by
   // other agent presets; only Claude sessions have a diff to show.

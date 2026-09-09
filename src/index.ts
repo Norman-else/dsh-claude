@@ -17,7 +17,8 @@ import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
-import { RepositoryStatusService } from './repository-status.ts'
+import { RepositoryStatusService, type RepositoryStatus } from './repository-status.ts'
+import type { ClaudeActivityEvent } from './events.ts'
 import { comparablePath, RepositorySetupService } from './repository-setup.ts'
 import { summarizeBranchSlug } from './branch-name.ts'
 import { summarizeSessionTitle } from './session-title.ts'
@@ -40,6 +41,7 @@ import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
+import { linkedRepositoryShown, touchedFilePaths, touchedRepositoryRoots } from './touched-repositories.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
@@ -68,6 +70,8 @@ const CLAUDE_SCOPE_UNAVAILABLE_MESSAGE = 'agent command scope unavailable (prese
 const CATALOG_RETRY_MS = 5_000
 const SCOPE_RETRY_MS = 500
 const MAX_CATALOG_RETRIES = 3
+/** Bounded: each extra checkout costs a git chain and a `gh pr view` per sweep. */
+const MAX_EXTRA_REPOSITORIES = 8
 const MAX_SCOPE_RETRIES = 24
 
 export function mountClaudeMetadata(
@@ -432,15 +436,28 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         supervisor.limitsChanged()
       },
     })
-    registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.())
+    registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.(), path => repositoryStatus.invalidate(path))
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())
     const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
-    const cwdForClaudeSession = (sessionId: string): string | undefined => {
+    /** Roots the latest projection probe vouched for, per session: the only
+     *  checkouts a route may act on besides the session's own. */
+    const extraRoots = new Map<string, readonly string[]>()
+    const cwdForClaudeSession = (sessionId: string, root?: string): string | undefined => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
-      return agent.session.header.cwd
+      if (root === undefined) return agent.session.header.cwd
+      return extraRoots.get(sessionId)?.includes(root) === true ? root : undefined
+    }
+    const extraRepositoriesForClaudeSession = async (sessionId: string, activities: readonly ClaudeActivityEvent[]): Promise<readonly RepositoryStatus[]> => {
+      const cwd = cwdForClaudeSession(sessionId)
+      if (cwd === undefined) return []
+      const own = await repositoryStatus.rootOf(cwd)
+      const roots = await touchedRepositoryRoots(touchedFilePaths(activities), own ?? cwd, directory => repositoryStatus.rootOf(directory), MAX_EXTRA_REPOSITORIES)
+      const statuses = (await Promise.all(roots.map(root => repositoryStatus.inspect(root)))).filter(linkedRepositoryShown)
+      extraRoots.set(sessionId, statuses.map(status => status.root ?? status.cwd))
+      return statuses
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
     registerEditorOpenRoute(webCtx, new EditorOpenService(webCtx.subprocess), cwdForClaudeSession)
@@ -482,6 +499,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const cwd = agent.session.header.cwd
       return cwd === undefined ? undefined : repositoryStatus.inspect(cwd)
-    }, sessionId => reviewComments.list(sessionId))
+    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession)
   })
 }

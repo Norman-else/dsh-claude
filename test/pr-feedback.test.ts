@@ -301,6 +301,21 @@ function response(): ServerResponse & { statusCode: number; body: string } {
 }
 
 describe('pull request feedback route', () => {
+  it('hands a requested root to the session resolver', async () => {
+    const ctx = context()
+    const service = { threads: vi.fn(async () => []) }
+    registerPullRequestFeedbackRoute(ctx, service as unknown as PullRequestFeedbackService, (id, root) => (
+      id !== 'owned' ? undefined : root === undefined ? '/repo' : root === '/b' ? '/b' : undefined
+    ))
+    const other = response()
+    await ctx.handler(request(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}/comments?sessionId=owned&number=12&root=${encodeURIComponent('/b')}`), other)
+    expect(other.statusCode).toBe(200)
+    expect(service.threads).toHaveBeenCalledWith('/b', 12)
+    const unknown = response()
+    await ctx.handler(request(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}/comments?sessionId=owned&number=12&root=${encodeURIComponent('/x')}`), unknown)
+    expect(unknown.statusCode).toBe(409)
+  })
+
   it('posts replies and thread resolutions bound to the session cwd', async () => {
     const ctx = context()
     const service = {

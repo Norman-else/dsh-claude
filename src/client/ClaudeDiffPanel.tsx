@@ -14,7 +14,7 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryActionKind, RepositoryActionPreview } from '../repository-actions.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment, ReviewCommentSide } from '../review-comments.ts'
-import { branchLabel } from './branch-label.ts'
+import { branchLabel, repositoryLabel } from './branch-label.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import { useActionToast } from './action-toast.tsx'
@@ -43,6 +43,8 @@ export interface ClaudeDiffPanelInjected {
   toggleMaximized: () => void
   /** Submit the composer, seeding the given draft text when it is empty. */
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+  /** Open on this checkout rather than the session's own (see `repositories`). */
+  initialRoot?: string
 }
 
 export interface ClaudeDiffPanelProps extends ClaudeDiffPanelInjected {
@@ -518,12 +520,45 @@ function RestorePanelIcon() {
   )
 }
 
-export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized, submitPrompt }: ClaudeDiffPanelProps) {
+function hasChanges(repository: RepositoryStatus | undefined): boolean {
+  return (repository?.diff?.additions ?? 0) > 0 || (repository?.diff?.deletions ?? 0) > 0
+}
+
+/** The checkouts a session can show: its own first, then the ones it wrote into. */
+export function panelRepositories(projection: Pick<ClaudeClientProjection, 'repository' | 'repositories'>): readonly RepositoryStatus[] {
+  return [projection.repository, ...(projection.repositories ?? [])].filter((item): item is RepositoryStatus => item !== undefined)
+}
+
+export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized, submitPrompt, initialRoot }: ClaudeDiffPanelProps) {
   const projection = useClaudeProjection(value => value)
-  const repository = projection.repository
+  const repositories = useMemo(() => panelRepositories(projection), [projection])
+  // Opened without a target, the panel lands on the session's own checkout --
+  // unless that one is clean and a linked one is not, in which case the
+  // header button that opened it was lit by the linked one.
+  const [selectedRoot, setSelectedRoot] = useState(() => initialRoot ?? (
+    hasChanges(projection.repository) ? undefined : repositories.find(hasChanges)?.root
+  ))
+  const repository = repositories.find(item => item.root === selectedRoot) ?? projection.repository
+  // Undefined for the session's own checkout, so its requests keep their shape;
+  // the Host only honours roots the projection has vouched for.
+  const root = repository === projection.repository ? undefined : repository?.root
   const diff = repository?.diff
   const files = useMemo(() => parseUnifiedDiff(diff?.patch ?? ''), [diff?.patch])
   const [menuOpen, setMenuOpen] = useState(false)
+  const [repositoryMenuOpen, setRepositoryMenuOpen] = useState(false)
+  // Each row carries its own counts, so both changes are visible at once.
+  const repositoryItems = useMemo((): readonly MenuEntry[] => repositories.map(item => ({
+    id: item.root ?? item.cwd,
+    label: <span style={styles.diffRepositoryRow}>
+      <span style={styles.diffRepositoryRowName}>{repositoryLabel(item)}</span>
+      {' '}
+      <span style={styles.diffRepositoryRowCounts}>
+        <span style={styles.diffAdd}>+{item.diff?.additions ?? 0}</span>
+        {' '}
+        <span style={styles.diffDelete}>−{item.diff?.deletions ?? 0}</span>
+      </span>
+    </span>,
+  })), [repositories])
   const { toast, report } = useActionToast()
   const [dialog, setDialog] = useState<ActionDialogState>()
   const [message, setMessage] = useState('')
@@ -548,12 +583,12 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     setGhThreads([])
     if (pullNumber === undefined) return
     const controller = new AbortController()
-    void loadPullRequestThreads(sessionId, pullNumber, controller.signal).then((threads) => {
+    void loadPullRequestThreads(sessionId, pullNumber, controller.signal, root).then((threads) => {
       setGhThreads(threads)
       setThreadsLoadedAt(Date.now())
     }, () => undefined)
     return () => { controller.abort() }
-  }, [pullNumber, sessionId])
+  }, [pullNumber, root, sessionId])
   // The count on the "hand the review to Claude" button counts what is still
   // open, matching what that button would actually forward.
   const openThreadCount = ghThreads.filter(thread => !thread.resolved).length
@@ -569,24 +604,24 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     setOpenFiles(current => new Map(current).set(path, open))
   }, [])
   const suggestMention = useCallback(async (query: string): Promise<readonly MentionableUser[]> => (
-    pullNumber === undefined ? [] : loadMentionableUsers(sessionId, pullNumber, query).catch((): readonly MentionableUser[] => [])
-  ), [pullNumber, sessionId])
+    pullNumber === undefined ? [] : loadMentionableUsers(sessionId, pullNumber, query, undefined, root).catch((): readonly MentionableUser[] => [])
+  ), [pullNumber, root, sessionId])
   // GitHub is the record; the local copy just spares the panel a full reload
   // between one reply and the next.
   const replyToThread = useCallback(async (thread: PullRequestReviewThread, body: string): Promise<void> => {
     if (pullNumber === undefined) return
     const anchor = thread.comments[0]
     if (anchor === undefined) return
-    const posted = await replyToReviewThread(sessionId, pullNumber, anchor.id, body)
+    const posted = await replyToReviewThread(sessionId, pullNumber, anchor.id, body, root)
     setGhThreads(list => list.map(item => (item.id === thread.id
       ? { ...item, comments: [...item.comments, posted] }
       : item)))
-  }, [pullNumber, sessionId])
+  }, [pullNumber, root, sessionId])
   const changeThreadResolved = useCallback(async (thread: PullRequestReviewThread, resolved: boolean): Promise<void> => {
     if (pullNumber === undefined) return
-    const state = await setReviewThreadResolved(sessionId, pullNumber, thread.id, resolved)
+    const state = await setReviewThreadResolved(sessionId, pullNumber, thread.id, resolved, root)
     setGhThreads(list => list.map(item => (item.id === thread.id ? { ...item, resolved: state } : item)))
-  }, [pullNumber, sessionId])
+  }, [pullNumber, root, sessionId])
   // The code container is max-content wide for horizontal scrolling; comment
   // editors size against the visible width published through this variable.
   const diffViewportObserver = useRef<ResizeObserver>()
@@ -619,14 +654,14 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     setDraft(true)
     const controller = new AbortController()
     actionController.current = controller
-    void loadRepositoryActionPreview(sessionId, controller.signal).then(async preview => {
+    void loadRepositoryActionPreview(sessionId, controller.signal, root).then(async preview => {
       setIncludeUnstaged(preview.hasUnstaged || preview.hasUntracked)
       if (action === 'push') {
         setDialog({ action, preview, loading: false, submitting: false })
         return
       }
       setDialog({ action, preview, loading: true, submitting: false })
-      const generated = await generateCommitMessage(sessionId, preview.fingerprint, controller.signal)
+      const generated = await generateCommitMessage(sessionId, preview.fingerprint, controller.signal, root)
       // The dialog is usable while the message is being written, so the
       // generated text only fills fields nobody has typed into, and lands on
       // whatever state the dialog reached in the meantime.
@@ -637,7 +672,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     }).catch(error => {
       if (!controller.signal.aborted) setDialog({ action, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
     })
-  }, [sessionId, t])
+  }, [root, sessionId, t])
   const confirm = useCallback(async () => {
     if (dialog?.preview === undefined || (dialog.action !== 'push' && message.trim().length === 0)) return
     const { error: _error, ...pending } = dialog
@@ -649,7 +684,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
         message,
         includeUnstaged,
         ...(dialog.action === 'create-pr' ? { prTitle, prBody, ...(baseBranch.trim() === '' ? {} : { baseBranch }), draft } : {}),
-      })
+      }, root)
       report(result.pullRequestUrl === undefined
         ? t(dialog.action === 'push' ? 'diffPushCompleted' : 'diffCommitCompleted', { commit: result.commit.slice(0, 8) })
         : t('diffPrCompleted'))
@@ -658,7 +693,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
       const completedCommit = typeof error === 'object' && error !== null && 'commit' in error && typeof error.commit === 'string' ? error.commit : undefined
       setDialog({ ...dialog, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed'), ...(completedCommit === undefined ? {} : { commit: completedCommit }) })
     }
-  }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, report, sessionId, t])
+  }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, report, root, sessionId, t])
   const openCommentEditor = useCallback((path: string, anchor: ReviewCommentAnchor) => {
     setCommentEditor({ path, ...anchor })
     setCommentDraft('')
@@ -799,10 +834,20 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
   return (
     <>
       {toast}
-      <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}{styles.diffCommentMarkdownCss}</style>
+      <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}{styles.diffCommentMarkdownCss}{styles.diffRepositoryCss}</style>
       <div className={styles.detailsCardClass} style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
         <header style={styles.diffHeader}>
-          <div style={styles.diffHeaderTitle}><span style={styles.diffHeaderBranch}>{branch}</span><span aria-hidden="true">›</span><span style={styles.diffHeaderLabel}>{t('diffWorkingTree')}</span></div>
+          <div style={styles.diffHeaderTitle}>
+            {repositories.length < 2 ? null : <>
+              <Menu open={repositoryMenuOpen} items={repositoryItems} selectedId={repository.root ?? repository.cwd} onSelect={(id: string) => { setSelectedRoot(id); setRepositoryMenuOpen(false) }} onClose={() => setRepositoryMenuOpen(false)} portal compact anchor={
+                <button type="button" className={styles.diffRepositoryTriggerClass} aria-label={t('diffRepository')} aria-haspopup="menu" aria-expanded={repositoryMenuOpen} onClick={() => setRepositoryMenuOpen(value => !value)}>
+                  <span>{repositoryLabel(repository)}</span><IconChevronDownOutline14 />
+                </button>
+              } />
+              <span aria-hidden="true">›</span>
+            </>}
+            <span style={styles.diffHeaderBranch} title={branch}>{branch}</span>
+          </div>
           <div style={styles.diffHeaderActions}>
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>

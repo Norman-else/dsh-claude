@@ -1547,6 +1547,18 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
+/** A checkout the session wrote into besides its own: lighter, dashed, and
+ *  stacked above the session bar so it reads as attached rather than primary. */
+export const repositoryBarLinked: CSSProperties = {
+  marginBottom: 6,
+  minHeight: 34,
+  padding: '5px 11px',
+  borderStyle: 'dashed',
+  background: 'transparent',
+  boxShadow: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
 export const repositoryPrIcon: CSSProperties = {
   width: 20,
   height: 20,
@@ -3032,12 +3044,6 @@ export const diffHeaderTitle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-export const diffHeaderLabel: CSSProperties = {
-  minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-}
-
 export const diffHeaderActions: CSSProperties = {
   flex: 'none',
   display: 'flex',
@@ -3083,11 +3089,73 @@ export const diffCommitMenuButton: CSSProperties = {
   cursor: 'pointer',
 }
 
-export const diffHeaderBranch: CSSProperties = {
+export const diffRepositoryTriggerClass = 'dshClaudeDiffRepositoryTrigger'
+
+/** The checkout switch: a quiet pill in the header's own type, lit on hover
+ *  and while its menu is open, with the chevron set off in a lighter tone. */
+export const diffRepositoryCss = `
+.${diffRepositoryTriggerClass} {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 2px 5px 2px 8px;
+  border: none;
+  border-radius: 7px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.${diffRepositoryTriggerClass}:hover,
+.${diffRepositoryTriggerClass}:focus-visible,
+.${diffRepositoryTriggerClass}[aria-expanded="true"] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+.${diffRepositoryTriggerClass}:focus-visible { outline: none; }
+.${diffRepositoryTriggerClass} > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.${diffRepositoryTriggerClass} > svg {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+`
+
+/** A row of the checkout menu: name left, its counts right in tabular figures. */
+export const diffRepositoryRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 14,
+  minWidth: 0,
+}
+
+export const diffRepositoryRowName: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
   overflow: 'hidden',
-  color: 'var(--dsw-alias-label-tertiary)',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+export const diffRepositoryRowCounts: CSSProperties = {
+  flex: 'none',
+  display: 'inline-flex',
+  gap: 6,
   fontSize: 12,
-  fontWeight: 500,
+  fontVariantNumeric: 'tabular-nums',
+}
+
+/** The branch is the panel's title: it inherits the header's primary weight
+ *  and colour, and only yields to an ellipsis once the actions need the room. */
+export const diffHeaderBranch: CSSProperties = {
+  minWidth: 0,
+  overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }

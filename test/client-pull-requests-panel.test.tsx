@@ -90,6 +90,30 @@ describe('Claude pull requests overview', () => {
     expect(overviewAttention([])).toBeUndefined()
   })
 
+  it('lists the other checkouts a session wrote into under its row, each with its own pull request', () => {
+    const projection = {
+      ...EMPTY_CLAUDE_PROJECTION,
+      repositories: [{
+        status: 'ready' as const, cwd: '/lib', root: '/lib', branch: 'fix/types', remote: 'org/lib',
+        pullRequest: { number: 7, title: 'Types', url: 'https://github.com/org/lib/pull/7', state: 'open' as const, draft: false, review: 'approved' as const, checks: 'failing' as const },
+      }],
+    }
+    const projectionFor = (id: string): OverviewProjectionSource => ({ subscribe: () => () => {}, getSnapshot: () => (id === 'a' ? projection : EMPTY_CLAUDE_PROJECTION) })
+    const markup = renderToStaticMarkup(<ClaudePullRequestsPanel
+      t={t}
+      closeDetails={vi.fn()}
+      openSession={vi.fn()}
+      loadStatus={vi.fn()}
+      sessions={store(byId)}
+      projectionFor={projectionFor}
+    />)
+    expect(markup).toContain('lib')
+    expect(markup).toContain('fix/types')
+    expect(markup).toContain('#7 · repositoryState_open')
+    expect(markup).toContain('repositoryChecks_failing')
+    expect(markup.split('fix/types')).toHaveLength(2)
+  })
+
   it('shows attention badges and context usage from the session projection', () => {
     const projection = {
       ...EMPTY_CLAUDE_PROJECTION,

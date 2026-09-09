@@ -63,19 +63,25 @@ function result(value: unknown): RepositoryActionResult {
   return input as unknown as RepositoryActionResult
 }
 
+/** `root` names another checkout the session wrote into; absent, the
+ *  session's own. The Host only honours roots it has vouched for. */
+function sessionQuery(sessionId: string, root?: string): Record<string, string> {
+  return { sessionId, ...(root === undefined ? {} : { root }) }
+}
+
 /** The preview only chains local Git; everything that writes may reach a remote. */
-export async function loadRepositoryActionPreview(sessionId: string, signal?: AbortSignal): Promise<RepositoryActionPreview> {
+export async function loadRepositoryActionPreview(sessionId: string, signal?: AbortSignal, root?: string): Promise<RepositoryActionPreview> {
   try {
-    return preview(await pluginRead<unknown>(`${CLAUDE_REPOSITORY_ACTION_PATH}/preview`, 'git', signal, { query: { sessionId } }))
+    return preview(await pluginRead<unknown>(`${CLAUDE_REPOSITORY_ACTION_PATH}/preview`, 'git', signal, { query: sessionQuery(sessionId, root) }))
   } catch (error) {
     throw actionError(error)
   }
 }
 
-export async function generateCommitMessage(sessionId: string, fingerprint: string, signal?: AbortSignal): Promise<string> {
+export async function generateCommitMessage(sessionId: string, fingerprint: string, signal?: AbortSignal, root?: string): Promise<string> {
   try {
     const value = record(await pluginWrite<unknown>(`${CLAUDE_REPOSITORY_ACTION_PATH}/message`, 'remote', signal, {
-      query: { sessionId },
+      query: sessionQuery(sessionId, root),
       json: { fingerprint },
     }))
     if (typeof value?.message !== 'string') throw new Error('Invalid generated commit message.')
@@ -88,10 +94,11 @@ export async function generateCommitMessage(sessionId: string, fingerprint: stri
 export async function executeRepositoryAction(
   sessionId: string,
   request: RepositoryActionRequest & { readonly action: RepositoryActionKind },
+  root?: string,
 ): Promise<RepositoryActionResult> {
   try {
     return result(await pluginWrite<unknown>(CLAUDE_REPOSITORY_ACTION_PATH, 'remote', undefined, {
-      query: { sessionId },
+      query: sessionQuery(sessionId, root),
       json: request,
     }))
   } catch (error) {

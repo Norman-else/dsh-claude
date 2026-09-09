@@ -26,6 +26,21 @@ afterEach(() => {
 })
 
 describe('pull request feedback client', () => {
+  it('scopes reads and writes to another checkout of the session when a root is given', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ threads: [] }))
+      .mockResolvedValueOnce(jsonResponse({ users: [] }))
+      .mockResolvedValueOnce(jsonResponse({ comment: comment(1, 'a', 'b') }))
+      .mockResolvedValueOnce(jsonResponse({ resolved: true }))
+    vi.stubGlobal('fetch', fetch)
+    await loadPullRequestThreads('s', 1, undefined, '/b')
+    await loadMentionableUsers('s', 1, 'al', undefined, '/b')
+    await replyToReviewThread('s', 1, 1, 'ok', '/b')
+    await setReviewThreadResolved('s', 1, 'T', true, '/b')
+    expect(fetch).toHaveBeenCalledTimes(4)
+    for (const call of fetch.mock.calls) expect(String(call[0])).toContain('root=%2Fb')
+  })
+
   it('loads review threads and drops malformed ones', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
       threads: [

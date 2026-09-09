@@ -8,18 +8,21 @@ import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 
 const t = (key: ClaudeCodeSettingsKey): string => en[key]
 
-function projectionHook(owned: boolean, diff?: { additions: number; deletions: number }) {
+function projectionHook(owned: boolean, diff?: { additions: number; deletions: number }, linked: { additions: number; deletions: number }[] = []) {
   const snapshot: ClaudeClientProjection = {
     ...EMPTY_CLAUDE_PROJECTION,
     owned,
     ...(diff === undefined ? {} : {
       repository: { status: 'ready' as const, cwd: '/repo', root: '/repo', diff: { ...diff, files: 4, truncated: false } },
     }),
+    ...(linked.length === 0 ? {} : {
+      repositories: linked.map((item, index) => ({ status: 'ready' as const, cwd: `/linked-${index}`, root: `/linked-${index}`, diff: { ...item, files: 1, truncated: false } })),
+    }),
   }
   return <S,>(selector: (value: ClaudeClientProjection) => S): S => selector(snapshot)
 }
 
-function render(owned: boolean, openFor?: string, diff?: { additions: number; deletions: number }) {
+function render(owned: boolean, openFor?: string, diff?: { additions: number; deletions: number }, linked?: { additions: number; deletions: number }[]) {
   const store = new PanelOpenStore()
   if (openFor !== undefined) store.open(openFor)
   return renderToStaticMarkup(<ClaudeDiffHeaderAction
@@ -27,7 +30,7 @@ function render(owned: boolean, openFor?: string, diff?: { additions: number; de
     sessionId="session-1"
     toggleDiff={vi.fn()}
     diffOpen={store.sourceFor('session-1')}
-    useClaudeProjection={projectionHook(owned, diff)}
+    useClaudeProjection={projectionHook(owned, diff, linked)}
   />)
 }
 
@@ -70,6 +73,15 @@ describe('Claude diff header action', () => {
     expect(markup).toContain('<span class="dsh-claude-header-diff-add">+262</span>')
     expect(markup).toContain('<span class="dsh-claude-header-diff-del">−0</span>')
     expect(markup).toContain('data-counts="true"')
+  })
+
+  it('counts the checkouts the session wrote into together with its own', () => {
+    const markup = render(true, undefined, { additions: 2, deletions: 1 }, [{ additions: 160, deletions: 30 }, { additions: 0, deletions: 4 }])
+
+    expect(markup).toContain('<span class="dsh-claude-header-diff-add">+162</span>')
+    expect(markup).toContain('<span class="dsh-claude-header-diff-del">−35</span>')
+    // A clean session checkout still lights up for a linked one that changed.
+    expect(render(true, undefined, { additions: 0, deletions: 0 }, [{ additions: 1, deletions: 0 }])).toContain('data-counts="true"')
   })
 
   it('stays a bare glyph while the branch carries no changes', () => {

@@ -169,12 +169,16 @@ describe('repository setup cleanup route', () => {
     const service = {
       cleanupMerged: vi.fn(async () => ({ mode: 'worktree', root: '/repo', branch: 'PSOS-1' })),
     }
-    registerRepositorySetupRoute(ctx, service as unknown as RepositorySetupService)
+    const cleaned = vi.fn()
+    registerRepositorySetupRoute(ctx, service as unknown as RepositorySetupService, undefined, cleaned)
     const cleanup = response()
     await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/wt', baseBranch: 'main' }), cleanup)
     expect(cleanup.statusCode).toBe(200)
     expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main')
     expect(JSON.parse(cleanup.body)).toMatchObject({ mode: 'worktree', branch: 'PSOS-1' })
+    // Status readers cache per path; the checkout that just changed must not
+    // keep answering from before.
+    expect(cleaned).toHaveBeenCalledWith('/wt')
   })
 
   it('kicks the worktree sweep the Client asks for, and answers without one', async () => {

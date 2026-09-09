@@ -17,6 +17,8 @@ export interface ClaudeClientProjection {
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
   readonly repository?: RepositoryStatus
+  /** Other checkouts the session wrote into, each with its own diff and PR. */
+  readonly repositories?: readonly RepositoryStatus[]
   readonly reviewComments?: readonly ReviewComment[]
   /** Surface seq spans a rewind dropped; the chat suppresses their rows. */
   readonly rewind?: { readonly ranges: readonly ClaudeRewindRange[] }
@@ -55,6 +57,8 @@ const MAX_REPOSITORY_TEXT_CHARS = 1_024
 const MAX_DIFF_CHARS = 256 * 1024
 const MAX_CONFLICT_PATHS = 100
 const MAX_REVIEW_COMMENTS = 50
+/** Matches the server's cap on probed checkouts. */
+const MAX_REPOSITORIES = 8
 const MAX_REVIEW_COMMENT_CHARS = 2_000
 const MAX_TRANSCRIPT_CHARS = 64_000
 
@@ -164,6 +168,10 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
   if (input.repository !== undefined && !validateRepository(input.repository)) {
     throw new Error('invalid Claude repository projection')
   }
+  if (input.repositories !== undefined && (!Array.isArray(input.repositories)
+    || input.repositories.length > MAX_REPOSITORIES || !input.repositories.every(validateRepository))) {
+    throw new Error('invalid Claude repositories projection')
+  }
   if (input.reviewComments !== undefined) {
     if (!Array.isArray(input.reviewComments) || input.reviewComments.length > MAX_REVIEW_COMMENTS) {
       throw new Error('invalid Claude review comment projection')
@@ -256,6 +264,7 @@ export function createClaudeProjectionSource(
   let contextUsage: ClaudeContextUsageEvent | undefined
   let tasks: ClaudeTasksEvent | undefined
   let repository: RepositoryStatus | undefined
+  let repositories: readonly RepositoryStatus[] | undefined
   let reviewComments: readonly ReviewComment[] | undefined
   let rewind: ClaudeClientProjection['rewind']
   const byStep = new Map<string, ClaudeActivityEvent[]>()
@@ -338,6 +347,7 @@ export function createClaudeProjectionSource(
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(tasks === undefined ? {} : { tasks }),
       ...(repository === undefined ? {} : { repository }),
+      ...(repositories === undefined ? {} : { repositories }),
       ...(reviewComments === undefined ? {} : { reviewComments }),
       ...(rewind === undefined ? {} : { rewind }),
       byStep: new Map(byStep),
@@ -455,6 +465,7 @@ export function createClaudeProjectionSource(
           contextUsage = next.contextUsage
           tasks = next.tasks
           repository = next.repository
+          repositories = next.repositories
           reviewComments = next.reviewComments
           rewind = next.rewind
           reset(next.activities)
@@ -491,11 +502,13 @@ export function createClaudeProjectionSource(
             owned: event.owned,
             commands: event.commands,
             ...(event.repository === undefined ? {} : { repository: event.repository }),
+            ...(event.repositories === undefined ? {} : { repositories: event.repositories }),
             ...(event.reviewComments === undefined ? {} : { reviewComments: event.reviewComments }),
           })
           owned = event.owned as boolean
           commands = event.commands as readonly ClaudeCommandView[]
           repository = event.repository as RepositoryStatus | undefined
+          repositories = event.repositories as readonly RepositoryStatus[] | undefined
           reviewComments = event.reviewComments as readonly ReviewComment[] | undefined
           revision += 1
           break

@@ -34,6 +34,21 @@ describe('repository action client API', () => {
     expect(fetch.mock.calls[2]?.[1]).toMatchObject({ method: 'POST', credentials: 'same-origin' })
   })
 
+  it('scopes every call to another checkout of the session when a root is given', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        root: '/b', branch: 'fix', head: 'a', fingerprint: 'f', files: [], patch: '', truncated: false,
+        hasStaged: false, hasUnstaged: false, hasUntracked: false, unpushedCommits: [], unpushedTruncated: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Fix' }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ commit: 'b', pushed: false }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    __setPluginFetch(fetch as unknown as typeof fetch)
+    await loadRepositoryActionPreview('s', undefined, '/b')
+    await generateCommitMessage('s', 'f', undefined, '/b')
+    await executeRepositoryAction('s', { action: 'commit', fingerprint: 'f', message: 'Fix', includeUnstaged: true }, '/b')
+    for (const call of fetch.mock.calls) expect(call[0]).toContain('root=%2Fb')
+  })
+
   it('rejects malformed success data and preserves normalized partial-success errors', async () => {
     __setPluginFetch(vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ root: '/repo' }), { status: 200 })) as unknown as typeof fetch)
     await expect(loadRepositoryActionPreview('session')).rejects.toThrow('Invalid repository action preview')
