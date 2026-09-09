@@ -130,6 +130,37 @@ describe('Claude sidecar projection route', () => {
     expect(JSON.stringify(body)).not.toContain('private-resume-id')
   })
 
+  it('carries the repositories a session wrote into beside its own, on the snapshot and on meta lines', async () => {
+    const activities = [{ turn: 1, step: 1, ordinal: 0, kind: 'tool-call' as const, toolName: 'Edit', detail: '{"file_path":"/b/x.ts"}' }]
+    const ctx = context()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 2, activities }),
+      sequence: () => 0,
+      subscribe: () => () => undefined,
+    } as unknown as ClaudeSidecarRepository
+    const seen: unknown[] = []
+    const own = { status: 'ready' as const, cwd: '/a', root: '/a', branch: 'main', detached: false, worktree: false, dirty: false }
+    const other = { status: 'ready' as const, cwd: '/b', root: '/b', branch: 'fix', detached: false, worktree: false, dirty: true }
+    registerClaudeProjectionRoute(ctx, sidecar, () => true, () => [], async () => own, () => [], async (_sessionId, list) => {
+      seen.push(list)
+      return [other]
+    })
+    const unary = response()
+    await ctx.handler(request(`${CLAUDE_PROJECTION_PATH}/${encodeURIComponent('session/a')}`), unary)
+    expect(JSON.parse(unary.body)).toMatchObject({ repository: { root: '/a' }, repositories: [{ root: '/b', dirty: true }] })
+    expect(seen).toEqual([activities])
+
+    const res = response()
+    const pending = ctx.handler(request(multi('session/a')), res)
+    await settled()
+    expect(lines(res)).toEqual([
+      expect.objectContaining({ type: 'snapshot', session: 'session/a' }),
+      expect.objectContaining({ type: 'meta', session: 'session/a', repository: expect.objectContaining({ root: '/a' }), repositories: [expect.objectContaining({ root: '/b' })] }),
+    ])
+    for (const callback of res.closeHandlers) callback()
+    await pending
+  })
+
   it('returns an empty projection for an unknown session', async () => {
     const ctx = context()
     registerClaudeProjectionRoute(ctx, { read: async () => ({ schemaVersion: 1, revision: 0, activities: [] }) } as ClaudeSidecarRepository, () => false)

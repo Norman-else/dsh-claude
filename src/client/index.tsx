@@ -101,7 +101,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 function MaximizedDiff({
-  source, t, sessionId, closeDetails, restore, submitPrompt,
+  source, t, sessionId, closeDetails, restore, submitPrompt, initialRoot,
 }: {
   source: ClaudeProjectionSource
   t: ClaudeDiffPanelInjected['t']
@@ -109,6 +109,7 @@ function MaximizedDiff({
   closeDetails: () => void
   restore: () => void
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+  initialRoot?: string
 }) {
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
   const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
@@ -120,6 +121,7 @@ function MaximizedDiff({
     closeDetails={closeDetails}
     toggleMaximized={restore}
     {...(submitPrompt === undefined ? {} : { submitPrompt })}
+    {...(initialRoot === undefined ? {} : { initialRoot })}
   /></ClaudePanelOverlay>
 }
 
@@ -432,7 +434,7 @@ ${error.stack ?? ''}`
     layout?.openDetails()
     disposeExpandedDetailsResize = enableExpandedDetailsResize()
   }
-  const openDiffPanel = (sessionId: string): void => {
+  const openDiffPanel = (sessionId: string, initialRoot?: string): void => {
     closePluginDetails()
     detailsSessionId = sessionId
     const submitPrompt = submitPromptFor(sessionId)
@@ -449,6 +451,7 @@ ${error.stack ?? ''}`
             closeDetails: closePluginDetails,
             toggleMaximized: maximizeDiff,
             ...(submitPrompt === undefined ? {} : { submitPrompt }),
+            ...(initialRoot === undefined ? {} : { initialRoot }),
           }),
         }, ClaudeDiffPanel)
       } catch {
@@ -478,6 +481,7 @@ ${error.stack ?? ''}`
           closeDetails={closePluginDetails}
           restore={restoreDiff}
           {...(submitPrompt === undefined ? {} : { submitPrompt })}
+          {...(initialRoot === undefined ? {} : { initialRoot })}
         />)
       } catch {
         disposeDiffOverlay = undefined
@@ -645,7 +649,7 @@ ${error.stack ?? ''}`
       const submitPrompt = submitPromptFor(sessionId)
       return {
         t,
-        openDiff: () => openDiffPanel(sessionId),
+        openDiff: root => openDiffPanel(sessionId, root),
         ...(submitPrompt === undefined ? {} : { submitPrompt }),
         ...(sessions === undefined ? {} : { openOverview: () => openOverviewPanel(sessionId) }),
         ...(workspaces === undefined ? {} : {

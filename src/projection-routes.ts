@@ -5,6 +5,7 @@ import { CLAUDE_PROJECTION_PATH } from './constants.ts'
 import { registerPluginRoute, type PluginRouteIo } from './http.ts'
 import { MAX_MULTIPLEX_SESSIONS } from './plugin-budget.ts'
 import type { ClaudeSidecarProjection, ClaudeSidecarRepository } from './sidecar.ts'
+import type { ClaudeActivityEvent } from './events.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
 import type { RepositoryStatus } from './repository-status.ts'
 import type { ReviewComment } from './review-comments.ts'
@@ -50,6 +51,8 @@ interface ProjectionMeta {
   readonly owned: boolean
   readonly commands: readonly ClaudeCommandView[]
   readonly repository?: RepositoryStatus
+  /** Other checkouts the session wrote into; see touched-repositories.ts. */
+  readonly repositories?: readonly RepositoryStatus[]
   readonly reviewComments: readonly ReviewComment[]
 }
 
@@ -63,6 +66,7 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
     ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
     ...(meta.repository === undefined ? {} : { repository: meta.repository }),
+    ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
     reviewComments: meta.reviewComments,
     // Ranges only: the chain anchors behind a rewind are Claude transcript
     // identities and stay on this side of the boundary.
@@ -88,6 +92,7 @@ export function registerClaudeProjectionRoute(
   commandsForSession: (sessionId: string) => readonly ClaudeCommandView[] = () => [],
   repositoryForSession: (sessionId: string) => Promise<RepositoryStatus | undefined> = async () => undefined,
   reviewCommentsForSession: (sessionId: string) => readonly ReviewComment[] = () => [],
+  extraRepositoriesForSession: (sessionId: string, activities: readonly ClaudeActivityEvent[]) => Promise<readonly RepositoryStatus[]> = async () => [],
 ): void {
   const info = (message: string): void => {
     ctx.logger?.info?.(message)
@@ -103,10 +108,18 @@ export function registerClaudeProjectionRoute(
     }
   }
 
-  const assembleMeta = async (sessionId: string): Promise<ProjectionMeta> => {
+  const assembleMeta = async (sessionId: string, activities?: readonly ClaudeActivityEvent[]): Promise<ProjectionMeta> => {
     const meta = localMeta(sessionId)
-    const repository = meta.owned ? await repositoryForSession(sessionId) : undefined
-    return { ...meta, ...(repository === undefined ? {} : { repository }) }
+    if (!meta.owned) return meta
+    const [repository, repositories] = await Promise.all([
+      repositoryForSession(sessionId),
+      extraRepositoriesForSession(sessionId, activities ?? (await sidecar.read(sessionId)).activities),
+    ])
+    return {
+      ...meta,
+      ...(repository === undefined ? {} : { repository }),
+      ...(repositories.length === 0 ? {} : { repositories }),
+    }
   }
 
   const streamMulti = async (res: ServerResponse, io: PluginRouteIo, sessionIds: readonly string[]): Promise<void> => {
@@ -142,6 +155,7 @@ export function registerClaudeProjectionRoute(
         owned: meta.owned,
         commands: meta.commands,
         ...(meta.repository === undefined ? {} : { repository: meta.repository }),
+        ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
         reviewComments: meta.reviewComments,
       })
     }
@@ -155,7 +169,7 @@ export function registerClaudeProjectionRoute(
       // Where the notification stream stands as of this read, so the first
       // delta after this line has a number to be contiguous with.
       writeLine({ type: 'snapshot', session: sessionId, seq: sidecar.sequence(sessionId), ...envelope(projection, meta) })
-      const probed = await assembleMeta(sessionId)
+      const probed = await assembleMeta(sessionId, projection.activities)
       if (closed || JSON.stringify(probed) === JSON.stringify(metas.get(sessionId))) return
       writeMeta(sessionId, probed)
     }
@@ -269,7 +283,7 @@ export function registerClaudeProjectionRoute(
       info(`dsh-claude: projection poll for ${target.sessionId.slice(0, 64)}`)
       try {
         const projection = await sidecar.read(target.sessionId)
-        const body = envelope(projection, await assembleMeta(target.sessionId))
+        const body = envelope(projection, await assembleMeta(target.sessionId, projection.activities))
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',

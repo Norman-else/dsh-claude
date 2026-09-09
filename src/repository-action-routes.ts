@@ -12,6 +12,7 @@ import {
 
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SESSION_ID_CHARS = 1_024
+const MAX_ROOT_CHARS = 4_096
 const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
 /** Actions that commit nothing of their own, so the panel sends no message. */
 const MESSAGELESS = new Set<RepositoryActionKind>(['push', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
@@ -43,6 +44,11 @@ function sessionId(url: URL): string {
   return value
 }
 
+function requestedRoot(url: URL): string | undefined {
+  const value = url.searchParams.get('root')
+  return value === null || value.length === 0 || value.length > MAX_ROOT_CHARS ? undefined : value
+}
+
 function string(input: Record<string, unknown>, key: string): string {
   const value = input[key]
   if (typeof value !== 'string') throw new RepositoryActionError('invalid-request', `The ${key} field is required.`)
@@ -72,6 +78,7 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
     ...(optionalString(input, 'baseBranch') === undefined ? {} : { baseBranch: optionalString(input, 'baseBranch')! }),
     ...(input.draft === undefined ? {} : typeof input.draft === 'boolean' ? { draft: input.draft } : (() => { throw new RepositoryActionError('invalid-request', 'The draft field must be a boolean.') })()),
     ...(input.push === undefined ? {} : typeof input.push === 'boolean' ? { push: input.push } : (() => { throw new RepositoryActionError('invalid-request', 'The push field must be a boolean.') })()),
+    ...(input.admin === undefined ? {} : typeof input.admin === 'boolean' ? { admin: input.admin } : (() => { throw new RepositoryActionError('invalid-request', 'The admin field must be a boolean.') })()),
     ...(input.mergeMethod === undefined
       ? {}
       : input.mergeMethod === 'merge' || input.mergeMethod === 'squash' || input.mergeMethod === 'rebase'
@@ -87,7 +94,9 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
 export function registerRepositoryActionRoute(
   ctx: Context,
   service: RepositoryActionService,
-  cwdForSession: (sessionId: string) => string | undefined,
+  /** `root` names one of the other repositories the session wrote into; the
+   *  resolver vouches for it or answers undefined, exactly as for the session. */
+  cwdForSession: (sessionId: string, root?: string) => string | undefined,
 ): void {
   registerPluginRoute(ctx, {
     mode: 'unary',
@@ -99,7 +108,7 @@ export function registerRepositoryActionRoute(
       const url = io.url
       try {
         const id = sessionId(url)
-        const cwd = cwdForSession(id)
+        const cwd = cwdForSession(id, requestedRoot(url))
         if (cwd === undefined) throw new RepositoryActionError('session-unavailable', 'The Claude session is unavailable.')
         if (url.pathname === `${CLAUDE_REPOSITORY_ACTION_PATH}/preview`) {
           if (io.method !== 'GET') return { status: 405, value: { error: 'method not allowed' } }

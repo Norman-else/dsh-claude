@@ -3,7 +3,7 @@ import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ClaudeActivityEvent } from '../events.ts'
 import { autoFixEnabled } from './auto-fix.ts'
-import { branchLabel } from './branch-label.ts'
+import { branchLabel, repositoryLabel } from './branch-label.ts'
 import { sessionRowPreset } from './session-preset.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -109,6 +109,38 @@ function repositoryName(remote: string | undefined): string | undefined {
   return remote?.split('/').at(-1)
 }
 
+function PullRequestBadges({ pullRequest, t }: { pullRequest: RepositoryStatus['pullRequest']; t: ClaudePullRequestsPanelInjected['t'] }) {
+  return <>
+    {pullRequest?.state === 'open' && pullRequest.checks !== 'none'
+      ? <Badge label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)} tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : 'warning'} />
+      : null}
+    {pullRequest?.state === 'open' && pullRequest.review !== 'none'
+      ? <Badge label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)} tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'} />
+      : null}
+  </>
+}
+
+function PullRequestBadge({ pullRequest, t }: { pullRequest: RepositoryStatus['pullRequest']; t: ClaudePullRequestsPanelInjected['t'] }) {
+  return pullRequest === undefined
+    ? <Badge label={t('overviewNoPr')} />
+    : <Badge label={`#${pullRequest.number} · ${t(`repositoryState_${pullRequest.state}` as ClaudeCodeSettingsKey)}`} tone={pullRequest.state === 'merged' ? 'merged' : pullRequest.state === 'open' ? 'success' : 'neutral'} />
+}
+
+/** The other checkouts a session wrote into, one line each, under its row. */
+function OverviewOtherRepositories({ source, t }: { source: OverviewProjectionSource; t: ClaudePullRequestsPanelInjected['t'] }) {
+  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  return <>
+    {(snapshot.repositories ?? []).map(repository => (
+      <span key={repository.root ?? repository.cwd} style={styles.overviewMeta}>
+        <span>{repositoryLabel(repository)}</span>
+        <span style={styles.overviewBranch}>{branchLabel(repository, t)}</span>
+        <PullRequestBadge pullRequest={repository.pullRequest} t={t} />
+        <PullRequestBadges pullRequest={repository.pullRequest} t={t} />
+      </span>
+    ))}
+  </>
+}
+
 function OverviewAttention({ source, running, t }: {
   source: OverviewProjectionSource
   running: boolean
@@ -186,22 +218,16 @@ export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStat
               <span style={styles.overviewRowTop}>
                 {row.running === true ? <span style={styles.overviewRunningDot} aria-label={t('overviewRunning')} /> : null}
                 <span style={styles.overviewTitle}>{row.displayTitle ?? row.id}</span>
-                {pullRequest === undefined
-                  ? <Badge label={t('overviewNoPr')} />
-                  : <Badge label={`#${pullRequest.number} · ${t(`repositoryState_${pullRequest.state}` as ClaudeCodeSettingsKey)}`} tone={pullRequest.state === 'merged' ? 'merged' : pullRequest.state === 'open' ? 'success' : 'neutral'} />}
+                <PullRequestBadge pullRequest={pullRequest} t={t} />
               </span>
               <span style={styles.overviewMeta}>
                 {repositoryName(repository?.remote) === undefined ? null : <span>{repositoryName(repository?.remote)}</span>}
                 <span style={styles.overviewBranch}>{branch}</span>
-                {pullRequest?.state === 'open' && pullRequest.checks !== 'none'
-                  ? <Badge label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)} tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : 'warning'} />
-                  : null}
-                {pullRequest?.state === 'open' && pullRequest.review !== 'none'
-                  ? <Badge label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)} tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'} />
-                  : null}
+                <PullRequestBadges pullRequest={pullRequest} t={t} />
                 {autoFixEnabled(row.id) ? <Badge label={t('overviewAutoFix')} tone="success" /> : null}
                 {projectionFor === undefined ? null : <OverviewAttention source={projectionFor(row.id)} running={row.running === true} t={t} />}
               </span>
+              {projectionFor === undefined ? null : <OverviewOtherRepositories source={projectionFor(row.id)} t={t} />}
             </button>
           )
         })}

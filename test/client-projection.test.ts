@@ -138,6 +138,13 @@ describe('Claude client sidecar projection', () => {
         },
       },
     })).toThrow()
+    expect(parseClaudeClientProjection({
+      ...valid,
+      repositories: [{ status: 'ready', cwd: '/b', root: '/b', branch: 'fix', detached: false, worktree: false, dirty: true }],
+    }).repositories).toMatchObject([{ root: '/b' }])
+    expect(() => parseClaudeClientProjection({ ...valid, repositories: [{ status: 'nope', cwd: '/b' }] })).toThrow()
+    expect(() => parseClaudeClientProjection({ ...valid, repositories: { status: 'ready', cwd: '/b' } })).toThrow()
+    expect(() => parseClaudeClientProjection({ ...valid, repositories: Array.from({ length: 9 }, () => ({ status: 'ready', cwd: '/b' })) })).toThrow()
   })
 
   it('validates pending review comments', () => {
@@ -398,6 +405,23 @@ describe('Claude client sidecar projection', () => {
     expect(snapshot.commands[0]?.publicName).toBe('review')
     expect(snapshot.repository?.branch).toBe('feature/x')
     expect(snapshot.contextUsage?.totalTokens).toBe(5)
+    // Other checkouts the session wrote into ride the same meta line, and a
+    // later one without them clears them.
+    stream.push('session', {
+      type: 'meta',
+      owned: true,
+      commands: [],
+      repository: { status: 'ready', cwd: '/repo', root: '/repo', branch: 'feature/x', detached: false, worktree: false, dirty: true },
+      repositories: [{ status: 'ready', cwd: '/other', root: '/other', branch: 'fix', detached: false, worktree: false, dirty: true }],
+      reviewComments: [],
+    })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().repositories?.map(repository => repository.root)).toEqual(['/other'])
+    stream.push('session', { type: 'meta', owned: true, commands: [], reviewComments: [] })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().repositories).toBeUndefined()
     unsubscribe()
     stream.close()
     store.dispose()

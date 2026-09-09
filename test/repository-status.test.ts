@@ -377,3 +377,28 @@ describe('repository file lines', () => {
     await expect(service.fileLines(root, 'a.txt', 3, 2)).rejects.toMatchObject({ code: 'invalid-request' })
   })
 })
+
+describe('repository root lookup', () => {
+  it('answers the toplevel for a directory inside a repository, undefined outside, and caches both', async () => {
+    const fake = runtime([
+      { stdout: '/repo\n' },
+      { stdout: '', exitCode: 128 },
+    ])
+    const service = new RepositoryStatusService(fake, 60_000)
+    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+    await expect(service.rootOf('/tmp')).resolves.toBeUndefined()
+    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+    await expect(service.rootOf('/tmp')).resolves.toBeUndefined()
+    expect(fake.spawn).toHaveBeenCalledTimes(2)
+    expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({ cwd: '/repo/src', argv: ['/bin/git', 'rev-parse', '--path-format=absolute', '--show-toplevel'] })
+  })
+
+  it('does not cache a probe that failed to run', async () => {
+    const spawn = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('spawn failed') })
+      .mockImplementationOnce(() => handle('/repo\n'))
+    const service = new RepositoryStatusService({ spawn, resolveExecutable: async (name: string) => `/bin/${name}` }, 60_000)
+    await expect(service.rootOf('/repo/src')).resolves.toBeUndefined()
+    await expect(service.rootOf('/repo/src')).resolves.toBe('/repo')
+  })
+})

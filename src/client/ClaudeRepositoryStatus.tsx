@@ -7,7 +7,7 @@ import { executeRepositoryAction, loadRepositoryActionPreview } from './reposito
 import { useActionToast } from './action-toast.tsx'
 import { cleanupMergedRepository } from './repository-setup-api.ts'
 import { relativeAge } from './relative-age.ts'
-import { branchLabel } from './branch-label.ts'
+import { branchLabel, repositoryLabel } from './branch-label.ts'
 import { composeChecksPrompt, composeConflictsPrompt, loadFailingChecks, loadPullRequestThreads, type FailingCheck, type PullRequestReviewThread } from './pr-feedback-api.ts'
 import { AUTO_FIX_INTERVAL_MS, autoFixEnabled, autoFixMemory, planAutoFix, rememberAutoFix, setAutoFixEnabled } from './auto-fix.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -17,7 +17,8 @@ import { CLAUDE_COMPOSER_BAR_ATTRIBUTE } from './boot-check.ts'
 
 export interface ClaudeRepositoryStatusInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
-  openDiff: () => void
+  /** Open the diff panel, on another checkout the session wrote into when `root` is given. */
+  openDiff: (root?: string) => void
   /** Submit the composer, seeding the given draft text when it is empty. */
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
   /** Open the cross-session pull request overview panel. */
@@ -604,6 +605,8 @@ export const MERGE_METHODS: readonly RepositoryMergeMethod[] = ['merge', 'squash
 
 interface MergeDialogState {
   readonly method: RepositoryMergeMethod
+  /** Merge past branch protection; off each time the dialog opens. */
+  readonly admin: boolean
   readonly loading: boolean
   readonly submitting: boolean
   readonly fingerprint?: string
@@ -625,13 +628,13 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
   const openMerge = (method: RepositoryMergeMethod): void => {
     controller.current?.abort()
     setMenuOpen(false)
-    setDialog({ method, loading: true, submitting: false })
+    setDialog({ method, admin: false, loading: true, submitting: false })
     const aborter = new AbortController()
     controller.current = aborter
     void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
-      setDialog({ method, loading: false, submitting: false, fingerprint: preview.fingerprint })
+      setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, fingerprint: preview.fingerprint }))
     }, (error: unknown) => {
-      if (!aborter.signal.aborted) setDialog({ method, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
+      if (!aborter.signal.aborted) setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') }))
     })
   }
   const closeDialog = (): void => {
@@ -650,6 +653,7 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
       message: '',
       includeUnstaged: false,
       mergeMethod: dialog.method,
+      ...(dialog.admin ? { admin: true } : {}),
     }).then(() => {
       report(t('diffMergeCompleted', { number: pullRequest.number }))
       setDialog(undefined)
@@ -676,10 +680,82 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
             <span style={styles.diffModalFileState}>{t(`diffMerge_${dialog.method}` as ClaudeCodeSettingsKey)}</span>
           </div>
           <p style={styles.diffModalStatus}>{pullRequest.title}</p>
+          <label style={styles.diffModalCheckbox}>
+            <input type="checkbox" name="dsh-claude-merge-admin" checked={dialog.admin} disabled={dialog.submitting} onChange={event => { const { checked } = event.currentTarget; setDialog(current => current === undefined ? current : { ...current, admin: checked }) }} />
+            {t('diffMergeAdmin')}
+          </label>
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
         </div>}
       </Modal>
     </>
+  )
+}
+
+function LinkIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.8 9.2a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1" />
+      <path d="M9.2 6.8a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1" />
+    </svg>
+  )
+}
+
+/** A checkout the session wrote into besides its own, stacked above the
+ *  session bar so that one stays put next to the composer. The same readout
+ *  as the session bar, minus the controls that act on the session (auto-fix, update,
+ *  merge, cleanup), which live with the checkout the session was opened on. */
+export function LinkedRepositoryBar({ repository, t, openDiff, report }: {
+  repository: RepositoryStatus
+  t: ClaudeRepositoryStatusInjected['t']
+  openDiff: (root?: string) => void
+  report: (text: string) => void
+}) {
+  const key = repository.root ?? repository.cwd
+  if (repository.status !== 'ready') {
+    return (
+      <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked }} data-dsh-claude-linked-repository={key}>
+        <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
+        <span style={styles.repositoryPrimary}>{repositoryLabel(repository)} · {repository.status === 'not-repository' ? t('repositoryNotGit') : t('repositoryUnavailable')}</span>
+      </div>
+    )
+  }
+  const branch = branchLabel(repository, t)
+  const pullRequest = repository.pullRequest
+  const merged = pullRequest?.state === 'merged'
+  const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  return (
+    <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...(merged ? styles.repositoryBarMerged : {}) }} data-dsh-claude-linked-repository={key}>
+      <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
+      <PullRequestLink repository={repository} t={t} />
+      <span style={styles.repositoryRemote}>{repositoryLabel(repository)}</span>
+      <Tooltip label={branch} side="top" delayMs={250} maxWidth={420}>
+        <span style={styles.repositoryBranch}>{branch}</span>
+      </Tooltip>
+      {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
+      <span style={styles.repositoryStatusItems}>
+        {hasDiff && repository.diff !== undefined ? (
+          <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={() => openDiff(repository.root)} aria-label={t('diffOpen')}>
+            <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
+            <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
+          </button>
+        ) : null}
+        {pullRequest === undefined ? null : merged ? (<>
+          <span style={styles.repositoryMergedStatus}><span style={styles.repositoryMergedDot} aria-hidden="true" />{t('repositoryState_merged')}</span>
+          {/* No workspace to delete: the linked checkout is not this session's. Once it is
+              cleaned up the Host stops listing it and the bar comes down on the next sweep. */}
+          <CleanupControl repository={repository} t={t} report={report} />
+        </>) : <>
+          {pullRequest.checks === 'none' ? null : <StatusGlyph
+            label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
+            tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : 'warning'}
+          ><ChecksGlyph state={pullRequest.checks} /></StatusGlyph>}
+          {pullRequest.review === 'none' ? null : <StatusGlyph
+            label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
+            tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
+          ><ReviewGlyph /></StatusGlyph>}
+        </>}
+      </span>
+    </div>
   )
 }
 
@@ -700,9 +776,13 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const aheadCount = repository.ahead ?? 0
   const pushable = repository.remote !== undefined && repository.detached !== true && (aheadCount > 0 || repository.upstream === false)
   const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  const linked = (projection.repositories ?? []).map(item => (
+    <LinkedRepositoryBar key={item.root ?? item.cwd} repository={item} t={t} openDiff={openDiff} report={report} />
+  ))
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
+        {linked}
         <div style={styles.repositoryBar}>
           <span style={styles.repositoryPrIcon}><PullRequestIcon /></span>
           <span style={styles.repositoryPrimary}>{repository.status === 'not-repository' ? t('repositoryNotGit') : t('repositoryUnavailable')}</span>
@@ -713,6 +793,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   return (
     <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
       {toast}
+      {linked}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
         {openOverview === undefined
           ? <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
@@ -726,7 +807,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
         <span style={styles.repositoryStatusItems}>
           <ConflictControl sessionId={sessionId} repository={repository} t={t} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
           {hasDiff || pushable ? (
-            <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
+            <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={() => openDiff()} aria-label={t('diffOpen')}>
               {hasDiff && repository.diff !== undefined ? <>
                 <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
                 <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>

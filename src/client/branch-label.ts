@@ -11,3 +11,11 @@ export function branchLabel(
   if (repository.branch !== undefined) return repository.branch
   return repository.detached === true ? t('repositoryDetached') : t('repositoryUnknownBranch')
 }
+
+/** The short name a checkout goes by: its GitHub repository, else the
+ *  directory it lives in. */
+export function repositoryLabel(repository: Pick<RepositoryStatus, 'remote' | 'root' | 'cwd'>): string {
+  return repository.remote?.split('/').at(-1)
+    ?? repository.root?.split(/[\\/]/u).filter(part => part.length > 0).at(-1)
+    ?? repository.cwd
+}

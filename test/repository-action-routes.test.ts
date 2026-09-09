@@ -101,6 +101,24 @@ describe('repository action route', () => {
     })
   })
 
+  it('hands a requested root to the session resolver and refuses one it does not vouch for', async () => {
+    const ctx = context()
+    const actions = service()
+    const roots: string[] = ['/b']
+    registerRepositoryActionRoute(ctx, actions as unknown as RepositoryActionService, (id, root) => (
+      id !== 'owned' ? undefined : root === undefined ? '/a' : roots.includes(root) ? root : undefined
+    ))
+    const other = response()
+    await ctx.handler(request('GET', `${CLAUDE_REPOSITORY_ACTION_PATH}/preview?sessionId=owned&root=${encodeURIComponent('/b')}`), other)
+    expect(other.statusCode).toBe(200)
+    expect(actions.preview).toHaveBeenLastCalledWith('/b')
+    const unknown = response()
+    await ctx.handler(request('GET', `${CLAUDE_REPOSITORY_ACTION_PATH}/preview?sessionId=owned&root=${encodeURIComponent('/attacker')}`), unknown)
+    expect(unknown.statusCode).toBe(409)
+    expect(JSON.parse(unknown.body)).toMatchObject({ error: 'session-unavailable' })
+    expect(actions.preview).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects cross-origin, unknown-session, malformed, and oversized requests', async () => {
     const ctx = context()
     registerRepositoryActionRoute(ctx, service() as unknown as RepositoryActionService, () => undefined)
@@ -157,13 +175,25 @@ describe('repository merge route validation', () => {
       action: 'merge-pr', message: '', mergeMethod: 'squash',
     }))
 
+    const admin = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash', admin: true,
+    }), admin)
+    expect(admin.statusCode).toBe(200)
+    expect(actions.execute).toHaveBeenLastCalledWith('/repo', expect.objectContaining({ admin: true }))
+
     const bad = response()
     await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
       action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'fast-forward',
     }), bad)
     expect(bad.statusCode).toBe(409)
     expect(JSON.parse(bad.body)).toMatchObject({ error: 'invalid-request' })
-    expect(actions.execute).toHaveBeenCalledTimes(1)
+    const badAdmin = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash', admin: 'yes',
+    }), badAdmin)
+    expect(badAdmin.statusCode).toBe(409)
+    expect(actions.execute).toHaveBeenCalledTimes(2)
   })
 })
 

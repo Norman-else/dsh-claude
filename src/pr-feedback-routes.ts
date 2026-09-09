@@ -73,7 +73,7 @@ function pullNumber(url: URL): number {
 export function registerPullRequestFeedbackRoute(
   ctx: Context,
   service: PullRequestFeedbackService,
-  cwdForSession: (sessionId: string) => string | undefined,
+  cwdForSession: (sessionId: string, root?: string) => string | undefined,
 ): void {
   registerPluginRoute(ctx, {
     mode: 'unary',
@@ -86,7 +86,7 @@ export function registerPullRequestFeedbackRoute(
       const reads = io.method === 'GET'
       const writes = io.method === 'POST'
       try {
-        const cwd = cwdForSession(sessionId(url))
+        const cwd = cwdForSession(sessionId(url), url.searchParams.get('root') ?? undefined)
         if (cwd === undefined) throw new PullRequestFeedbackError('session-unavailable', 'The Claude session is unavailable.')
         if (url.pathname === `${CLAUDE_REPOSITORY_FEEDBACK_PATH}/comments`) {
           if (!reads) return { status: 405, value: { error: 'method not allowed' } }

@@ -88,7 +88,6 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   no: 'No',
   diffOpen: 'View working tree diff',
   diffClose: 'Close diff panel',
-  diffWorkingTree: 'Working tree changes',
   diffFiles: '{count} modified file(s)',
   diffTruncated: 'Diff truncated',
   diffEmpty: 'No tracked changes',
@@ -336,7 +335,10 @@ describe('Claude repository status UI', () => {
       closeDetails={vi.fn()}
       toggleMaximized={vi.fn()}
     />)
-    expect(panelMarkup).toContain('Working tree changes')
+    // The branch is the title; there is no breadcrumb level after it.
+    expect(panelMarkup).not.toContain('Working tree changes')
+    expect(panelMarkup).not.toContain('›')
+    expect(panelMarkup).toContain('feature/status')
     expect(panelMarkup).toContain('Commit')
     expect(panelMarkup).toContain('aria-label="diffCommitMenu"')
     expect(panelMarkup).toContain('aria-label="diffMaximize"')

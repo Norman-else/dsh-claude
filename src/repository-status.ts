@@ -323,6 +323,7 @@ export class RepositoryStatusService {
   readonly #lastReady = new Map<string, RepositoryStatus>()
   #gitExecutable?: Promise<string>
   #ghExecutable?: Promise<string | undefined>
+  readonly #roots = new Map<string, Promise<string | undefined>>()
 
   constructor(runtime: RepositoryRuntime, cacheTtlMs = CACHE_TTL_MS) {
     this.#runtime = runtime
@@ -346,7 +347,25 @@ export class RepositoryStatusService {
     this.#lastReady.delete(cwd)
   }
 
+  /** The repository holding `directory`, or undefined outside any. A root
+   *  does not move, so a settled answer is kept for the service's lifetime;
+   *  a probe that could not run is not an answer and is asked again. */
+  rootOf(directory: string): Promise<string | undefined> {
+    const known = this.#roots.get(directory)
+    if (known !== undefined) return known
+    const value = (async () => {
+      const top = await run(this.#runtime, await this.#git(), ['rev-parse', '--path-format=absolute', '--show-toplevel'], directory, GIT_TIMEOUT_MS)
+      return top.exitCode === 0 ? resolve(top.stdout.trim()) : undefined
+    })().catch((): undefined => {
+      this.#roots.delete(directory)
+      return undefined
+    })
+    this.#roots.set(directory, value)
+    return value
+  }
+
   dispose(): void {
+    this.#roots.clear()
     this.#cache.clear()
     this.#lastReady.clear()
   }

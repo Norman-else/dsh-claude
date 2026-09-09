@@ -10,8 +10,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
-function feedbackQuery(sessionId: string, pullNumber: number, extra?: Readonly<Record<string, string>>): Record<string, string> {
-  return { sessionId, number: String(pullNumber), ...extra }
+/** `root` names another checkout the session wrote into; absent, the
+ *  session's own. The Host only honours roots it has vouched for. */
+function feedbackQuery(sessionId: string, pullNumber: number, root?: string, extra?: Readonly<Record<string, string>>): Record<string, string> {
+  return { sessionId, number: String(pullNumber), ...(root === undefined ? {} : { root }), ...extra }
 }
 
 function answer(value: unknown): Record<string, unknown> {
@@ -27,16 +29,17 @@ async function loadJson(
   sessionId: string,
   pullNumber: number,
   signal?: AbortSignal,
+  root?: string,
   extra?: Readonly<Record<string, string>>,
 ): Promise<Record<string, unknown>> {
   return answer(await pluginRead<unknown>(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}`, 'remote', signal, {
-    query: feedbackQuery(sessionId, pullNumber, extra),
+    query: feedbackQuery(sessionId, pullNumber, root, extra),
   }))
 }
 
-async function postJson(path: string, sessionId: string, pullNumber: number, input: unknown): Promise<Record<string, unknown>> {
+async function postJson(path: string, sessionId: string, pullNumber: number, input: unknown, root?: string): Promise<Record<string, unknown>> {
   return answer(await pluginWrite<unknown>(`${CLAUDE_REPOSITORY_FEEDBACK_PATH}${path}`, 'remote', undefined, {
-    query: feedbackQuery(sessionId, pullNumber),
+    query: feedbackQuery(sessionId, pullNumber, root),
     json: input,
   }))
 }
@@ -53,8 +56,8 @@ function reviewComment(value: unknown): PullRequestReviewComment | undefined {
   return input as unknown as PullRequestReviewComment
 }
 
-export async function loadPullRequestThreads(sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<readonly PullRequestReviewThread[]> {
-  const body = await loadJson('/comments', sessionId, pullNumber, signal)
+export async function loadPullRequestThreads(sessionId: string, pullNumber: number, signal?: AbortSignal, root?: string): Promise<readonly PullRequestReviewThread[]> {
+  const body = await loadJson('/comments', sessionId, pullNumber, signal, root)
   if (!Array.isArray(body.threads)) throw new Error('Invalid pull request comments response.')
   const threads: PullRequestReviewThread[] = []
   for (const item of body.threads) {
@@ -84,8 +87,9 @@ export async function replyToReviewThread(
   pullNumber: number,
   commentId: number,
   body: string,
+  root?: string,
 ): Promise<PullRequestReviewComment> {
-  const answer = await postJson('/reply', sessionId, pullNumber, { commentId, body })
+  const answer = await postJson('/reply', sessionId, pullNumber, { commentId, body }, root)
   const comment = reviewComment(answer.comment)
   if (comment === undefined) throw new Error('Invalid pull request reply response.')
   return comment
@@ -97,8 +101,9 @@ export async function setReviewThreadResolved(
   pullNumber: number,
   threadId: string,
   resolved: boolean,
+  root?: string,
 ): Promise<boolean> {
-  const answer = await postJson('/resolve', sessionId, pullNumber, { threadId, resolved })
+  const answer = await postJson('/resolve', sessionId, pullNumber, { threadId, resolved }, root)
   if (typeof answer.resolved !== 'boolean') throw new Error('Invalid pull request resolve response.')
   return answer.resolved
 }
@@ -109,8 +114,9 @@ export async function loadMentionableUsers(
   pullNumber: number,
   query: string,
   signal?: AbortSignal,
+  root?: string,
 ): Promise<readonly MentionableUser[]> {
-  const body = await loadJson('/mentionables', sessionId, pullNumber, signal, { q: query })
+  const body = await loadJson('/mentionables', sessionId, pullNumber, signal, root, { q: query })
   if (!Array.isArray(body.users)) return []
   const users: MentionableUser[] = []
   for (const item of body.users) {
