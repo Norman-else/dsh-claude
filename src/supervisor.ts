@@ -81,6 +81,22 @@ const CLAUDE_MODE_BY_SANDBOX: Readonly<Record<DshSandboxMode, PermissionMode>> =
   'danger-full-access': 'bypassPermissions',
 }
 
+/** Appended to the Claude Code system prompt on every session.
+ *
+ *  The plan panel opens on exactly one signal: an `ExitPlanMode` call, whose
+ *  argument is the plan (see `planText` in permission.ts). Claude Code's own
+ *  plan mode says to make that call once the plan file is written, but
+ *  user-installed skills routinely say the opposite — "confirm the design in
+ *  prose before proceeding" — and a turn that ends on that question hands DSH
+ *  nothing to show: no record, no button, no panel, until the user types
+ *  "continue" and Claude makes the call it skipped. This line settles the
+ *  conflict in favour of the handoff, so the plan reaches the panel the moment
+ *  it is done rather than one message later. */
+export const PLAN_MODE_HANDOFF_PROMPT =
+  'When you are in plan mode and the plan is written, end the turn by calling ExitPlanMode with the plan. '
+  + 'Do not end a plan-mode turn by asking the user for confirmation in prose: '
+  + 'the user reads and approves the plan through ExitPlanMode, and a turn that stops short of that call shows them nothing.'
+
 /** Fold DSH's native access selector into Claude Code's closest permission mode. */
 export function claudePermissionMode(events: readonly { type: string; data: unknown }[]): PermissionMode {
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -1030,7 +1046,7 @@ export class ClaudeSupervisor {
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,
       settingSources: ['user', 'project', 'local'],
-      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: PLAN_MODE_HANDOFF_PROMPT },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
       permissionMode,

@@ -23,6 +23,7 @@ import {
   ClaudeProcessLimitError,
   ClaudeSupervisor,
   ClaudeTurnBusyError,
+  PLAN_MODE_HANDOFF_PROMPT,
   claudePermissionMode,
   type ClaudeQueryFactory,
   type ClaudeTurnStreamEvent,
@@ -283,6 +284,23 @@ describe('Claude supervisor', () => {
     await vi.waitFor(() => expect(transport.queries).toHaveLength(1))
     expect(transport.queries[0]?.options.permissionMode).toBe('acceptEdits')
     expect(transport.queries[0]?.options.allowDangerouslySkipPermissions).toBe(true)
+    transport.queries[0]!.push(init())
+    await catalog
+    await runtime.dispose()
+  })
+
+  it('appends the plan-mode handoff rule to the Claude Code system prompt', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const catalog = runtime.supportedCommands(owner.agent)
+    await vi.waitFor(() => expect(transport.queries).toHaveLength(1))
+    expect(transport.queries[0]?.options.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: PLAN_MODE_HANDOFF_PROMPT,
+    })
+    expect(PLAN_MODE_HANDOFF_PROMPT).toContain('ExitPlanMode')
     transport.queries[0]!.push(init())
     await catalog
     await runtime.dispose()
