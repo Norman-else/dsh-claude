@@ -605,6 +605,8 @@ export const MERGE_METHODS: readonly RepositoryMergeMethod[] = ['merge', 'squash
 
 interface MergeDialogState {
   readonly method: RepositoryMergeMethod
+  /** Merge past branch protection; off each time the dialog opens. */
+  readonly admin: boolean
   readonly loading: boolean
   readonly submitting: boolean
   readonly fingerprint?: string
@@ -626,13 +628,13 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
   const openMerge = (method: RepositoryMergeMethod): void => {
     controller.current?.abort()
     setMenuOpen(false)
-    setDialog({ method, loading: true, submitting: false })
+    setDialog({ method, admin: false, loading: true, submitting: false })
     const aborter = new AbortController()
     controller.current = aborter
     void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
-      setDialog({ method, loading: false, submitting: false, fingerprint: preview.fingerprint })
+      setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, fingerprint: preview.fingerprint }))
     }, (error: unknown) => {
-      if (!aborter.signal.aborted) setDialog({ method, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
+      if (!aborter.signal.aborted) setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') }))
     })
   }
   const closeDialog = (): void => {
@@ -651,6 +653,7 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
       message: '',
       includeUnstaged: false,
       mergeMethod: dialog.method,
+      ...(dialog.admin ? { admin: true } : {}),
     }).then(() => {
       report(t('diffMergeCompleted', { number: pullRequest.number }))
       setDialog(undefined)
@@ -677,6 +680,10 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
             <span style={styles.diffModalFileState}>{t(`diffMerge_${dialog.method}` as ClaudeCodeSettingsKey)}</span>
           </div>
           <p style={styles.diffModalStatus}>{pullRequest.title}</p>
+          <label style={styles.diffModalCheckbox}>
+            <input type="checkbox" name="dsh-claude-merge-admin" checked={dialog.admin} disabled={dialog.submitting} onChange={event => { const { checked } = event.currentTarget; setDialog(current => current === undefined ? current : { ...current, admin: checked }) }} />
+            {t('diffMergeAdmin')}
+          </label>
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
         </div>}
       </Modal>

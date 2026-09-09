@@ -256,6 +256,16 @@ describe('repository pull request merge', () => {
     expect(invalidated).toHaveBeenCalledWith('C:/repo')
   })
 
+  it('merges as an administrator when asked, bypassing branch protection', async () => {
+    const fake = runtime([...previewResults(), ...previewResults(), { stdout: '' }])
+    const service = new RepositoryActionService(fake, 'claude', vi.fn())
+    const preview = await service.preview('C:/repo')
+    await service.execute('C:/repo', {
+      action: 'merge-pr', fingerprint: preview.fingerprint, message: '', includeUnstaged: false, mergeMethod: 'merge', admin: true,
+    })
+    expect(fake.spawn.mock.calls.at(-1)?.[0]).toMatchObject({ argv: ['C:/bin/gh.exe', 'pr', 'merge', '--merge', '--admin'] })
+  })
+
   it('rejects unknown merge methods before touching gh', async () => {
     const fake = runtime([...previewResults(), ...previewResults()])
     const service = new RepositoryActionService(fake, 'claude')

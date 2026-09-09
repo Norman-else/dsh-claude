@@ -74,6 +74,8 @@ export interface RepositoryActionRequest {
   readonly baseBranch?: string
   readonly draft?: boolean
   readonly mergeMethod?: RepositoryMergeMethod
+  /** Merge as a repository administrator, past branch protection (`gh pr merge --admin`). */
+  readonly admin?: boolean
   /** Push once `resolve-continue` finishes the operation it resumed. */
   readonly push?: boolean
 }
@@ -250,7 +252,7 @@ export class RepositoryActionService {
       } catch (error) {
         throw new RepositoryActionError('gh-unavailable', error instanceof Error ? error.message : 'GitHub CLI is unavailable.')
       }
-      const merged = await this.#run(gh, ['pr', 'merge', `--${method}`], before.root, REMOTE_TIMEOUT_MS)
+      const merged = await this.#run(gh, ['pr', 'merge', `--${method}`, ...(request.admin === true ? ['--admin'] : [])], before.root, REMOTE_TIMEOUT_MS)
       if (merged.exitCode !== 0 || merged.lossy) {
         const reason = merged.stderr.split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0).at(-1)
         throw new RepositoryActionError('merge-failed', reason === undefined || reason.length === 0 ? 'The pull request could not be merged.' : reason)

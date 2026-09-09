@@ -78,6 +78,7 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
     ...(optionalString(input, 'baseBranch') === undefined ? {} : { baseBranch: optionalString(input, 'baseBranch')! }),
     ...(input.draft === undefined ? {} : typeof input.draft === 'boolean' ? { draft: input.draft } : (() => { throw new RepositoryActionError('invalid-request', 'The draft field must be a boolean.') })()),
     ...(input.push === undefined ? {} : typeof input.push === 'boolean' ? { push: input.push } : (() => { throw new RepositoryActionError('invalid-request', 'The push field must be a boolean.') })()),
+    ...(input.admin === undefined ? {} : typeof input.admin === 'boolean' ? { admin: input.admin } : (() => { throw new RepositoryActionError('invalid-request', 'The admin field must be a boolean.') })()),
     ...(input.mergeMethod === undefined
       ? {}
       : input.mergeMethod === 'merge' || input.mergeMethod === 'squash' || input.mergeMethod === 'rebase'

@@ -149,3 +149,41 @@ describe('Claude repository bar with linked checkouts', () => {
     expect([...container.querySelectorAll('button')].some(item => item.textContent === en.cleanupButton)).toBe(true)
   })
 })
+
+describe('merge pull request dialog', () => {
+  it('offers an administrator merge that bypasses branch protection', async () => {
+    const api = await import('../src/client/repository-action-api.ts')
+    const preview = vi.spyOn(api, 'loadRepositoryActionPreview').mockResolvedValue({
+      root: '/a', branch: 'feature', head: 'h', fingerprint: 'f', files: [], patch: '', truncated: false,
+      hasStaged: false, hasUnstaged: false, hasUntracked: false, unpushedCommits: [], unpushedTruncated: false,
+    })
+    const execute = vi.spyOn(api, 'executeRepositoryAction').mockResolvedValue({ commit: 'h', pushed: true })
+    const { MergePullRequestControl } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const repository = {
+      ...own,
+      pullRequest: { number: 3, title: 'T', url: 'https://github.com/org/a/pull/3', state: 'open' as const, draft: false, review: 'none' as const, checks: 'none' as const, baseBranch: 'main' },
+    }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    act(() => { root.render(<MergePullRequestControl sessionId="session-1" repository={repository} t={t} report={vi.fn()} />) })
+    const menu = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === en.repositoryMergeMenu)
+    if (menu === undefined) throw new Error('no merge menu')
+    act(() => { menu.click() })
+    const squash = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === en.diffMerge_squash)
+    if (squash === undefined) throw new Error('no squash row')
+    await act(async () => { (squash as HTMLElement).click() })
+    expect(preview).toHaveBeenCalled()
+    const admin = document.querySelector<HTMLInputElement>('input[type="checkbox"][name="dsh-claude-merge-admin"]')
+    if (admin === null) throw new Error('no admin checkbox')
+    expect(admin.checked).toBe(false)
+    expect(document.body.textContent).toContain(en.diffMergeAdmin)
+    act(() => { admin.click() })
+    const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
+    if (confirm === undefined) throw new Error('no confirm button')
+    await act(async () => { confirm.click() })
+    expect(execute).toHaveBeenCalledWith('session-1', expect.objectContaining({ action: 'merge-pr', mergeMethod: 'squash', admin: true }))
+    vi.restoreAllMocks()
+  })
+})
