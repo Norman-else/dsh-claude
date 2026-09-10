@@ -256,6 +256,57 @@ run only**, then exercise the features by hand: a turn, the composer buttons
 with a draft, rewind, the diff and plan panels. Absence of log lines is not
 evidence for the client side.
 
+Driving this over CDP (section 3) works and is how 2.0.7 was verified, with
+two traps. A session opened from the sidebar takes several seconds to become
+plugin-owned (lane settle plus the repository probe), so a probe that reads
+the DOM after two seconds reports a missing diff button and no rewind seats
+that are simply late. And while the window is hidden behind the terminal,
+`document.visibilityState` is `hidden` and `requestAnimationFrame` never
+fires, so anything the plugin schedules on a frame (the preset seat mark) stays
+pending until the user looks at the window -- mark it manually in the probe
+to check the CSS, do not report it as broken.
+
+## 7. Desktop 2.0.7 moved two things the steps above rely on
+
+- **The Host packages are inside `app.asar` now.** `resources/app.asar.unpacked/`
+  holds native addons only. Extract before reading:
+
+  ```bash
+  npx --yes @electron/asar extract "E:/DSH Desktop/resources/app.asar" "$SCRATCH/asar"
+  # Host packages: $SCRATCH/asar/node_modules/@deepseek-ai/
+  ```
+
+- **The Host runs in an Electron utility process and logs to `logs/host/`.**
+  `$APPDATA/DSH Desktop/logs/dsh-<date>.log` now carries only the Electron
+  shell; every `dsh-claude:` line is in
+  `$APPDATA/DSH Desktop/logs/host/dsh-<date>.log`.
+
+- **Previous package versions are on npm**, so the old side of a diff no
+  longer has to come from `node_modules` before the bump:
+
+  ```bash
+  npm pack @deepseek-ai/dsh-session@0.1.2-rc.1 && tar -xzf deepseek-ai-dsh-session-0.1.2-rc.1.tgz
+  ```
+
+- **The 0.1.5 client packages import packages they do not declare** (`clsx`,
+  `anser`, `katex`, `shiki`, the `micromark-*` / `mdast-util-*` family, `zod`,
+  `mime-types`, and a few `@deepseek-ai/dsh-*` utilities). The Host bundles
+  them itself, so runtime is unaffected, but every client test file fails to
+  load until they are devDependencies. Find the set with a resolve loop over
+  each package's `lib/*.js` imports rather than one at a time.
+
+## Appendix: the Desktop 2.0.7 breakages (Host 0.1.5-rc.1)
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Every spawn failed: `subprocess-local: Windows Job runner exited with exit code 0 before proving its managed range empty` (catalog refresh, turns, git status, everything) | The Host runs in `utilityProcess.fork` with no `ELECTRON_RUN_AS_NODE`; on Windows `subprocess-local` now launches each ordinary target through a helper spawned as `[process.execPath, runner.js]`, which in Electron is `DSH Desktop.exe` -- it started as a second GUI instance, deferred to the running one, and exited 0 with no IPC result. Reproduced outside the plugin with a 20-line script | `src/windows-job-runner.ts` wraps `ctx.subprocess`: sets the flag in `process.env` for exactly the synchronous `spawn()` call and tells the Host to drop it from the target's own environment. All plugin subprocess users go through the one wrapped runtime |
+| `SubprocessHandle.pid` gone | Handles are runner-owned; the pid is not exposed | Dropped from the supervisor snapshot |
+| Hero draft transfer would not compile | `InputState.imageIds` / `addImages` / `removeImage` became `attachmentIds` / `addAttachments` / `removeAttachment` (attachments now include files) | Renamed |
+| A stray ellipsis button in the Claude session header | `dsh-session-log-export` replaced its `sessionLogButton` capsule with a `moreButton` menu | Hide both local names |
+| Diff, plan, tasks, and overview panels never appeared; the header toggles did nothing | The `details` column slot is gone. Its replacement is a tabbed right sidebar (`@deepseek-ai/dsh-client-ui-sidebar-right`): a panel is a tab *type* declared in `ctx.sidebarRightTabs`, its body registered into `sidebar.right.pane.tab` under the type id, opened per session through `ctx.sidebarRight.openTabIn`. Missed by the slot audit because these four registrations used `slots.register({ name: 'details' })` directly rather than `slots.inject` -- audit both spellings | `src/client/sidebar-tabs.tsx`; the plugin's maximize overlays and details-column resize are gone, the Host's own fullscreen and close take over |
+
+Also: the Host bug is the Host's to fix; when a Desktop release sets the flag itself (or stops re-spawning `process.execPath`) the wrapper becomes a no-op because it only acts when the flag is absent.
+
 ## Appendix: the Desktop 2.0 breakages, as worked examples
 
 | Symptom | Cause | Fix |

@@ -11,8 +11,7 @@ import {
   parseGitHubRemote,
   parseGitStatus,
   parsePullRequest,
-  detectRepositoryOperation,
-} from '../src/repository-status.ts'
+  detectRepositoryOperation, packPatchByFile } from '../src/repository-status.ts'
 
 function handle(stdout: string, exitCode = 0, lossy = false): SubprocessHandle {
   return {
@@ -205,7 +204,7 @@ describe('repository status service', () => {
         '-c', `diff.dshweb.xfuncname=${DSHWEB_FUNCNAME}`,
         'diff', '--no-ext-diff', '--no-color', '--unified=3', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--',
       ],
-      stdio: { stdout: { maxBytes: 262_144 } },
+      stdio: { stdout: { maxBytes: 8_388_608 } },
     })
     expect(fake.spawn.mock.calls[7]?.[0].argv).toEqual(['/bin/git', 'ls-files', '--others', '--exclude-standard', '-z'])
   })
@@ -239,6 +238,34 @@ describe('repository status service', () => {
     const second = await service.inspect('/repo')
     expect(second.pullRequest).toEqual(first.pullRequest)
     expect(second.diff).toEqual(first.diff)
+  })
+
+  it('keeps every file that fits and names the ones that do not', () => {
+    const small = (path: string) => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`
+    const huge = `diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n--- a/pnpm-lock.yaml\n+++ b/pnpm-lock.yaml\n@@ -1 +1 @@\n${'-x\n+y\n'.repeat(200)}`
+    const packed = packPatchByFile(`${small('a.ts')}${huge}${small('b.ts')}`, 10_000, 500)
+    expect(packed.patch).toBe(`${small('a.ts')}${small('b.ts')}`)
+    expect(packed.elided).toEqual(['pnpm-lock.yaml'])
+    // The total budget also elides, in file order, so the panel never shows a torn file.
+    const tight = packPatchByFile(`${small('a.ts')}${small('b.ts')}${small('c.ts')}`, small('a.ts').length + small('b.ts').length, 500)
+    expect(tight.patch).toBe(`${small('a.ts')}${small('b.ts')}`)
+    expect(tight.elided).toEqual(['c.ts'])
+    expect(packPatchByFile('', 100, 50)).toEqual({ patch: '', elided: [] })
+  })
+
+  it('skips an oversized file instead of blanking the whole diff', async () => {
+    const small = 'diff --git a/file.ts b/file.ts\n--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new\n'
+    const huge = `diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n--- a/pnpm-lock.yaml\n+++ b/pnpm-lock.yaml\n@@ -1 +1 @@\n${'-x\n+y\n'.repeat(40_000)}`
+    const fake = runtime([
+      { stdout: '/repo\n/repo/.git\n/repo/.git\n' },
+      { stdout: '# branch.head main\n1 .M N... file.ts\n1 .M N... pnpm-lock.yaml\n' },
+      { stdout: '', exitCode: 2 },
+      { stdout: '1\t1\tfile.ts\n40000\t40000\tpnpm-lock.yaml\n' },
+      { stdout: `${small}${huge}` },
+      { stdout: '' },
+    ])
+    const result = await new RepositoryStatusService(fake).inspect('/repo')
+    expect(result.diff).toMatchObject({ additions: 40_001, deletions: 40_001, files: 2, truncated: false, patch: small, elided: ['pnpm-lock.yaml'] })
   })
 
   it('omits a truncated patch while preserving bounded diff statistics', async () => {

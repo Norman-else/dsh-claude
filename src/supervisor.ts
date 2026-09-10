@@ -133,7 +133,6 @@ export interface ClaudeSupervisorSnapshot {
   model: string
   thinkingMode?: ClaudeThinkingMode
   lastUsedAt: number
-  pid?: number
 }
 
 export class ClaudeTurnBusyError extends Error {
@@ -402,7 +401,6 @@ export class ClaudeSupervisor {
       model: entry.model,
       ...(entry.thinkingMode === undefined ? {} : { thinkingMode: entry.thinkingMode }),
       lastUsedAt: entry.lastUsedAt,
-      ...(entry.process === undefined ? {} : { pid: entry.process.handle.pid }),
     }))
   }
 

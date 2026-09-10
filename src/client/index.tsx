@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -22,15 +21,13 @@ import { setClaudeAlertsEnabled, startClaudeSessionAlerts, type ClaudeSessionAle
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import { pluginRead } from './plugin-transport.ts'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
-import { ClaudeTasksPanel, type ClaudeTasksPanelInjected } from './ClaudeTasksPanel.tsx'
-import { ClaudePlanPanel, type ClaudePlanPanelInjected } from './ClaudePlanPanel.tsx'
 import { ClaudePlanHeaderAction, type ClaudePlanHeaderActionInjected } from './ClaudePlanHeaderAction.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
-import { ClaudeDiffPanel, type ClaudeDiffPanelInjected } from './ClaudeDiffPanel.tsx'
-import { ClaudePanelOverlay } from './ClaudePanelOverlay.tsx'
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
-import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
+import type { ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
+import { CLAUDE_TAB_KINDS, registerClaudeSidebarTabs } from './sidebar-tabs.tsx'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { claudeBootCheckFindings } from './boot-check.ts'
 import { watchClaudeComposerBar } from './composer-style-probe.ts'
@@ -38,34 +35,22 @@ import { createClaudeDiagnosticsReporter } from './client-diagnostics.ts'
 import { ClaudeRewind, EMPTY_CHAT_VIEW, type ClaudeChatSource, type ClaudeChatView, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
-import { ClaudeSessionMenu, type ClaudeSessionMenuInjected } from './ClaudeSessionMenu.tsx'
 import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './ClaudeAgentPresetLabel.tsx'
 import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
-import { PanelOpenStore } from './panel-open-store.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './ClaudePromptSaveAction.tsx'
 import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from './ClaudePromptRefineAction.tsx'
 import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
-import { enableExpandedDetailsResize } from './details-resize.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 
-/** The right-side details column slot declared by dsh-client-ui-layout
- *  (kind 'single', scope 'session'). Merged locally because this package does
- *  not depend on the layout package's client types. */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    details: { kind: 'single'; scope: 'session' }
     'shell.overlay': { kind: 'list'; scope: 'root' }
   }
-}
-
-interface LayoutFace {
-  openDetails(): void
-  closeDetails(): void
 }
 
 interface UiSessionFace {
@@ -100,52 +85,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-function MaximizedDiff({
-  source, t, sessionId, closeDetails, restore, submitPrompt, initialRoot,
-}: {
-  source: ClaudeProjectionSource
-  t: ClaudeDiffPanelInjected['t']
-  sessionId: string
-  closeDetails: () => void
-  restore: () => void
-  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
-  initialRoot?: string
-}) {
-  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
-  const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
-  return <ClaudePanelOverlay onRestore={restore}><ClaudeDiffPanel
-    useClaudeProjection={useClaudeProjection}
-    t={t}
-    sessionId={sessionId}
-    maximized
-    closeDetails={closeDetails}
-    toggleMaximized={restore}
-    {...(submitPrompt === undefined ? {} : { submitPrompt })}
-    {...(initialRoot === undefined ? {} : { initialRoot })}
-  /></ClaudePanelOverlay>
-}
-
 export const name = 'dsh-claude-client'
-function MaximizedPlan({ source, t, sessionId, closeDetails, restore }: {
-  source: ClaudeProjectionSource
-  t: ClaudePlanPanelInjected['t']
-  sessionId: string
-  closeDetails: () => void
-  restore: () => void
-}) {
-  const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
-  const useClaudeProjection = <S,>(selector: (value: typeof snapshot) => S): S => selector(snapshot)
-  return <ClaudePanelOverlay onRestore={restore}><ClaudePlanPanel
-    useClaudeProjection={useClaudeProjection}
-    t={t}
-    sessionId={sessionId}
-    maximized
-    closeDetails={closeDetails}
-    toggleMaximized={restore}
-  /></ClaudePanelOverlay>
-}
 
-export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection']
+export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection', 'sidebarRight', 'sidebarRightTabs']
 
 /** Resolve one session's composer facade.
  *
@@ -289,44 +231,32 @@ export function apply(ctx: ClientContext): void {
     key: 'claude-activity-step',
     locale: namespace,
   }, ClaudeActivityNode))
-  const layout = ctx.get('layout') as LayoutFace | undefined
-  // Keep the plugin details registration mounted while its maximized overlay is
-  // visible so its session-bound state survives the round trip.
-  let disposePluginDetails: (() => void) | undefined
-  let disposeDiffOverlay: (() => void) | undefined
-  let disposePlanOverlay: (() => void) | undefined
-  let disposeExpandedDetailsResize: (() => void) | undefined
-  let detailsSessionId: string | undefined
-  const diffOpen = new PanelOpenStore()
-  const planOpen = new PanelOpenStore()
-  const restoreDiff = (): void => {
-    if (disposeDiffOverlay === undefined) return
-    disposeDiffOverlay()
-    disposeDiffOverlay = undefined
-    layout?.openDetails()
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  // Host 0.1.5 has no details column: the panels are tab types of the
+  // right sidebar, declared once here and opened per session below.
+  const sidebarTabs = registerClaudeSidebarTabs(ctx, {
+    t,
+    namespace,
+    diffFace: sessionId => {
+      const submitPrompt = submitPromptFor(sessionId)
+      return submitPrompt === undefined ? {} : { submitPrompt }
+    },
+    overviewFace: () => sessions === undefined ? undefined : {
+      t,
+      openSession: id => { sessions.open(id as SessionId) },
+      loadStatus: loadRepositoryStatusFor,
+      sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
+      ...(workspaces === undefined ? {} : { workspaces: workspaces.list as unknown as NonNullable<ClaudePullRequestsPanelInjected['workspaces']> }),
+      projectionFor: id => projections.source(id),
+    },
+  })
+  const openTasksPanel = (sessionId: string, turn: number): void => {
+    sidebarTabs.open(CLAUDE_TAB_KINDS.tasks, sessionId, { turn })
   }
-  const restorePlan = (): void => {
-    if (disposePlanOverlay === undefined) return
-    disposePlanOverlay()
-    disposePlanOverlay = undefined
-    layout?.openDetails()
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
+  const openOverviewPanel = (sessionId: string): void => {
+    sidebarTabs.open(CLAUDE_TAB_KINDS.overview, sessionId, {})
   }
-  const closePluginDetails = (): void => {
-    if (disposePluginDetails === undefined && disposeDiffOverlay === undefined && disposePlanOverlay === undefined && disposeExpandedDetailsResize === undefined && detailsSessionId === undefined) return
-    disposeDiffOverlay?.()
-    disposeDiffOverlay = undefined
-    disposePlanOverlay?.()
-    disposePlanOverlay = undefined
-    disposeExpandedDetailsResize?.()
-    disposeExpandedDetailsResize = undefined
-    disposePluginDetails?.()
-    disposePluginDetails = undefined
-    detailsSessionId = undefined
-    diffOpen.close()
-    planOpen.close()
-    layout?.closeDetails()
+  const openDiffPanel = (sessionId: string, initialRoot?: string): void => {
+    sidebarTabs.open(CLAUDE_TAB_KINDS.diff, sessionId, initialRoot === undefined ? {} : { initialRoot })
   }
   // Every Slot entry crash, not just the one this package knows how to recover.
   // The Host catches these and drops the entry, so an untold crash reads as
@@ -339,176 +269,7 @@ export function apply(ctx: ClientContext): void {
 ${error.stack ?? ''}`
       : String(error)
     diagnostics.report('slot-entry-crashed', `slot "${key}"${id}: ${message}`)
-    if (key === 'shell.overlay' && entry.options.id === 'claude-diff-overlay') restoreDiff()
-    if (key === 'shell.overlay' && entry.options.id === 'claude-plan-overlay') restorePlan()
   }), 'dsh-claude: Slot entry failure reporting')
-  const openTasksPanel = (sessionId: string, turn: number): void => {
-    closePluginDetails()
-    try {
-      disposePluginDetails = ctx.slots.register({
-        name: 'details',
-        priority: -10,
-        locale: namespace,
-        inject: (): ClaudeTasksPanelInjected => ({ t, turn, closeDetails: closePluginDetails }),
-      }, ClaudeTasksPanel)
-    } catch {
-      return
-    }
-    detailsSessionId = sessionId
-    layout?.openDetails()
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
-  }
-  const openPlanPanel = (sessionId: string): void => {
-    closePluginDetails()
-    // Declared before the registration that closes over it; a plan is only
-    // ever maximized by a press, which cannot land before this assignment.
-    const maximizePlan = (): void => {
-      if (disposePlanOverlay !== undefined) {
-        restorePlan()
-        return
-      }
-      disposeExpandedDetailsResize?.()
-      disposeExpandedDetailsResize = undefined
-      layout?.closeDetails()
-      try {
-        disposePlanOverlay = ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'claude-plan-overlay',
-          locale: namespace,
-        }, () => <MaximizedPlan
-          source={projections.source(sessionId)}
-          t={t}
-          sessionId={sessionId}
-          closeDetails={closePluginDetails}
-          restore={restorePlan}
-        />)
-      } catch {
-        disposePlanOverlay = undefined
-        layout?.openDetails()
-        disposeExpandedDetailsResize = enableExpandedDetailsResize()
-      }
-    }
-    try {
-      disposePluginDetails = ctx.slots.register({
-        name: 'details',
-        priority: -10,
-        locale: namespace,
-        inject: (): ClaudePlanPanelInjected => ({
-          t,
-          sessionId,
-          closeDetails: closePluginDetails,
-          maximized: false,
-          toggleMaximized: maximizePlan,
-        }),
-      }, ClaudePlanPanel)
-    } catch {
-      return
-    }
-    detailsSessionId = sessionId
-    planOpen.open(sessionId)
-    layout?.openDetails()
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
-  }
-  const openOverviewPanel = (sessionId: string): void => {
-    if (sessions === undefined) return
-    closePluginDetails()
-    try {
-      disposePluginDetails = ctx.slots.register({
-        name: 'details',
-        priority: -10,
-        locale: namespace,
-        inject: (): ClaudePullRequestsPanelInjected => ({
-          t,
-          closeDetails: closePluginDetails,
-          openSession: id => { sessions.open(id as SessionId) },
-          loadStatus: loadRepositoryStatusFor,
-          sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
-          ...(workspaces === undefined ? {} : { workspaces: workspaces.list as unknown as NonNullable<ClaudePullRequestsPanelInjected['workspaces']> }),
-          projectionFor: id => projections.source(id),
-        }),
-      }, ClaudePullRequestsPanel)
-    } catch {
-      return
-    }
-    detailsSessionId = sessionId
-    layout?.openDetails()
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
-  }
-  const openDiffPanel = (sessionId: string, initialRoot?: string): void => {
-    closePluginDetails()
-    detailsSessionId = sessionId
-    const submitPrompt = submitPromptFor(sessionId)
-    const registerDetails = (): boolean => {
-      try {
-        disposePluginDetails = ctx.slots.register({
-          name: 'details',
-          priority: -10,
-          locale: namespace,
-          inject: (): ClaudeDiffPanelInjected => ({
-            t,
-            sessionId,
-            maximized: false,
-            closeDetails: closePluginDetails,
-            toggleMaximized: maximizeDiff,
-            ...(submitPrompt === undefined ? {} : { submitPrompt }),
-            ...(initialRoot === undefined ? {} : { initialRoot }),
-          }),
-        }, ClaudeDiffPanel)
-      } catch {
-        disposePluginDetails = undefined
-        return false
-      }
-      layout?.openDetails()
-      return true
-    }
-    const maximizeDiff = (): void => {
-      if (disposeDiffOverlay !== undefined) {
-        restoreDiff()
-        return
-      }
-      disposeExpandedDetailsResize?.()
-      disposeExpandedDetailsResize = undefined
-      layout?.closeDetails()
-      try {
-        disposeDiffOverlay = ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'claude-diff-overlay',
-          locale: namespace,
-        }, () => <MaximizedDiff
-          source={projections.source(sessionId)}
-          t={t}
-          sessionId={sessionId}
-          closeDetails={closePluginDetails}
-          restore={restoreDiff}
-          {...(submitPrompt === undefined ? {} : { submitPrompt })}
-          {...(initialRoot === undefined ? {} : { initialRoot })}
-        />)
-      } catch {
-        disposeDiffOverlay = undefined
-        layout?.openDetails()
-        disposeExpandedDetailsResize = enableExpandedDetailsResize()
-      }
-    }
-    if (!registerDetails()) {
-      detailsSessionId = undefined
-      return
-    }
-    diffOpen.open(sessionId)
-    disposeExpandedDetailsResize = enableExpandedDetailsResize()
-  }
-  ctx.effect(() => {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => closePluginDetails()
-    const observer = new MutationObserver(() => {
-      if (detailsSessionId !== undefined && disposeDiffOverlay === undefined && disposePlanOverlay === undefined && document.querySelector('[data-details-collapsed]') !== null) {
-        closePluginDetails()
-      }
-    })
-    observer.observe(document.body, { attributes: true, attributeFilter: ['data-details-collapsed'], subtree: true })
-    return () => {
-      observer.disconnect()
-      closePluginDetails()
-    }
-  }, 'dsh-claude: details panel lifecycle')
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-active-tasks',
@@ -558,11 +319,8 @@ ${error.stack ?? ''}`
     locale: namespace,
     inject: (sessionId: string): ClaudePlanHeaderActionInjected => ({
       t,
-      togglePlan: () => {
-        if (planOpen.isOpen(sessionId)) closePluginDetails()
-        else openPlanPanel(sessionId)
-      },
-      planOpen: planOpen.sourceFor(sessionId),
+      togglePlan: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.plan, sessionId, {}) },
+      planOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.plan, sessionId),
     }),
   }, ClaudePlanHeaderAction))
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
@@ -572,24 +330,10 @@ ${error.stack ?? ''}`
     locale: namespace,
     inject: (sessionId: string): ClaudeDiffHeaderActionInjected => ({
       t,
-      // Toggling closes the whole details registration, so a maximized diff
-      // collapses from the same press that would have collapsed the column.
-      toggleDiff: () => {
-        if (diffOpen.isOpen(sessionId)) closePluginDetails()
-        else openDiffPanel(sessionId)
-      },
-      diffOpen: diffOpen.sourceFor(sessionId),
+      toggleDiff: () => { sidebarTabs.toggle(CLAUDE_TAB_KINDS.diff, sessionId, {}) },
+      diffOpen: sidebarTabs.sourceFor(CLAUDE_TAB_KINDS.diff, sessionId),
     }),
   }, ClaudeDiffHeaderAction))
-  // Kebab menu at the far right of the same utility group: session-level
-  // actions that are not worth a header button of their own.
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
-    id: 'claude-session-menu',
-    order: 31,
-    locale: namespace,
-    inject: (): ClaudeSessionMenuInjected => ({ t }),
-  }, ClaudeSessionMenu))
   // In the composer's own tool row beside the attach and access controls: the
   // owner hands this slot the live draft, and an icon there costs the layout
   // nothing, where a docked row would move the composer on every keystroke.
@@ -810,7 +554,7 @@ ${error.stack ?? ''}`
           const draft = ticket === undefined
             ? rawDraft
             : rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`
-          const imageIds = sourceInput.state.getSnapshot().imageIds
+          const imageIds = sourceInput.state.getSnapshot().attachmentIds
           // No ticket to name the branch after: let the draft name it instead.
           const prepared = await prepareRepository(cwd, branch, useWorktree, ticket?.key, onProgress, ticket === undefined ? draft : undefined)
           // The workspace is ready: take the ticket. Best-effort so a Jira
@@ -836,7 +580,7 @@ ${error.stack ?? ''}`
           sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
           const targetInput = sessionInput(conversation, targetScope)
           onProgress('transferring-draft')
-          if (imageIds.length > 0 && !targetInput.addImages(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
+          if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
           if (draft !== '') targetInput.setDraft(draft)
           // Lease bookkeeping only matters at cleanup time, so it rides
           // alongside the submit the way the ticket assignment does. Awaiting
@@ -847,7 +591,7 @@ ${error.stack ?? ''}`
           onProgress('submitting')
           targetInput.submit()
           sourceInput.setDraft('')
-          for (const imageId of imageIds) sourceInput.removeImage(imageId)
+          for (const imageId of imageIds) sourceInput.removeAttachment(imageId)
         },
         prepareMany: async (cwd, branch, tickets, onProgress) => {
           const sourceScope = sessions.scope(sourceSessionId)
@@ -891,13 +635,6 @@ ${error.stack ?? ''}`
         },
       }),
     }, ClaudeHeroRepositoryControls))
-  }
-  if (sessions !== undefined) {
-    // The layout closes the column on session switch; mirror that here so the
-    // next session's native details view is not shadowed.
-    ctx.effect(() => sessions.list.subscribe(() => {
-      if (detailsSessionId !== undefined && sessions.list.getSnapshot().current !== detailsSessionId) closePluginDetails()
-    }), 'dsh-claude: details panel session tracking')
   }
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',

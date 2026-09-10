@@ -7,7 +7,14 @@ describe('host chrome suppression', () => {
   it('hides the Host Session log capsule by its CSS Module local name', () => {
     // The emitted class carries a build hash; matching the local name is what
     // survives a Host rebuild.
-    expect(HOST_CHROME_CSS).toContain('button[class*="sessionLogButton"]{display:none}')
+    expect(HOST_CHROME_CSS).toContain('button[class*="sessionLogButton"]')
+  })
+
+  it('hides the more-actions menu the export moved into on Host 0.1.5', () => {
+    // Host 0.1.5 replaced the capsule with an ellipsis button whose only menu
+    // item is the download; the local name is unique to that package.
+    expect(HOST_CHROME_CSS).toContain('button[class*="moreButton"][aria-haspopup="menu"]')
+    expect(HOST_CHROME_CSS).toMatch(/button\[class\*="sessionLogButton"\],button\[class\*="moreButton"\]\[aria-haspopup="menu"\]\{display:none\}/)
   })
 
   it('hides the header tab strip only in headers this plugin acts on', () => {

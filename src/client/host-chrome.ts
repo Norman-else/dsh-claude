@@ -15,12 +15,13 @@ import { CLAUDE_SEAT_ATTRIBUTE, trackClaudePresetSeats } from './preset-seat-mar
  *  `@deepseek-ai/dsh-session-log-export` into
  *  `conversation.session.header.utilities`. Shadowing that slot entry would
  *  also take its download-progress dialog down with it, so the capsule is
- *  hidden with CSS instead: the download controller, its dialog, and the
+ *  hidden with CSS instead (Host 0.1.5 turned the capsule into an ellipsis
+ *  more-actions menu whose only item is the download): the controller, its dialog, and the
  *  `/export` slash command all keep working.
  *
  *  The selector matches the CSS Module local name rather than the emitted
  *  class, because only the build-hash prefix changes across Host releases. */
-const SESSION_LOG_CSS = 'button[class*="sessionLogButton"]{display:none}'
+const SESSION_LOG_CSS = 'button[class*="sessionLogButton"],button[class*="moreButton"][aria-haspopup="menu"]{display:none}'
 
 /** A Claude Session has exactly one view, so its header tab strip is a row of
  *  chrome with nothing to choose between. Hiding it shortens the header, and

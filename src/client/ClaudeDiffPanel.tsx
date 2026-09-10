@@ -910,6 +910,9 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
         </div>
         <div ref={diffBodyRef} style={styles.diffBody}>
           {diff.truncated ? <p style={styles.diffNotice}>{t('diffTruncated')}</p> : null}
+          {diff.elided !== undefined && diff.elided.length > 0
+            ? <p style={styles.diffNotice}>{t('diffElided', { count: diff.elided.length, files: diff.elided.join(', ') })}</p>
+            : null}
           {files.length === 0 ? <p style={styles.diffEmpty}>{t('diffEmpty')}</p> : files.map((file, index) => (
             <DiffFileSection
               key={file.path}

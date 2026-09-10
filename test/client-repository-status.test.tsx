@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { ClaudeDiffPanel, actionLabel, expandDiffRows, numberDiffLines, parseUnifiedDiff, rangeCommentAnchor, repositoryActionAvailability } from '../src/client/ClaudeDiffPanel.tsx'
 import { ClaudeRepositoryStatus, PullRequestHoverCard, repositorySummary, updateBranchMounted } from '../src/client/ClaudeRepositoryStatus.tsx'
 import { nextActionToast } from '../src/client/action-toast.tsx'
-import { clampDetailsWidth, defaultDetailsWidth } from '../src/client/details-resize.ts'
 import type { ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 import type { ClaudeClientProjection } from '../src/client/projection.ts'
 import * as styles from '../src/client/styles.ts'
@@ -90,6 +89,7 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   diffClose: 'Close diff panel',
   diffFiles: '{count} modified file(s)',
   diffTruncated: 'Diff truncated',
+  diffElided: 'Skipped {count} oversized: {files}',
   diffEmpty: 'No tracked changes',
   diffFilesShort: '{count} files',
   repositoryMergeMenu: 'Open merge options',
@@ -120,15 +120,18 @@ function sessionsHook(blank: boolean) {
 }
 
 describe('Claude repository status UI', () => {
-  it('allows Details to fill at most half of its frame', () => {
-    expect(clampDetailsWidth(360, 1_600)).toBe(360)
-    expect(clampDetailsWidth(900, 1_600)).toBe(800)
-    expect(clampDetailsWidth(100, 1_600)).toBe(300)
-    expect(clampDetailsWidth(400, 500)).toBe(300)
-    expect(defaultDetailsWidth(1_600)).toBe(720)
-    expect(defaultDetailsWidth(800)).toBe(400)
-    // Narrow frames still cap at half the width rather than honouring the default.
-    expect(defaultDetailsWidth(1_200)).toBe(600)
+  it('names the files the diff left out for size', () => {
+    const elided = { ...projection, repository: { ...repository, diff: { ...repository.diff!, elided: ['pnpm-lock.yaml', 'dist/bundle.js'] } } }
+    const markup = renderToStaticMarkup(<ClaudeDiffPanel
+      useClaudeProjection={hook(elided as ClaudeClientProjection)}
+      t={t}
+      sessionId="session"
+      maximized={false}
+      closeDetails={vi.fn()}
+      toggleMaximized={vi.fn()}
+    />)
+    expect(markup).toContain('Skipped 2 oversized: pnpm-lock.yaml, dist/bundle.js')
+    expect(markup).not.toContain('Diff truncated')
   })
 
   it('summarizes branch, worktree, changes, PR, checks, and review', () => {

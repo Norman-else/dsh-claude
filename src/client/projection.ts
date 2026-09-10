@@ -102,6 +102,7 @@ function validateRepository(value: unknown): value is RepositoryStatus {
       || !nonNegativeInteger(diff.deletions)
       || !nonNegativeInteger(diff.files)
       || typeof diff.truncated !== 'boolean'
+      || (diff.elided !== undefined && !(Array.isArray(diff.elided) && diff.elided.length <= 1_000 && diff.elided.every(item => typeof item === 'string')))
       || (diff.patch !== undefined && (typeof diff.patch !== 'string' || diff.patch.length > MAX_DIFF_CHARS))) return false
   }
   if (repository.pullRequest === undefined) return true

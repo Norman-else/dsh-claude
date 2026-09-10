@@ -1,23 +1,7 @@
 import type { ReactElement } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/client/index.tsx'
 
-const resizeLifecycle = vi.hoisted(() => ({
-  events: [] as string[],
-  enable: vi.fn(),
-  dispose: vi.fn(),
-}))
-
-vi.mock('../src/client/details-resize.ts', () => ({
-  enableExpandedDetailsResize: (): (() => void) => {
-    resizeLifecycle.events.push('resize-enable')
-    resizeLifecycle.enable()
-    return (): void => {
-      resizeLifecycle.events.push('resize-dispose')
-      resizeLifecycle.dispose()
-    }
-  },
-}))
 
 function conversationCapture() {
   const definitions: Array<{ kind?: string }> = []
@@ -37,6 +21,8 @@ function conversationCapture() {
     inject() { throw new Error('legacy conversationEvents injection must not be used') },
     locale: { register: () => dispose, bind: () => (key: string) => key },
     inputTriggers: { registerSource: () => dispose },
+    sidebarRightTabs: { register: () => dispose },
+    sidebarRight: { openTabIn: () => {}, closeIn: () => {}, toggleExpanded: () => {} },
     slots: {
       onEntryError: () => dispose,
       inject(_name: string, register: () => unknown) { register() },
@@ -50,12 +36,6 @@ function conversationCapture() {
 }
 
 describe('Claude client slot registration', () => {
-  beforeEach(() => {
-    resizeLifecycle.events.length = 0
-    resizeLifecycle.enable.mockClear()
-    resizeLifecycle.dispose.mockClear()
-  })
-
   it('registers the transcript node unconditionally so the renderer choice is read per step', () => {
     // Registration must not depend on a Client-side copy of the setting: the
     // Host switches on the next turn, and a boot-time decision that disagreed
@@ -96,6 +76,8 @@ describe('Claude client slot registration', () => {
       inputTriggers: {
         registerSource: () => dispose,
       },
+      sidebarRightTabs: { register: () => dispose },
+      sidebarRight: { openTabIn: () => {}, closeIn: () => {}, toggleExpanded: () => {} },
       slots: {
         onEntryError: () => dispose,
         inject(_name: string, register: () => unknown) {
@@ -133,6 +115,8 @@ describe('Claude client slot registration', () => {
       inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
         callback(ctx)
       },
+      sidebarRightTabs: { register: () => dispose },
+      sidebarRight: { openTabIn: () => {}, closeIn: () => {}, toggleExpanded: () => {} },
       slots: {
         onEntryError: () => dispose,
         inject(_name: string, register: () => unknown) {
@@ -195,6 +179,8 @@ describe('Claude client slot registration', () => {
       inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
         callback(ctx)
       },
+      sidebarRightTabs: { register: () => dispose },
+      sidebarRight: { openTabIn: () => {}, closeIn: () => {}, toggleExpanded: () => {} },
       slots: {
         onEntryError: () => dispose,
         inject(_name: string, register: () => unknown) {
@@ -217,27 +203,25 @@ describe('Claude client slot registration', () => {
     expect(calls).toEqual(['archive:session-1', 'archive:session-2', 'delete:workspace-1'])
   })
 
-  it('registers the maximized diff as an identified shell overlay', () => {
+  it('opens each panel as a right-sidebar tab and closes it through that tab', () => {
     interface Registration {
       readonly name: string
       readonly id?: string
+      readonly key?: string
       readonly inject?: (...args: unknown[]) => unknown
-      readonly component?: () => unknown
       active: boolean
     }
     const registrations: Registration[] = []
-    let reportEntryError: ((key: string, entry: { readonly options: { readonly id?: string } }) => void) | undefined
+    const definitions: { id: string; kind: string; title: () => string }[] = []
+    const opened: unknown[][] = []
+    const closed: unknown[][] = []
     const dispose = (): void => {}
-    const layout = {
-      openDetails: vi.fn(() => resizeLifecycle.events.push('layout-open')),
-      closeDetails: vi.fn(() => resizeLifecycle.events.push('layout-close')),
-    }
     const ctx = {
       effect(register: () => unknown) {
         register()
       },
-      get(name: string) {
-        return name === 'layout' ? layout : undefined
+      get() {
+        return undefined
       },
       locale: {
         register: () => dispose,
@@ -249,22 +233,27 @@ describe('Claude client slot registration', () => {
       conversationEvents: {
         register: () => dispose,
       },
+      sidebarRightTabs: {
+        register(definition: { id: string; kind: string; title: () => string }) {
+          definitions.push(definition)
+          return dispose
+        },
+      },
+      sidebarRight: {
+        openTabIn: (...args: unknown[]) => { opened.push(args) },
+        closeIn: (...args: unknown[]) => { closed.push(args) },
+        toggleExpanded: vi.fn(),
+      },
       inject(_dependencies: readonly string[], callback: (value: unknown) => void) {
         callback(ctx)
       },
       slots: {
-        onEntryError(callback: typeof reportEntryError) {
-          reportEntryError = callback
-          return dispose
-        },
+        onEntryError: () => dispose,
         inject(_name: string, register: () => unknown) {
           register()
         },
-        register(options: Omit<Registration, 'active' | 'component'>, component?: () => unknown) {
-          if (options.name === 'shell.overlay' && options.id === undefined) {
-            throw new Error('List slot registrations require an id')
-          }
-          const registration = { ...options, component, active: true }
+        register(options: Omit<Registration, 'active'>) {
+          const registration = { ...options, active: true }
           registrations.push(registration)
           return (): void => {
             registration.active = false
@@ -275,91 +264,40 @@ describe('Claude client slot registration', () => {
 
     apply(ctx as never)
 
+    // Host 0.1.5 has no details column: every panel is a tab type declared
+    // once at apply time, with its body keyed the same way.
+    expect(definitions.map(definition => definition.kind).sort()).toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-tasks'])
+    for (const definition of definitions) expect(definition.id).toBe(definition.kind)
+    expect(registrations.filter(entry => entry.name === 'sidebar.right.pane.tab').map(entry => entry.key).sort())
+      .toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-tasks'])
+    expect(registrations.some(entry => entry.name === 'details')).toBe(false)
+
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
-    const repositoryActions = repositoryStatus?.inject?.('session-1') as { openDiff(): void }
-    repositoryActions.openDiff()
-    const details = registrations.findLast(entry => entry.name === 'details' && entry.active)
-    const detailsActions = details?.inject?.() as { toggleMaximized(): void }
-    detailsActions.toggleMaximized()
+    const repositoryActions = repositoryStatus?.inject?.('session-1') as { openDiff(root?: string): void }
+    repositoryActions.openDiff('K:/repo')
+    expect(opened.at(-1)).toEqual(['session-1', 'claude-diff', { params: { initialRoot: 'K:/repo' } }])
 
-    // The selection toolbar overlay is registered for the plugin's lifetime; skip it.
-    const firstOverlay = registrations.find(entry => entry.name === 'shell.overlay' && entry.active && entry.id !== 'claude-selection-ask')
-    expect(firstOverlay).toMatchObject({
-      id: 'claude-diff-overlay',
-    })
-    expect(details?.active).toBe(true)
-    expect(resizeLifecycle.dispose).toHaveBeenCalledOnce()
-    expect(resizeLifecycle.events.slice(-2)).toEqual(['resize-dispose', 'layout-close'])
-    const firstOverlayElement = firstOverlay?.component?.() as ReactElement<{ closeDetails(): void }>
-    firstOverlayElement.props.closeDetails()
-    expect(registrations.some(entry => entry.active && (entry.name === 'details' || (entry.name === 'shell.overlay' && entry.id !== 'claude-selection-ask')))).toBe(false)
-    expect(resizeLifecycle.dispose).toHaveBeenCalledOnce()
+    // The header toggle closes the tab it opened, which it learns from the body.
+    const diffBody = registrations.find(entry => entry.name === 'sidebar.right.pane.tab' && entry.key === 'claude-diff')
+    const diffFace = diffBody?.inject?.('session-1') as { noteTab(tabId: string | undefined): void }
+    diffFace.noteTab('tab-7')
+    const diffHeader = registrations.find(entry => entry.id === 'claude-diff')
+    const diffActions = diffHeader?.inject?.('session-1') as { toggleDiff(): void }
+    diffActions.toggleDiff()
+    expect(closed.at(-1)).toEqual(['session-1', 'tab-7'])
+    diffFace.noteTab(undefined)
+    diffActions.toggleDiff()
+    expect(opened.at(-1)).toEqual(['session-1', 'claude-diff', { params: {} }])
 
-    repositoryActions.openDiff()
-    const reopenedDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
-    const reopenedActions = reopenedDetails?.inject?.() as { toggleMaximized(): void }
-    reopenedActions.toggleMaximized()
-    const secondOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
-    const secondOverlayElement = secondOverlay?.component?.() as ReactElement<{ restore(): void }>
-    secondOverlayElement.props.restore()
-
-    expect(secondOverlay?.active).toBe(false)
-    expect(reopenedDetails?.active).toBe(true)
-    expect(resizeLifecycle.enable).toHaveBeenCalledTimes(3)
-    expect(resizeLifecycle.dispose).toHaveBeenCalledTimes(2)
-    expect(resizeLifecycle.events.slice(-2)).toEqual(['layout-open', 'resize-enable'])
-    const restoredActions = reopenedDetails?.inject?.() as { closeDetails(): void }
-    restoredActions.closeDetails()
-    expect(reopenedDetails?.active).toBe(false)
-    expect(resizeLifecycle.dispose).toHaveBeenCalledTimes(3)
-
-    repositoryActions.openDiff()
-    const crashDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
-    const crashActions = crashDetails?.inject?.() as { toggleMaximized(): void; closeDetails(): void }
-    crashActions.toggleMaximized()
-    const crashedOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
-    reportEntryError?.('shell.overlay', { options: { id: 'claude-diff-overlay' } })
-
-    expect(crashedOverlay?.active).toBe(false)
-    expect(crashDetails?.active).toBe(true)
-    expect(resizeLifecycle.events.slice(-2)).toEqual(['layout-open', 'resize-enable'])
-    crashActions.closeDetails()
-
-    // The plan panel maximizes through the same overlay under its own id, and
-    // closing the details column has to take that overlay down with it — a
-    // missed teardown leaves an overlay covering the app with no way back.
     const planHeader = registrations.find(entry => entry.id === 'claude-plan')
     const planActions = planHeader?.inject?.('session-1') as { togglePlan(): void }
     planActions.togglePlan()
-    const planDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
-    const planPanel = planDetails?.inject?.() as { toggleMaximized(): void; closeDetails(): void }
-    planPanel.toggleMaximized()
-    const planOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
-    expect(planOverlay).toMatchObject({ id: 'claude-plan-overlay' })
+    expect(opened.at(-1)).toEqual(['session-1', 'claude-plan', { params: {} }])
 
-    // Escape out of the overlay and back into the column.
-    const planOverlayElement = planOverlay?.component?.() as ReactElement<{ restore(): void }>
-    planOverlayElement.props.restore()
-    expect(planOverlay?.active).toBe(false)
-    expect(planDetails?.active).toBe(true)
+    const tail = registrations.find(entry => entry.name === 'conversation.chat.turnTail')
+    const tailActions = tail?.inject?.('session-1') as { openTasks(turn: number): void }
+    tailActions.openTasks(3)
+    expect(opened.at(-1)).toEqual(['session-1', 'claude-tasks', { params: { turn: 3 } }])
 
-    // Maximize again, then close from the overlay: both registrations go.
-    planPanel.toggleMaximized()
-    const reopenedPlanOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
-    expect(reopenedPlanOverlay).toMatchObject({ id: 'claude-plan-overlay' })
-    planPanel.closeDetails()
-    expect(reopenedPlanOverlay?.active).toBe(false)
-    expect(planDetails?.active).toBe(false)
-
-    // A crashed plan overlay puts the column back, like the diff one.
-    planActions.togglePlan()
-    const crashPlanDetails = registrations.findLast(entry => entry.name === 'details' && entry.active)
-    const crashPlanPanel = crashPlanDetails?.inject?.() as { toggleMaximized(): void; closeDetails(): void }
-    crashPlanPanel.toggleMaximized()
-    const crashedPlanOverlay = registrations.findLast(entry => entry.name === 'shell.overlay' && entry.active)
-    reportEntryError?.('shell.overlay', { options: { id: 'claude-plan-overlay' } })
-    expect(crashedPlanOverlay?.active).toBe(false)
-    expect(crashPlanDetails?.active).toBe(true)
-    crashPlanPanel.closeDetails()
   })
 })

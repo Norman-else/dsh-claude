@@ -4,7 +4,12 @@ import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subpr
 import { diffFuncnameArgs } from './diff-funcname.ts'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
+/** What the diff panel receives: whole files packed under this budget. */
 const MAX_DIFF_BYTES = 256 * 1024
+/** What git may hand back before packing; beyond this the diff is truncated. */
+const MAX_RAW_DIFF_BYTES = 8 * 1024 * 1024
+/** One file's share of the panel; a lockfile or bundle past this is elided by name. */
+const MAX_FILE_PATCH_BYTES = 64 * 1024
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 export const MAX_FILE_LINES_PER_REQUEST = 500
 const MAX_UNTRACKED_DIFFS = 50
@@ -40,6 +45,8 @@ export interface RepositoryDiffStatus {
   readonly deletions: number
   readonly files: number
   readonly patch?: string
+  /** Files left out of `patch` because they alone, or the total, would exceed the budget. */
+  readonly elided?: readonly string[]
   readonly truncated: boolean
 }
 
@@ -202,6 +209,33 @@ export async function detectRepositoryOperation(gitDir: string): Promise<Reposit
     return { operation, ...(branch.length === 0 || branch.includes(' ') ? {} : { branch }) }
   }
   return undefined
+}
+
+/**
+ * Pack a unified diff into a byte budget one whole file at a time.
+ *
+ * A single oversized file (a lockfile, a bundle) used to void the entire
+ * patch, which read as "no changes" in the panel. Files are kept in git's
+ * order while they fit; a file past its own cap or past what is left of the
+ * budget is skipped and named, so the panel still shows every other change.
+ */
+export function packPatchByFile(
+  patch: string,
+  budget = MAX_DIFF_BYTES,
+  perFile = MAX_FILE_PATCH_BYTES,
+): { patch: string; elided: string[] } {
+  let packed = ''
+  const elided: string[] = []
+  for (const section of patch.split(/(?=^diff --git )/mu)) {
+    if (section.length === 0) continue
+    if (section.length <= perFile && packed.length + section.length <= budget) {
+      packed += section
+      continue
+    }
+    const header = /^diff --git a\/(?<a>.*?) b\/(?<b>.*)$/mu.exec(section)
+    elided.push(header?.groups?.['b'] ?? header?.groups?.['a'] ?? '?')
+  }
+  return { patch: packed, elided }
 }
 
 export function parseDiffNumstat(value: string): Omit<RepositoryDiffStatus, 'patch' | 'truncated'> {
@@ -505,16 +539,17 @@ export class RepositoryStatusService {
       const numstat = await run(this.#runtime, git, ['diff', '--no-ext-diff', '--numstat', base, '--'], cwd, GIT_TIMEOUT_MS)
       if (numstat.exitCode !== 0 || numstat.lossy) return undefined
       const summary = parseDiffNumstat(numstat.stdout)
-      const patch = await run(this.#runtime, git, [...await diffFuncnameArgs(), 'diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_DIFF_BYTES)
+      const patch = await run(this.#runtime, git, [...await diffFuncnameArgs(), 'diff', '--no-ext-diff', '--no-color', '--unified=3', base, '--'], cwd, GIT_TIMEOUT_MS, MAX_RAW_DIFF_BYTES)
       if (patch.exitCode !== 0) return { ...summary, truncated: true }
       const untracked = await this.#untrackedDiff(cwd, git, signal)
-      const combinedPatch = `${patch.stdout}${untracked.patch}`
+      const packed = packPatchByFile(`${patch.stdout}${untracked.patch}`)
       return {
         additions: summary.additions + untracked.additions,
         deletions: summary.deletions,
         files: summary.files + untracked.files,
-        ...(patch.lossy ? {} : { patch: combinedPatch.slice(0, MAX_DIFF_BYTES) }),
-        truncated: patch.lossy || untracked.truncated || combinedPatch.length > MAX_DIFF_BYTES,
+        ...(patch.lossy ? {} : { patch: packed.patch }),
+        ...(packed.elided.length === 0 ? {} : { elided: packed.elided }),
+        truncated: patch.lossy || untracked.truncated,
       }
     } catch {
       return undefined

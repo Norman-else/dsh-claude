@@ -25,9 +25,7 @@ import { summarizeSessionTitle } from './session-title.ts'
 import { RepositoryActionService } from './repository-actions.ts'
 import { registerRepositorySetupRoute } from './repository-setup-routes.ts'
 import { registerRepositoryActionRoute } from './repository-action-routes.ts'
-import { registerEditorOpenRoute } from './editor-open-routes.ts'
 import { PromptAssistService, registerClaudePromptNameRoute, registerClaudePromptRefineRoute, registerClaudePromptsRoute } from './prompts.ts'
-import { EditorOpenService } from './editor-open.ts'
 import { PullRequestFeedbackService } from './pr-feedback.ts'
 import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
 import { registerRepositoryStatusRoute } from './repository-status-routes.ts'
@@ -45,6 +43,7 @@ import { linkedRepositoryShown, touchedFilePaths, touchedRepositoryRoots } from 
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
+import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
@@ -225,6 +224,9 @@ export async function installManagedPresetCompatibility(
 }
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  // Every subprocess this plugin starts goes through one runtime so the
+  // Desktop 2.0.7 Windows Job runner workaround applies to all of them.
+  const subprocess = withElectronNodeRunner(ctx.subprocess)
   // DSH Desktop 2.0.4 does not retain third-party preset roots from bundle
   // patches, so keep a guarded user-root copy. Its bare route specifier resolves
   // through the profile package factory and does not create a second Loader source.
@@ -252,8 +254,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   await applySettingsOverrides()
   const sidecar = new ClaudeSidecarRepository()
-  const repositoryStatus = new RepositoryStatusService(ctx.subprocess)
-  const repositorySetup = new RepositorySetupService(ctx.subprocess, {
+  const repositoryStatus = new RepositoryStatusService(subprocess)
+  const repositorySetup = new RepositorySetupService(subprocess, {
     branchPrefix: () => readWorktreeBranchPrefix(),
     // Read at call time: the executable is resolved after this service exists.
     summarizeBranch: intent => summarizeBranchSlug(supervisorConfig.executablePath, intent),
@@ -261,7 +263,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const reviewComments = new ReviewCommentStore()
   const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
   const supervisor = new ClaudeSupervisor({
-    runtime: ctx.subprocess,
+    runtime: subprocess,
     approval: ctx.approval,
     userQuestions: ctx.userQuestions,
     config: supervisorConfig,
@@ -271,7 +273,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   let resolutionError: unknown
   try {
     const resolution = await resolveClaudeExecutable(
-      ctx.subprocess,
+      subprocess,
       config.executablePath === undefined || config.executablePath.length === 0
         ? undefined
         : config.executablePath,
@@ -422,9 +424,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(() => () => repositoryStatus.dispose(), 'dsh-claude: repository status cache')
   ctx.inject(['webServer'], webCtx => {
     registerClaudeClientDiagnosticsRoute(webCtx)
-    registerClaudeDoctorRoutes(webCtx, webCtx.subprocess, supervisor, supervisorConfig, resolutionError)
+    registerClaudeDoctorRoutes(webCtx, subprocess, supervisor, supervisorConfig, resolutionError)
     const desktopActions = webCtx.get('desktopActions') as { requestRestart?: () => void } | undefined
-    registerClaudeUpdateRoutes(webCtx, webCtx.subprocess, {
+    registerClaudeUpdateRoutes(webCtx, subprocess, {
       ...(typeof desktopActions?.requestRestart === 'function'
         ? { requestRestart: desktopActions.requestRestart.bind(desktopActions) }
         : {}),
@@ -440,7 +442,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())
-    const repositoryActions = new RepositoryActionService(webCtx.subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
+    const repositoryActions = new RepositoryActionService(subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
     /** Roots the latest projection probe vouched for, per session: the only
      *  checkouts a route may act on besides the session's own. */
     const extraRoots = new Map<string, readonly string[]>()
@@ -460,13 +462,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return statuses
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
-    registerEditorOpenRoute(webCtx, new EditorOpenService(webCtx.subprocess), cwdForClaudeSession)
     registerClaudePromptsRoute(webCtx)
-    const promptAssist = new PromptAssistService(webCtx.subprocess, () => supervisorConfig.executablePath)
+    const promptAssist = new PromptAssistService(subprocess, () => supervisorConfig.executablePath)
     registerClaudePromptNameRoute(webCtx, promptAssist)
     registerClaudePromptRefineRoute(webCtx, promptAssist)
-    registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(webCtx.subprocess), cwdForClaudeSession)
-    registerAskRoute(webCtx, new AskService(webCtx.subprocess, supervisorConfig.executablePath), cwdForClaudeSession, sessionId => {
+    registerPullRequestFeedbackRoute(webCtx, new PullRequestFeedbackService(subprocess), cwdForClaudeSession)
+    registerAskRoute(webCtx, new AskService(subprocess, supervisorConfig.executablePath), cwdForClaudeSession, sessionId => {
       const snapshot = supervisor.snapshots().find(item => item.sessionId === sessionId)
       return snapshot === undefined ? undefined : { model: claudeModelValue(snapshot.model), ...(snapshot.thinkingMode === undefined ? {} : { thinkingMode: snapshot.thinkingMode }) }
     })
@@ -490,7 +491,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       restoreFiles: async (sessionId, tree) => {
         const agent = webCtx.agents.get(sessionId as never)
         const cwd = agent?.session.header.cwd
-        return cwd === undefined ? false : restoreWorktreeTree(ctx.subprocess, cwd, tree)
+        return cwd === undefined ? false : restoreWorktreeTree(subprocess, cwd, tree)
       },
     })
     registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
