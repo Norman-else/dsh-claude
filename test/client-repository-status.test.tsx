@@ -455,6 +455,21 @@ describe('Claude repository status UI', () => {
     expect(markup).not.toMatch(/aria-label="diffCommitMenu"[^>]*>⌄<\/button>/u)
   })
 
+  it('lets the repository name take its natural width and only ellipsizes when the bar runs out of room', () => {
+    // No fixed cap: a long service name should read whole while there is
+    // room, shrink before the controls do, and carry its full name in a tooltip.
+    expect(styles.repositoryRemote).not.toHaveProperty('maxWidth')
+    expect(styles.repositoryRemote).toMatchObject({ minWidth: 0, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
+    const markup = renderToStaticMarkup(<ClaudeRepositoryStatus
+      sessionId="session"
+      useSessions={sessionsHook(false)}
+      useClaudeProjection={hook({ ...projection, repository: { ...repository, remote: 'Mercaso/mercaso-backend-payment-gateway' } })}
+      t={t}
+      openDiff={vi.fn()}
+    />)
+    expect(markup).toContain('>mercaso-backend-payment-gateway</span>')
+  })
+
   it('keeps the repository action form within the DSH modal content column', () => {
     expect(styles.diffModalBody).toMatchObject({
       width: '100%',

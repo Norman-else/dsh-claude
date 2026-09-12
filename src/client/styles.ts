@@ -1712,9 +1712,11 @@ export const repositoryPrFiles: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
   fontWeight: 500,
 }
+/** The repository name reads whole while there is room; it is the first
+ *  thing to give way when the controls need it, and never wider than its text. */
 export const repositoryRemote: CSSProperties = {
   minWidth: 0,
-  maxWidth: 116,
+  flex: '0 1 auto',
   overflow: 'hidden',
   color: 'var(--dsw-alias-label-tertiary)',
   fontSize: 12,

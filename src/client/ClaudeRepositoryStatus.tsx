@@ -813,7 +813,9 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
     <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...(merged ? styles.repositoryBarMerged : {}) }} data-dsh-claude-linked-repository={key}>
       <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
       <PullRequestLink repository={repository} t={t} />
-      <span style={styles.repositoryRemote}>{repositoryLabel(repository)}</span>
+      <Tooltip label={repository.remote ?? repositoryLabel(repository)} side="top" delayMs={250} maxWidth={420}>
+        <span style={styles.repositoryRemote}>{repositoryLabel(repository)}</span>
+      </Tooltip>
       <Tooltip label={branch} side="top" delayMs={250} maxWidth={420}>
         <span style={styles.repositoryBranch}>{branch}</span>
       </Tooltip>
@@ -859,7 +861,11 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           ? <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
           : <button type="button" style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}), ...styles.repositoryPrIconButton }} aria-label={t('overviewOpen')} title={t('overviewOpen')} onClick={openOverview}><PullRequestIcon merged={merged} /></button>}
         <PullRequestLink repository={repository} t={t} />
-        {repository.remote === undefined ? null : <span style={styles.repositoryRemote}>{repositoryName(repository.remote)}</span>}
+        {repository.remote === undefined ? null : (
+          <Tooltip label={repository.remote} side="top" delayMs={250} maxWidth={420}>
+            <span style={styles.repositoryRemote}>{repositoryName(repository.remote)}</span>
+          </Tooltip>
+        )}
         <Tooltip label={branch} side="top" delayMs={250} maxWidth={420}>
           <span style={styles.repositoryBranch}>{branch}</span>
         </Tooltip>
