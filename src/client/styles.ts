@@ -1552,29 +1552,44 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
-/** The fold control, floating in the gutter left of the linked stack and
- *  centred on it: outside every bar, so none of them changes shape. */
+/** The fold control, floating above the linked stack at its left edge. The
+ *  same recipe as the Host's jump-to-latest button on the right (34px round,
+ *  floating fill, panel elevation), so the two read as a pair. */
 export const linkedFoldChip: CSSProperties = {
   position: 'absolute',
-  left: -30,
-  top: '50%',
-  transform: 'translateY(-50%)',
-  width: 24,
-  height: 24,
-  boxSizing: 'border-box',
-  display: 'grid',
-  placeItems: 'center',
+  left: 0,
+  top: -44,
+  zIndex: 8,
+  width: 34,
+  height: 34,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   padding: 0,
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 12,
-  background: 'var(--dsw-alias-bg-layer-2)',
-  color: 'var(--dsw-alias-label-secondary)',
-  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent)',
-  font: 'inherit',
-  fontSize: 11,
-  lineHeight: '22px',
-  fontWeight: 700,
+  border: 0,
+  borderRadius: 100,
+  background: 'var(--dsw-alias-button-floating-fill)',
+  color: 'var(--dsw-alias-label-primary)',
+  boxShadow: 'var(--dsw-elevation-panel)',
   cursor: 'pointer',
+}
+
+/** The folded count, riding the button's top-right edge. */
+export const linkedFoldBadge: CSSProperties = {
+  position: 'absolute',
+  top: -6,
+  right: -8,
+  minWidth: 18,
+  height: 18,
+  padding: '0 5px',
+  boxSizing: 'border-box',
+  borderRadius: 9,
+  background: 'var(--dsw-static-blue-450)',
+  color: 'var(--dsw-alias-label-on-accent, #fff)',
+  fontSize: 11,
+  lineHeight: '18px',
+  fontWeight: 650,
+  textAlign: 'center',
 }
 
 /** A checkout the session wrote into besides its own: lighter, dashed, and

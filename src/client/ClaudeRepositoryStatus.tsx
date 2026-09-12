@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, IconChevronUpOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
@@ -831,9 +831,10 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The fold control floats in the gutter to the left of the linked bars,
- *  outside every bar, so their layout is untouched. Folded it reads the
- *  count, unfolded a chevron; the words live in its tooltip and name. */
+/** The fold control floats above the linked bars at their left edge, drawn
+ *  like the Host's own jump-to-latest button on the right: a round floating
+ *  chevron. Folded it carries the count as a badge; the words live in its
+ *  tooltip and accessible name. Outside every bar, so none changes shape. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -845,9 +846,8 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        {expanded
-          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" /></svg>
-          : <span>+{hidden}</span>}
+        {expanded ? <IconChevronUpOutline14 /> : <IconChevronDownOutline14 />}
+        {expanded ? null : <span style={styles.linkedFoldBadge}>+{hidden}</span>}
       </button>
     </Tooltip>
   )
