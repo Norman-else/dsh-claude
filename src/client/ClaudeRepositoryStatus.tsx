@@ -846,7 +846,7 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           {expanded
             ? <><path d="M3 7.5 7 3.5l4 4" /><path d="M3 11.5 7 7.5l4 4" /></>
             : <><path d="M3 2.5 7 6.5l4-4" /><path d="M3 6.5 7 10.5l4-4" /></>}
