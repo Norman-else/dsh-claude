@@ -1548,13 +1548,14 @@ export const repositoryBarMerged: CSSProperties = {
 }
 
 /** A checkout the session wrote into besides its own: lighter, dashed, and
- *  stacked above the session bar so it reads as attached rather than primary. */
+ *  stacked above the session bar so it reads as attached rather than primary.
+ *  It keeps the bar's opaque fill: the dock floats over the end of the
+ *  transcript, and a transparent bar let the prose show through. */
 export const repositoryBarLinked: CSSProperties = {
   marginBottom: 6,
   minHeight: 34,
   padding: '5px 11px',
   borderStyle: 'dashed',
-  background: 'transparent',
   boxShadow: 'none',
   color: 'var(--dsw-alias-label-secondary)',
 }

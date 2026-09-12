@@ -455,6 +455,13 @@ describe('Claude repository status UI', () => {
     expect(markup).not.toMatch(/aria-label="diffCommitMenu"[^>]*>⌄<\/button>/u)
   })
 
+  it('paints a linked bar opaque, since the dock sits over the transcript', () => {
+    // The bars float over the end of the conversation; a transparent linked
+    // bar let the last line of prose show through it.
+    expect(styles.repositoryBarLinked).not.toHaveProperty('background')
+    expect(styles.repositoryBar).toMatchObject({ background: 'var(--dsw-alias-bg-layer-1)' })
+  })
+
   it('lets the repository name take its natural width and only ellipsizes when the bar runs out of room', () => {
     // No fixed cap: a long service name should read whole while there is
     // room, shrink before the controls do, and carry its full name in a tooltip.
