@@ -857,12 +857,15 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // cleaned-up worktree all unmount the button that did the work -- so the
   // completion notice belongs here, not inside them.
   const { toast, report } = useActionToast()
+  // Every hook runs before the bar decides whether to draw: a session paints
+  // once before the plugin owns it, and a hook that only appears afterwards
+  // is React error 310 and a bar that never comes back.
+  const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
+  useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
   const merged = repository.pullRequest?.state === 'merged'
   const all = projection.repositories ?? []
-  const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
-  useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
   // A fan-out over many services would otherwise stack a dozen bars over the
   // transcript: past three they fold behind one row that unfolds them.
   const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)

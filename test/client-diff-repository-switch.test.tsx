@@ -384,3 +384,33 @@ describe('many linked checkouts', () => {
     expect([...container.querySelectorAll('button')].some(item => item.getAttribute('aria-expanded') !== null && item.textContent?.includes(en.linkedCollapse))).toBe(false)
   })
 })
+
+describe('repository bar hook order', () => {
+  it('survives a projection that turns owned after first rendering unowned', async () => {
+    const { ClaudeRepositoryStatus } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    const errors: unknown[] = []
+    const consoleError = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+    const render = (projection: ClaudeClientProjection): void => act(() => {
+      root.render(<ClaudeRepositoryStatus
+        sessionId="session-1"
+        t={t}
+        openDiff={vi.fn()}
+        useSessions={(<S,>(selector: (value: { byId: Record<string, { blank: boolean; running?: boolean }> }) => S): S => selector({ byId: { 'session-1': { blank: false } } })) as never}
+        useClaudeProjection={(<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(projection)) as never}
+      />)
+    })
+    // The first paint of a session arrives before the plugin owns it; the bar
+    // returns nothing. When ownership lands, every hook must already have run.
+    render({ ...EMPTY_CLAUDE_PROJECTION, owned: false })
+    expect(container.textContent).toBe('')
+    render({ ...EMPTY_CLAUDE_PROJECTION, owned: true, repository: own, repositories: [other] })
+    expect(container.querySelectorAll('[data-dsh-claude-linked-repository]')).toHaveLength(1)
+    expect(container.textContent).toContain('feature')
+    expect(errors.flat().some(item => /hooks|#310/iu.test(String(item)))).toBe(false)
+    consoleError.mockRestore()
+  })
+})
