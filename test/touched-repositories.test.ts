@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { linkedRepositoryShown, touchedFilePaths, touchedRepositoryRoots } from '../src/touched-repositories.ts'
+import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from '../src/touched-repositories.ts'
 
 function call(toolName: string, input: unknown, kind: ClaudeActivityEvent['kind'] = 'tool-call'): ClaudeActivityEvent {
   return { turn: 1, step: 1, ordinal: 1, kind, toolName, detail: JSON.stringify(input) }
@@ -20,18 +20,28 @@ describe('touched file paths', () => {
     ])).toEqual(['/b/src/a.ts', '/b/src/b.ts', '/c/n.ipynb', '/e/sub.ts'])
   })
 
-  it('reads absolute paths out of Bash commands too, which is how a full-access session writes files', () => {
+  it('reads the paths a Bash command works in or writes to, which is how a full-access session edits', () => {
     const command = [
+      'PATH=/opt/homebrew/bin:$PATH grep -rn "export" /Users/n/read-only/src | head',
       'git worktree add /Users/n/repo-b/.claude/worktrees/T-1 -b T-1 && cd /Users/n/repo-b/.claude/worktrees/T-1',
       'cat > /Users/n/repo-b/.claude/worktrees/T-1/src/a.ts <<\'EOF\'',
       'export const url = "https://github.com/org/repo/pull/1"',
       'EOF',
-      'sed -i \'\' "s#x#y#" src/relative.ts 2>/dev/null; echo $HOME/skip ~/skip-too',
+      'git -C /Users/n/repo-c status; tee -a /Users/n/repo-d/log.txt; mkdir -p /Users/n/repo-e/dir',
+      'sed -i \'\' "s#x#y#" /Users/n/repo-f/x.ts 2>/dev/null; cp a.ts /Users/n/repo-g/a.ts; echo $HOME/skip ~/skip-too',
+      "python3 - <<'PY'",
+      "open('/Users/n/repo-h/y.py', 'w').write('x'); open('/Users/n/read-only/z.py').read()",
+      'PY',
     ].join('\n')
     expect(touchedFilePaths([call('Bash', { command, description: 'Set up the frontend worktree' })])).toEqual([
       '/Users/n/repo-b/.claude/worktrees/T-1',
       '/Users/n/repo-b/.claude/worktrees/T-1/src/a.ts',
-      '/dev/null',
+      '/Users/n/repo-c',
+      '/Users/n/repo-d/log.txt',
+      '/Users/n/repo-e/dir',
+      '/Users/n/repo-f/x.ts',
+      '/Users/n/repo-g/a.ts',
+      '/Users/n/repo-h/y.py',
     ])
   })
 
@@ -91,12 +101,34 @@ describe('linked repository visibility', () => {
   it('shows a checkout while there is something to see and hides it once it is back to nothing', () => {
     expect(linkedRepositoryShown({ ...ready, dirty: true })).toBe(true)
     expect(linkedRepositoryShown({ ...ready, ahead: 2 })).toBe(true)
-    expect(linkedRepositoryShown({ ...ready, upstream: false })).toBe(true)
     expect(linkedRepositoryShown({ ...ready, pullRequest })).toBe(true)
+    // A clean local-only branch is what a tool checkout (Homebrew's `stable`)
+    // looks like; on its own it is no sign the session did anything there.
+    expect(linkedRepositoryShown({ ...ready, upstream: false })).toBe(false)
     // Cleaned up in place: back on base, clean, nothing to push, no pull request.
     expect(linkedRepositoryShown(ready)).toBe(false)
     // Cleaned up as a worktree: the directory is gone.
     expect(linkedRepositoryShown({ status: 'unavailable', cwd: '/b' })).toBe(false)
     expect(linkedRepositoryShown({ status: 'not-repository', cwd: '/b' })).toBe(false)
+  })
+})
+
+describe('touched pull requests', () => {
+  it('collects the GitHub pull requests named anywhere in the log, other than the session repository, once each', () => {
+    const activities: ClaudeActivityEvent[] = [
+      call('Bash', { command: 'gh pr create --title x' }),
+      { turn: 1, step: 1, ordinal: 2, kind: 'tool-result', detail: 'https://github.com/org/repo-b/pull/2086\n' },
+      { turn: 1, step: 2, ordinal: 0, kind: 'text', text: '前端 PR 已建好：https://github.com/org/repo-b/pull/2086 ，后端 https://github.com/org/own/pull/5171' },
+      { turn: 2, step: 1, ordinal: 0, kind: 'tool-result', detail: 'see https://github.com/Org/Repo-B/pull/7 and https://gitlab.com/x/y/-/merge_requests/3 and https://github.com/org/repo-b/pulls' },
+    ]
+    expect(touchedPullRequests(activities, 'org/own')).toEqual([
+      { repository: 'org/repo-b', number: 2086 },
+      { repository: 'org/repo-b', number: 7 },
+    ])
+    expect(touchedPullRequests(activities, undefined)).toEqual([
+      { repository: 'org/repo-b', number: 2086 },
+      { repository: 'org/own', number: 5171 },
+      { repository: 'org/repo-b', number: 7 },
+    ])
   })
 })

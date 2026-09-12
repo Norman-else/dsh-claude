@@ -524,9 +524,11 @@ function hasChanges(repository: RepositoryStatus | undefined): boolean {
   return (repository?.diff?.additions ?? 0) > 0 || (repository?.diff?.deletions ?? 0) > 0
 }
 
-/** The checkouts a session can show: its own first, then the ones it wrote into. */
+/** The checkouts a session can show: its own first, then the ones it wrote
+ *  into. A linked pull request with no local checkout has no diff to show. */
 export function panelRepositories(projection: Pick<ClaudeClientProjection, 'repository' | 'repositories'>): readonly RepositoryStatus[] {
-  return [projection.repository, ...(projection.repositories ?? [])].filter((item): item is RepositoryStatus => item !== undefined)
+  return [projection.repository, ...(projection.repositories ?? []).filter(item => item.diff !== undefined)]
+    .filter((item): item is RepositoryStatus => item !== undefined)
 }
 
 export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized, submitPrompt, initialRoot }: ClaudeDiffPanelProps) {

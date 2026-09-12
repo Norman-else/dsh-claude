@@ -16,8 +16,10 @@ const MAX_UNTRACKED_DIFFS = 50
 const GIT_TIMEOUT_MS = 5_000
 const GH_TIMEOUT_MS = 8_000
 const CACHE_TTL_MS = 5_000
+const PULL_REQUEST_TTL_FACTOR = 12
 const MAX_TEXT_CHARS = 1_024
 const MAX_CONFLICT_PATHS = 100
+const PULL_REQUEST_FIELDS = 'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName,headRefName'
 
 /** A git operation left half-finished in the working tree, waiting for the
  *  user to resolve conflicts and continue -- or to abort. */
@@ -38,6 +40,7 @@ export interface RepositoryPullRequestStatus {
   readonly createdAt?: string
   readonly mergedAt?: string
   readonly baseBranch?: string
+  readonly headBranch?: string
 }
 
 export interface RepositoryDiffStatus {
@@ -318,6 +321,7 @@ export function parsePullRequest(value: unknown): RepositoryPullRequestStatus | 
     ...(typeof input.mergeStateStatus === 'string'
       ? { mergeState: bounded(input.mergeStateStatus) }
       : {}),
+    ...(typeof input.headRefName === 'string' && input.headRefName.length > 0 ? { headBranch: bounded(input.headRefName) } : {}),
     ...(typeof record(input.author)?.login === 'string'
       ? { author: bounded(String(record(input.author)?.login)) }
       : {}),
@@ -373,6 +377,39 @@ export class RepositoryStatusService {
     const value = this.#inspect(cwd, signal).then(next => this.#stabilize(cwd, next))
     this.#cache.set(cwd, { expiresAt: Date.now() + this.#cacheTtlMs, value })
     void value.catch(() => this.#cache.delete(cwd))
+    return value
+  }
+
+  /** One pull request by number, as the checkout-shaped status the panels
+   *  read: a session that opened a pull request in another repository and
+   *  then moved that checkout back to its base branch still has the pull
+   *  request. No root, no diff; `cwd` is only where gh runs. Same cache and
+   *  stabilisation as `inspect`, keyed off the pull request. */
+  inspectPullRequest(cwd: string, repository: string, number: number): Promise<RepositoryStatus> {
+    const key = `gh:${repository}#${number}`
+    const current = this.#cache.get(key)
+    if (current !== undefined && current.expiresAt > Date.now()) return current.value
+    const value = (async (): Promise<RepositoryStatus> => {
+      const gh = await this.#gh()
+      if (gh === undefined) return { status: 'unavailable', cwd }
+      const result = await run(this.#runtime, gh, ['pr', 'view', String(number), '--repo', repository, '--json', PULL_REQUEST_FIELDS], cwd, GH_TIMEOUT_MS)
+      const pullRequest = result.exitCode === 0 ? parsePullRequest(JSON.parse(result.stdout)) : undefined
+      if (pullRequest === undefined) return { status: 'unavailable', cwd }
+      return {
+        status: 'ready',
+        cwd,
+        remote: repository,
+        ...(pullRequest.headBranch === undefined ? {} : { branch: pullRequest.headBranch }),
+        detached: false,
+        worktree: false,
+        dirty: false,
+        pullRequest,
+      }
+    })().then(next => this.#stabilize(key, next), (): RepositoryStatus => ({ status: 'unavailable', cwd }))
+    // A pull request moves slower than a working tree, and a log can name
+    // ones gh cannot show (a fixture, a deleted fork): one network round per
+    // minute each, not one per sweep.
+    this.#cache.set(key, { expiresAt: Date.now() + this.#cacheTtlMs * PULL_REQUEST_TTL_FACTOR, value })
     return value
   }
 
@@ -588,7 +625,7 @@ export class RepositoryStatusService {
       const result = await run(this.#runtime, gh, [
         'pr', 'view', branch,
         '--repo', repository,
-        '--json', 'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName',
+        '--json', PULL_REQUEST_FIELDS,
       ], cwd, GH_TIMEOUT_MS)
       if (result.exitCode !== 0) return undefined
       return parsePullRequest(JSON.parse(result.stdout))

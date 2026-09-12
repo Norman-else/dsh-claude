@@ -83,6 +83,12 @@ describe('Claude diff panel repository switch', () => {
     expect(container.textContent).toContain('other.ts')
   })
 
+  it('leaves a linked pull request without a local checkout out of the switch', async () => {
+    const { panelRepositories } = await import('../src/client/ClaudeDiffPanel.tsx')
+    const prOnly = { status: 'ready' as const, cwd: '/a', remote: 'org/b', branch: 'fix', pullRequest: { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'open' as const, draft: false, review: 'none' as const, checks: 'none' as const } }
+    expect(panelRepositories({ repository: own, repositories: [prOnly, other] }).map(item => item.root)).toEqual(['/a', '/b'])
+  })
+
   it('opens on the requested checkout', () => {
     const container = mount({ ...EMPTY_CLAUDE_PROJECTION, owned: true, repository: own, repositories: [other] }, '/b')
     expect(trigger(container)?.textContent).toContain('b')

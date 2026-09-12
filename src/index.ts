@@ -39,7 +39,7 @@ import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
-import { linkedRepositoryShown, touchedFilePaths, touchedRepositoryRoots } from './touched-repositories.ts'
+import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
@@ -455,11 +455,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const extraRepositoriesForClaudeSession = async (sessionId: string, activities: readonly ClaudeActivityEvent[]): Promise<readonly RepositoryStatus[]> => {
       const cwd = cwdForClaudeSession(sessionId)
       if (cwd === undefined) return []
-      const own = await repositoryStatus.rootOf(cwd)
+      const [own, ownStatus] = await Promise.all([repositoryStatus.rootOf(cwd), repositoryStatus.inspect(cwd)])
       const roots = await touchedRepositoryRoots(touchedFilePaths(activities), own ?? cwd, directory => repositoryStatus.rootOf(directory), MAX_EXTRA_REPOSITORIES)
-      const statuses = (await Promise.all(roots.map(root => repositoryStatus.inspect(root)))).filter(linkedRepositoryShown)
-      extraRoots.set(sessionId, statuses.map(status => status.root ?? status.cwd))
-      return statuses
+      const checkouts = (await Promise.all(roots.map(root => repositoryStatus.inspect(root)))).filter(linkedRepositoryShown)
+      extraRoots.set(sessionId, checkouts.flatMap(status => (status.root === undefined ? [] : [status.root])))
+      // Pull requests the log names that no linked checkout is sitting on any
+      // more: the checkout moved on, the pull request did not.
+      const covered = new Set(checkouts.map(status => `${status.remote?.toLowerCase()}#${status.pullRequest?.number}`))
+      const pullRequests = touchedPullRequests(activities, ownStatus.remote)
+        .filter(item => !covered.has(`${item.repository}#${item.number}`))
+        .slice(0, Math.max(0, MAX_EXTRA_REPOSITORIES - checkouts.length))
+      const detached = (await Promise.all(pullRequests.map(item => repositoryStatus.inspectPullRequest(cwd, item.repository, item.number)))).filter(linkedRepositoryShown)
+      return [...checkouts, ...detached]
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
     registerClaudePromptsRoute(webCtx)
