@@ -919,7 +919,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
             <DiffFileSection
               key={file.path}
               file={file}
-              root={repository.root}
+              root={repository.pullRequestOnly === true ? undefined : repository.root}
               open={fileOpen(file.path, index)}
               onOpenChange={open => { setFileOpen(file.path, open) }}
               t={t}

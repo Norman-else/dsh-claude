@@ -83,10 +83,21 @@ describe('Claude diff panel repository switch', () => {
     expect(container.textContent).toContain('other.ts')
   })
 
-  it('leaves a linked pull request without a local checkout out of the switch', async () => {
+  it('shows a linked pull request through its own diff, without offering to expand context it has no tree for', async () => {
     const { panelRepositories } = await import('../src/client/ClaudeDiffPanel.tsx')
-    const prOnly = { status: 'ready' as const, cwd: '/a', remote: 'org/b', branch: 'fix', pullRequest: { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'open' as const, draft: false, review: 'none' as const, checks: 'none' as const } }
-    expect(panelRepositories({ repository: own, repositories: [prOnly, other] }).map(item => item.root)).toEqual(['/a', '/b'])
+    const pullRequest = { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'open' as const, draft: false, review: 'none' as const, checks: 'none' as const }
+    const bare = { status: 'ready' as const, cwd: '/a', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest }
+    expect(panelRepositories({ repository: own, repositories: [bare, other] }).map(item => item.root)).toEqual(['/a', '/b'])
+    const gapped = 'diff --git a/pr.ts b/pr.ts\n@@ -10,1 +10,2 @@\n const a = 1\n+const b = 2\n'
+    const withDiff = { ...bare, root: '/clone-b', diff: { additions: 1, deletions: 0, files: 1, truncated: false, patch: gapped } }
+    expect(panelRepositories({ repository: own, repositories: [withDiff] }).map(item => item.root)).toEqual(['/a', '/clone-b'])
+    const container = mount({ ...EMPTY_CLAUDE_PROJECTION, owned: true, repository: own, repositories: [withDiff] }, '/clone-b')
+    expect(container.textContent).toContain('pr.ts')
+    // The clone attached to the pull request sits on another branch: its files
+    // are not the ones this patch applies to, so the gap stays unexpandable.
+    const expanders = [...container.querySelectorAll('button')].filter(item => [en.diffExpandUp, en.diffExpandDown].includes(item.getAttribute('aria-label') ?? ''))
+    expect(expanders.length).toBeGreaterThan(0)
+    expect(expanders.every(item => item.disabled)).toBe(true)
   })
 
   it('opens on the requested checkout', () => {

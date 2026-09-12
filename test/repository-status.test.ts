@@ -191,7 +191,7 @@ describe('repository status service', () => {
     ])
     expect(fake.spawn.mock.calls[3]?.[0].argv).toEqual([
       '/bin/gh', 'pr', 'view', 'feature/status', '--repo', 'owner/repo', '--json',
-      'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName,headRefName',
+      'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName,headRefName,additions,deletions,changedFiles',
     ])
     expect(fake.spawn.mock.calls[4]?.[0].argv).toEqual(['/bin/git', 'merge-base', 'HEAD', 'refs/remotes/origin/master'])
     expect(fake.spawn.mock.calls[5]?.[0].argv).toEqual(['/bin/git', 'diff', '--no-ext-diff', '--numstat', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--'])
@@ -432,22 +432,38 @@ describe('repository root lookup', () => {
 
 describe('pull request lookup by number', () => {
   it('reads one pull request through gh, presents it as a ready checkout, and caches it', async () => {
+    const patch = 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1,2 @@\n a\n+b\n'
     const fake = runtime([
       { stdout: JSON.stringify({
         number: 2086, title: 'Pick columns', url: 'https://github.com/org/repo-b/pull/2086', state: 'OPEN', isDraft: false,
         reviewDecision: 'APPROVED', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], headRefName: 'PSOS-5567', baseRefName: 'master',
+        additions: 5, deletions: 2, changedFiles: 3,
       }) },
+      { stdout: patch },
     ])
     const service = new RepositoryStatusService(fake, 60_000)
     const status = await service.inspectPullRequest('/session', 'org/repo-b', 2086)
     expect(status).toMatchObject({
       status: 'ready', cwd: '/session', remote: 'org/repo-b', branch: 'PSOS-5567', dirty: false, pullRequestOnly: true,
       pullRequest: { number: 2086, state: 'open', review: 'approved', checks: 'passing', headBranch: 'PSOS-5567', baseBranch: 'master' },
+      // The pull request's own diff stands in for a working tree it no longer has.
+      diff: { additions: 5, deletions: 2, files: 3, patch, truncated: false },
     })
     expect(status.root).toBeUndefined()
     await service.inspectPullRequest('/session', 'org/repo-b', 2086)
-    expect(fake.spawn).toHaveBeenCalledTimes(1)
-    expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({ cwd: '/session', argv: ['/bin/gh', 'pr', 'view', '2086', '--repo', 'org/repo-b', '--json', expect.stringContaining('headRefName')] })
+    expect(fake.spawn).toHaveBeenCalledTimes(2)
+    expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({ cwd: '/session', argv: ['/bin/gh', 'pr', 'view', '2086', '--repo', 'org/repo-b', '--json', expect.stringContaining('changedFiles')] })
+    expect(fake.spawn.mock.calls[1]?.[0]).toMatchObject({ cwd: '/session', argv: ['/bin/gh', 'pr', 'diff', '2086', '--repo', 'org/repo-b'] })
+  })
+
+  it('keeps the counts and marks the diff truncated when gh cannot produce the patch', async () => {
+    const fake = runtime([
+      { stdout: JSON.stringify({ number: 1, title: 't', url: 'https://github.com/o/r/pull/1', state: 'OPEN', additions: 1, deletions: 0, changedFiles: 1 }) },
+      { stdout: '', exitCode: 1 },
+    ])
+    await expect(new RepositoryStatusService(fake, 60_000).inspectPullRequest('/s', 'o/r', 1)).resolves.toMatchObject({
+      diff: { additions: 1, deletions: 0, files: 1, truncated: true },
+    })
   })
 
   it('answers unavailable when gh cannot show the pull request', async () => {

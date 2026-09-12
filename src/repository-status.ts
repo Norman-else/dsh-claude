@@ -19,7 +19,7 @@ const CACHE_TTL_MS = 5_000
 const PULL_REQUEST_TTL_FACTOR = 12
 const MAX_TEXT_CHARS = 1_024
 const MAX_CONFLICT_PATHS = 100
-const PULL_REQUEST_FIELDS = 'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName,headRefName'
+const PULL_REQUEST_FIELDS = 'number,title,url,state,isDraft,reviewDecision,mergeStateStatus,mergedAt,statusCheckRollup,author,createdAt,baseRefName,headRefName,additions,deletions,changedFiles'
 
 /** A git operation left half-finished in the working tree, waiting for the
  *  user to resolve conflicts and continue -- or to abort. */
@@ -397,8 +397,15 @@ export class RepositoryStatusService {
       const gh = await this.#gh()
       if (gh === undefined) return { status: 'unavailable', cwd }
       const result = await run(this.#runtime, gh, ['pr', 'view', String(number), '--repo', repository, '--json', PULL_REQUEST_FIELDS], cwd, GH_TIMEOUT_MS)
-      const pullRequest = result.exitCode === 0 ? parsePullRequest(JSON.parse(result.stdout)) : undefined
+      const raw: unknown = result.exitCode === 0 ? JSON.parse(result.stdout) : undefined
+      const pullRequest = parsePullRequest(raw)
       if (pullRequest === undefined) return { status: 'unavailable', cwd }
+      // The pull request's own diff stands in for the working tree the
+      // session no longer has on that branch.
+      const counts = record(raw)
+      const count = (value: unknown): number => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0)
+      const patch = await run(this.#runtime, gh, ['pr', 'diff', String(number), '--repo', repository], cwd, GH_TIMEOUT_MS, MAX_RAW_DIFF_BYTES)
+      const packed = patch.exitCode === 0 && !patch.lossy ? packPatchByFile(patch.stdout) : undefined
       return {
         status: 'ready',
         cwd,
@@ -409,6 +416,14 @@ export class RepositoryStatusService {
         dirty: false,
         pullRequest,
         pullRequestOnly: true,
+        diff: {
+          additions: count(counts?.additions),
+          deletions: count(counts?.deletions),
+          files: count(counts?.changedFiles),
+          ...(packed === undefined ? {} : { patch: packed.patch }),
+          ...(packed === undefined || packed.elided.length === 0 ? {} : { elided: packed.elided }),
+          truncated: packed === undefined,
+        },
       }
     })().then(next => this.#stabilize(key, next), (): RepositoryStatus => ({ status: 'unavailable', cwd }))
     // A pull request moves slower than a working tree, and a log can name
