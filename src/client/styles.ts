@@ -1547,23 +1547,24 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The fold pill at the head of the first linked bar, in the row with its
- *  glyphs: the count of folded bars and a chevron. */
+/** The fold control in the link glyph's 20px seat on the first linked bar,
+ *  so nothing else on the bar moves. */
 export const linkedFoldChip: CSSProperties = {
+  width: 20,
+  height: 20,
   flex: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 3,
-  height: 22,
-  padding: '0 7px 0 8px',
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 11,
+  borderRadius: 6,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-secondary)',
   font: 'inherit',
-  fontSize: 12,
-  lineHeight: '20px',
-  fontWeight: 650,
+  fontSize: 10,
+  lineHeight: '18px',
+  fontWeight: 700,
+  letterSpacing: '-0.02em',
   cursor: 'pointer',
 }
 

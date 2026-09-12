@@ -797,7 +797,7 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   openDiff: (root?: string) => void
   report: (text: string) => void
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
-  /** Something to seat ahead of the link glyph: the fold pill on the first bar. */
+  /** Takes the link glyph's seat: the fold control on the first bar. */
   leading?: ReactNode
 }) {
   const key = repository.root ?? `${repository.remote ?? repository.cwd}#${repository.pullRequest?.number ?? ''}`
@@ -813,8 +813,7 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   const merged = repository.pullRequest?.state === 'merged'
   return (
     <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...(merged ? styles.repositoryBarMerged : {}) }} data-dsh-claude-linked-repository={key}>
-      {leading}
-      <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
+      {leading ?? <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>}
       <PullRequestLink repository={repository} t={t} />
       <Tooltip label={repository.remote ?? repositoryLabel(repository)} side="top" delayMs={250} maxWidth={420}>
         <span style={styles.repositoryRemote}>{repositoryLabel(repository)}</span>
@@ -834,9 +833,9 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The pill at the head of the first linked bar that folds and unfolds the
- *  bars past the first three: a count and a chevron, in the row with the
- *  bar's own glyphs, the words in its tooltip and accessible name. */
+/** The fold control stands where the first linked bar's link glyph would:
+ *  the same 20px seat, so every bar's content lines up. Folded it reads the
+ *  count, unfolded a chevron; the words live in its tooltip and name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -848,10 +847,9 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        {expanded ? null : <span>+{hidden}</span>}
-        <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          {expanded ? <path d="M2 6.5 5 3.5l3 3" /> : <path d="M2 3.5 5 6.5l3-3" />}
-        </svg>
+        {expanded
+          ? <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" /></svg>
+          : <span>+{hidden}</span>}
       </button>
     </Tooltip>
   )
