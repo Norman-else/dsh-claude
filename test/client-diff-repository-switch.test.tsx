@@ -193,10 +193,29 @@ describe('Claude repository bar with linked checkouts', () => {
       mounted = undefined
       return labels
     }
-    // Merged, cleaned up already on the far side: nothing to clean up here, no diff to open.
+    // Merged with no clone to go through: nothing to clean up here, no diff to open.
     const detached = render({ status: 'ready', cwd: '/a', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest })
     expect(detached).not.toContain(en.cleanupButton)
     expect(detached).not.toContain(en.diffOpen)
+    // Merged with a clone: the merged branch is still there to delete, and the
+    // bar to take down, so clean-up is offered and names that branch.
+    const setup = await import('../src/client/repository-setup-api.ts')
+    const cleanup = vi.spyOn(setup, 'cleanupMergedRepository').mockResolvedValue({ mode: 'checkout', root: '/clone-b', branch: 'fix' })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    act(() => { root.render(<LinkedRepositoryBar sessionId="session-1" repository={{ status: 'ready', cwd: '/clone-b', root: '/clone-b', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest }} running={false} t={t} openDiff={vi.fn()} report={vi.fn()} />) })
+    const button = [...container.querySelectorAll('button')].find(item => item.textContent === en.cleanupButton)
+    if (button === undefined) throw new Error('no clean-up on the merged linked pull request')
+    act(() => { button.click() })
+    const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
+    await act(async () => { confirm?.click() })
+    expect(cleanup).toHaveBeenCalledWith('/clone-b', 'main', 'fix')
+    vi.restoreAllMocks()
+    act(() => { root.unmount() })
+    container.remove()
+    mounted = undefined
     // Open and reachable through a clone: the merge menu is there.
     const open = render({ status: 'ready', cwd: '/b', root: '/b', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest: { ...pullRequest, state: 'open' } })
     expect(open).toContain(en.repositoryMergeMenu)

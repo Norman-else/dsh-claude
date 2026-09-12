@@ -439,7 +439,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         supervisor.limitsChanged()
       },
     })
-    registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.(), path => repositoryStatus.invalidate(path))
+    /** Linked pull requests cleaned up, as `clone root + branch`: the log
+     *  still names them, so the sweep has to be told to stop listing them. */
+    const cleanedLinked = new Set<string>()
+    registerRepositorySetupRoute(webCtx, repositorySetup, () => sweepWorktrees?.(), (path, branch) => {
+      repositoryStatus.invalidate(path)
+      if (branch !== undefined) cleanedLinked.add(`${path}\0${branch}`)
+    })
     registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())
@@ -472,7 +478,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const detached = (await Promise.all(pullRequests.map(async item => {
         const clone = probed.find(status => status.status === 'ready' && status.remote?.toLowerCase() === item.repository && status.root !== undefined)
         const status = await repositoryStatus.inspectPullRequest(clone?.root ?? cwd, item.repository, item.number)
-        return clone?.root === undefined || status.status !== 'ready' ? status : { ...status, root: clone.root }
+        if (clone?.root === undefined || status.status !== 'ready') return status
+        if (status.branch !== undefined && cleanedLinked.has(`${clone.root}\0${status.branch}`)) return { status: 'unavailable' as const, cwd }
+        return { ...status, root: clone.root }
       }))).filter(linkedRepositoryShown)
       const linked = [...checkouts, ...detached]
       extraRoots.vouch(sessionId, linked.flatMap(status => (status.root === undefined ? [] : [status.root])))

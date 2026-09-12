@@ -661,4 +661,26 @@ describe('merged cleanup', () => {
     await expect(new RepositorySetupService(dirty, { leasePath, worktreeRoot }).cleanupMerged(root, 'main'))
       .rejects.toMatchObject<Partial<RepositorySetupError>>({ code: 'dirty-workspace' })
   })
+
+  it('cleans up a named branch behind a checkout already back on base, and refuses without a name', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    // A session that opened a pull request elsewhere switched that clone back to
+    // base itself; the merged branch is still a local branch to delete.
+    const named = runtime([
+      { stdout: '' },
+      { stdout: `${root}\n` },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    await expect(new RepositorySetupService(named, { leasePath, worktreeRoot }).cleanupMerged(root, 'main', 'PSOS-5567'))
+      .resolves.toEqual({ mode: 'checkout', root, branch: 'PSOS-5567' })
+    const argv = named.spawn.mock.calls.map(call => call[0].argv)
+    expect(argv).toContainEqual(['/bin/git', 'branch', '-D', '--', 'PSOS-5567'])
+    expect(argv).not.toContainEqual(['/bin/git', 'switch', '--', 'main'])
+
+    const unnamed = runtime([{ stdout: '' }, { stdout: `${root}\n` }, { stdout: 'main\n' }])
+    await expect(new RepositorySetupService(unnamed, { leasePath, worktreeRoot }).cleanupMerged(root, 'main'))
+      .rejects.toMatchObject<Partial<RepositorySetupError>>({ code: 'nothing-to-clean' })
+  })
 })

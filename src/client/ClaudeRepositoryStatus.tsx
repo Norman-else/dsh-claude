@@ -579,7 +579,9 @@ export function CleanupControl({ repository, t, report, deleteWorkspace }: {
   const closeDialog = (): void => { if (dialog?.submitting !== true) setDialog(undefined) }
   const confirm = (): void => {
     setDialog({ submitting: true })
-    void cleanupMergedRepository(root, base).then(async result => {
+    // A pull request read by number: its clone is back on base already, so
+    // the branch to delete has to be named rather than read off HEAD.
+    void cleanupMergedRepository(root, base, repository.pullRequestOnly === true ? repository.branch : undefined).then(async result => {
       report(t('cleanupCompleted', { branch: result.branch }))
       setDialog(undefined)
       if (result.mode === 'worktree' && deleteWorkspace !== undefined) await deleteWorkspace()
@@ -755,7 +757,7 @@ function RepositoryControls({ sessionId, repository, root, running, t, report, o
           {t('repositoryState_merged')}
           {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
         </span>
-        {repository.pullRequestOnly === true ? null : <CleanupControl repository={repository} t={t} report={report} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />}
+        <CleanupControl repository={repository} t={t} report={report} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />
       </>) : <>
         {pullRequest.checks === 'failing' && actionable
           ? <FailingChecksControl sessionId={sessionId} repository={{ ...repository, pullRequest }} root={root} t={t} {...prompt} />

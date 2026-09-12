@@ -276,9 +276,13 @@ export class RepositorySetupService {
   /** Tear down a merged branch: remove a plugin worktree (and its lease and
    *  branch), or switch a plain checkout back to the base branch and delete
    *  the merged branch. Refuses dirty trees. */
-  async cleanupMerged(pathValue: string, baseBranch: string): Promise<RepositoryCleanupResult> {
+  /** `branch` names the merged branch when the checkout is no longer on it:
+   *  a session that opened a pull request in another clone switched that
+   *  clone back to base itself, and only the local branch is left to delete. */
+  async cleanupMerged(pathValue: string, baseBranch: string, branch?: string): Promise<RepositoryCleanupResult> {
     const path = safePath(pathValue)
     const base = safeBranch(baseBranch)
+    const named = branch === undefined ? undefined : safeBranch(branch)
     const git = await this.#git()
     const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], path)
     if (status.exitCode !== 0 || status.lossy) throw new RepositorySetupError('repository-unavailable', 'The repository state is unavailable.')
@@ -296,13 +300,18 @@ export class RepositorySetupService {
     }
     const root = await this.#repositoryRoot(git, path)
     const head = await this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root)
-    const branch = head.exitCode === 0 ? head.stdout.trim() : ''
-    if (branch.length === 0 || branch === base) throw new RepositorySetupError('nothing-to-clean', 'The checkout is already on the base branch.')
+    const current = head.exitCode === 0 ? head.stdout.trim() : ''
+    if (current.length === 0 || current === base) {
+      if (named === undefined || named === base) throw new RepositorySetupError('nothing-to-clean', 'The checkout is already on the base branch.')
+      await this.#run(git, ['branch', '-D', '--', named], root).catch(() => undefined)
+      await this.#run(git, ['pull', '--ff-only'], root, GIT_FETCH_TIMEOUT_MS).catch(() => undefined)
+      return { mode: 'checkout', root, branch: named }
+    }
     const switched = await this.#run(git, ['switch', '--', base], root)
     if (switched.exitCode !== 0) throw new RepositorySetupError('checkout-failed', 'Git could not switch to the base branch.')
-    await this.#run(git, ['branch', '-D', '--', branch], root).catch(() => undefined)
+    await this.#run(git, ['branch', '-D', '--', current], root).catch(() => undefined)
     await this.#run(git, ['pull', '--ff-only'], root, GIT_FETCH_TIMEOUT_MS).catch(() => undefined)
-    return { mode: 'checkout', root, branch }
+    return { mode: 'checkout', root, branch: current }
   }
 
   bindLease(leaseId: string, sessionId: string): Promise<void> {

@@ -100,8 +100,9 @@ export function registerRepositorySetupRoute(
   service: RepositorySetupService,
   /** Kick the worktree/workspace reconciliation, when the Host exposes one. */
   sweep?: () => void,
-  /** A checkout was cleaned up: status readers caching by path must drop it. */
-  cleaned?: (path: string) => void,
+  /** A checkout was cleaned up: status readers caching by path must drop it,
+   *  and a linked pull request on `branch` has nothing left to show. */
+  cleaned?: (path: string, branch?: string) => void,
 ): void {
   registerPluginRoute(ctx, {
     mode: 'stream',
@@ -139,8 +140,9 @@ export function registerRepositorySetupRoute(
           if (io.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
           const input = await readJson(io)
           const path = string(input, 'path')
-          const result = await service.cleanupMerged(path, string(input, 'baseBranch'))
-          cleaned?.(path)
+          const branch = typeof input.branch === 'string' && input.branch.length > 0 ? input.branch : undefined
+          const result = await service.cleanupMerged(path, string(input, 'baseBranch'), branch)
+          cleaned?.(path, branch)
           return json(res, 200, result)
         }
         // The Host's own workspace deletion publishes no server-side event, so
