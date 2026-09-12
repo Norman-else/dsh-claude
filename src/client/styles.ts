@@ -1547,19 +1547,31 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The fold row: the same dashed strip, holding only its toggle. */
-export const repositoryBarFold: CSSProperties = {
-  minHeight: 28,
-  padding: '3px 11px',
-  justifyContent: 'center',
+/** The linked bars as one stack, so the fold chip can sit on its corner. */
+export const linkedStack: CSSProperties = {
+  position: 'relative',
 }
 
-export const repositoryFoldButton: CSSProperties = {
-  border: 'none',
-  background: 'transparent',
+/** A small pill riding the top-left edge of the first linked bar: the count
+ *  of folded bars and a chevron. */
+export const linkedFoldChip: CSSProperties = {
+  position: 'absolute',
+  top: -8,
+  left: 12,
+  zIndex: 1,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 3,
+  height: 16,
+  padding: '0 6px',
+  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
+  borderRadius: 8,
+  background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-tertiary)',
   font: 'inherit',
-  fontSize: 12,
+  fontSize: 11,
+  lineHeight: '14px',
+  fontWeight: 600,
   cursor: 'pointer',
 }
 

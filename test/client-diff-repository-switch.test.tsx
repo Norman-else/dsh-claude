@@ -361,14 +361,18 @@ describe('many linked checkouts', () => {
     })
     const bars = (): string[] => [...container.querySelectorAll('[data-dsh-claude-linked-repository]')].map(item => item.getAttribute('data-dsh-claude-linked-repository') ?? '')
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    const toggle = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-expanded') !== null && item.textContent?.includes(t('linkedMore', { count: 2 })))
-    if (toggle === undefined) throw new Error('no fold toggle')
+    // A small chip on the stack's top-left corner, not a row of its own.
+    const toggle = container.querySelector<HTMLButtonElement>('button[data-dsh-claude-linked-fold]')
+    if (toggle === null) throw new Error('no fold chip')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-label')).toBe(`${t('linkedMore', { count: 2 })} · ${en.linkedShowAll}`)
+    expect(toggle.textContent).toContain('+2')
+    expect(container.querySelector('[data-dsh-claude-linked-fold-row]')).toBeNull()
     act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d', '/e', '/f'])
-    const collapse = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-expanded') === 'true')
-    expect(collapse?.textContent).toContain(en.linkedCollapse)
-    act(() => { collapse?.click() })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.getAttribute('aria-label')).toBe(en.linkedCollapse)
+    act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d'])
     // Three or fewer: no toggle at all.
     act(() => {
@@ -381,7 +385,7 @@ describe('many linked checkouts', () => {
       />)
     })
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    expect([...container.querySelectorAll('button')].some(item => item.getAttribute('aria-expanded') !== null && item.textContent?.includes(en.linkedCollapse))).toBe(false)
+    expect(container.querySelector('button[data-dsh-claude-linked-fold]')).toBeNull()
   })
 })
 

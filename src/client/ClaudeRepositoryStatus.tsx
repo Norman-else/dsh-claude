@@ -831,20 +831,26 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The row that stands in for the folded linked bars, and unfolds them. */
-function LinkedFoldToggle({ sessionId, hidden, expanded, onToggle, t }: {
+/** The chip on the linked stack's top-left corner that folds and unfolds
+ *  the bars past the first three: a count and a chevron, the words in its
+ *  tooltip and accessible name. */
+function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
   expanded: boolean
   onToggle: () => void
   t: ClaudeRepositoryStatusInjected['t']
 }) {
+  const label = expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`
   return (
-    <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...styles.repositoryBarFold }} data-dsh-claude-linked-fold={sessionId}>
-      <button type="button" style={styles.repositoryFoldButton} aria-expanded={expanded} onClick={onToggle}>
-        {expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`}
+    <Tooltip label={label} side="top" delayMs={250}>
+      <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
+        {expanded ? null : <span>+{hidden}</span>}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {expanded ? <path d="M2 6.5 5 3.5l3 3" /> : <path d="M2 3.5 5 6.5l3-3" />}
+        </svg>
       </button>
-    </div>
+    </Tooltip>
   )
 }
 
@@ -869,18 +875,18 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // A fan-out over many services would otherwise stack a dozen bars over the
   // transcript: past three they fold behind one row that unfolds them.
   const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
-  const linked = [
-    ...shown.map(item => (
-      <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-    )),
-    ...(all.length > LINKED_BARS_SHOWN ? [
-      <LinkedFoldToggle key="fold" sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
+  const linked = all.length === 0 ? null : (
+    <div style={styles.linkedStack}>
+      {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
         const next = !expanded
         setExpanded(next)
         linkedExpanded.set(sessionId, next)
-      }} />,
-    ] : []),
-  ]
+      }} /> : null}
+      {shown.map(item => (
+        <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
+      ))}
+    </div>
+  )
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
