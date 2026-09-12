@@ -3024,12 +3024,6 @@ export const diffPanel: CSSProperties = {
   boxShadow: '0 4px 16px color-mix(in srgb, #000 12%, transparent)',
 }
 
-export const diffPanelMaximized: CSSProperties = {
-  width: '100%',
-  height: '100%',
-  margin: 0,
-}
-
 export const diffHeader: CSSProperties = {
   boxSizing: 'border-box',
   height: 49,

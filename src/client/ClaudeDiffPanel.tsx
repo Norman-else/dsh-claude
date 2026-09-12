@@ -4,7 +4,6 @@ import {
   IconChevronRightOutline14,
   IconChevronUpOutline14,
   IconCloseOutline16,
-  IconFullscreenOutline16,
   Menu,
   Modal,
   Tooltip,
@@ -38,9 +37,7 @@ import * as styles from './styles.ts'
 export interface ClaudeDiffPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   sessionId: string
-  maximized: boolean
   closeDetails: () => void
-  toggleMaximized: () => void
   /** Submit the composer, seeding the given draft text when it is empty. */
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
   /** Open on this checkout rather than the session's own (see `repositories`). */
@@ -512,14 +509,6 @@ export function repositoryActionAvailability(
   }
 }
 
-function RestorePanelIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M1.5 5h3V2h1.4v4.4H1.5V5Zm9.9-3h1.4v3h3v1.4h-4.4V2ZM1.5 9.6h4.4V14H4.5v-3h-3V9.6Zm9.9 0h4.4V11h-3v3h-1.4V9.6Z" />
-    </svg>
-  )
-}
-
 function hasChanges(repository: RepositoryStatus | undefined): boolean {
   return (repository?.diff?.additions ?? 0) > 0 || (repository?.diff?.deletions ?? 0) > 0
 }
@@ -531,7 +520,7 @@ export function panelRepositories(projection: Pick<ClaudeClientProjection, 'repo
     .filter((item): item is RepositoryStatus => item !== undefined)
 }
 
-export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, closeDetails, toggleMaximized, submitPrompt, initialRoot }: ClaudeDiffPanelProps) {
+export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetails, submitPrompt, initialRoot }: ClaudeDiffPanelProps) {
   const projection = useClaudeProjection(value => value)
   const repositories = useMemo(() => panelRepositories(projection), [projection])
   // Opened without a target, the panel lands on the session's own checkout --
@@ -837,7 +826,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
     <>
       {toast}
       <style data-dsh-claude-repository-modal-styles>{styles.detailsCardCss}{styles.diffModalCss}{styles.panelIconButtonCss}{styles.diffCommentCss}{styles.diffCommentMarkdownCss}{styles.diffRepositoryCss}</style>
-      <div className={styles.detailsCardClass} style={{ ...styles.diffPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
+      <div className={styles.detailsCardClass} style={styles.diffPanel}>
         <header style={styles.diffHeader}>
           <div style={styles.diffHeaderTitle}>
             {repositories.length < 2 ? null : <>
@@ -888,7 +877,6 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, maximized, 
                 {openThreadCount}
               </button>
             ) : null}
-            <button type="button" className={styles.panelIconButtonClass} aria-label={maximized ? t('diffRestore') : t('diffMaximize')} onClick={toggleMaximized}>{maximized ? <RestorePanelIcon /> : <IconFullscreenOutline16 />}</button>
             <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
           </div>
         </header>

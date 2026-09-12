@@ -19,9 +19,9 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
  * focuses that tab and re-delivers the navigation params, so a second "show
  * tasks" press for another turn lands in the same tab.
  *
- * The Host owns fullscreen and closing now, so the maximized overlays this
- * package used to draw are gone: a panel's maximize button presses the
- * sidebar's own fullscreen toggle, and its close button closes the tab.
+ * The Host owns fullscreen and closing now: the sidebar chrome carries its
+ * own fullscreen toggle, so the panels draw none, and a panel's close button
+ * closes its tab.
  */
 
 export const CLAUDE_TAB_KINDS = {
@@ -43,7 +43,6 @@ export interface ClaudeTabFace {
   /** Report the tab this body occupies, and `undefined` when it unmounts;
    *  this is how the header toggles learn what to close. */
   noteTab(tabId: string | undefined): void
-  toggleMaximized(): void
 }
 
 /** The tab-open state one header toggle observes for one session. */
@@ -126,29 +125,26 @@ function useClaudeTab(useTabInfo: UseSidebarRightTabInfo, noteTab: ClaudeTabFace
   const closeDetails = useCallback(() => { actions.close() }, [actions])
   return {
     closeDetails,
-    maximized: info.sidebar.fullscreen,
     params: (info.tab.navigation.params ?? {}) as ClaudeTabParams,
   }
 }
 
-type TabBodyProps<P> = Omit<P, 'closeDetails' | 'maximized' | 'toggleMaximized'> & ClaudeTabFace & {
+type TabBodyProps<P> = Omit<P, 'closeDetails'> & ClaudeTabFace & {
   useTabInfo: UseSidebarRightTabInfo
 }
 
-export function ClaudeDiffTab({ useTabInfo, noteTab, toggleMaximized, ...panel }: TabBodyProps<ClaudeDiffPanelProps>) {
-  const { closeDetails, maximized, params } = useClaudeTab(useTabInfo, noteTab)
+export function ClaudeDiffTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<ClaudeDiffPanelProps>) {
+  const { closeDetails, params } = useClaudeTab(useTabInfo, noteTab)
   return <ClaudeDiffPanel
     {...panel}
     closeDetails={closeDetails}
-    maximized={maximized}
-    toggleMaximized={toggleMaximized}
     {...(params.initialRoot === undefined ? {} : { initialRoot: params.initialRoot })}
   />
 }
 
-export function ClaudePlanTab({ useTabInfo, noteTab, toggleMaximized, ...panel }: TabBodyProps<ClaudePlanPanelProps>) {
-  const { closeDetails, maximized } = useClaudeTab(useTabInfo, noteTab)
-  return <ClaudePlanPanel {...panel} closeDetails={closeDetails} maximized={maximized} toggleMaximized={toggleMaximized} />
+export function ClaudePlanTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<ClaudePlanPanelProps>) {
+  const { closeDetails } = useClaudeTab(useTabInfo, noteTab)
+  return <ClaudePlanPanel {...panel} closeDetails={closeDetails} />
 }
 
 export function ClaudeTasksTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<Omit<ClaudeTasksPanelProps, 'turn'>>) {
@@ -170,17 +166,8 @@ export function ClaudeOverviewTab({ useTabInfo, noteTab, face }: ClaudeTabFace &
 export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSidebarTabOptions): ClaudeSidebarTabs {
   const { t, namespace } = options
   const occupancy = new TabOccupancy()
-  // The service only exposes `toggleExpanded`, which folds the whole column
-  // to its rail -- what a maximize button must never do. Fullscreen is flipped
-  // by the sidebar chrome's own button, which the Host marks with the mode it
-  // switches to; pressing that is the one public way to the same store action.
-  const toggleMaximized = (): void => {
-    if (typeof document === 'undefined') return
-    document.querySelector<HTMLButtonElement>('button[data-sidebar-right-mode]')?.click()
-  }
   const faceFor = (kind: ClaudeTabKind, sessionId: string): ClaudeTabFace => ({
     noteTab: tabId => { occupancy.note(kind, sessionId, tabId) },
-    toggleMaximized,
   })
 
   const titles: Record<ClaudeTabKind, () => string> = {
@@ -208,7 +195,7 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
     name: 'sidebar.right.pane.tab',
     key: CLAUDE_TAB_KINDS.plan,
     locale: namespace,
-    inject: (sessionId: string): Omit<ClaudePlanPanelInjected, 'closeDetails' | 'maximized' | 'toggleMaximized'> & ClaudeTabFace => (
+    inject: (sessionId: string): Omit<ClaudePlanPanelInjected, 'closeDetails'> & ClaudeTabFace => (
       { t, sessionId, ...faceFor(CLAUDE_TAB_KINDS.plan, sessionId) }
     ),
   }, ClaudePlanTab))

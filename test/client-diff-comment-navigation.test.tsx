@@ -51,9 +51,7 @@ function mount(): HTMLElement {
     root.render(<ClaudeDiffPanel
       t={t}
       sessionId="session-1"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
       useClaudeProjection={(<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(projection)) as never}
     />)
   })

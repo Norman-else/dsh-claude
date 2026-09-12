@@ -126,9 +126,7 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook(elided as ClaudeClientProjection)}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
     expect(markup).toContain('Skipped 2 oversized: pnpm-lock.yaml, dist/bundle.js')
     expect(markup).not.toContain('Diff truncated')
@@ -334,9 +332,7 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook(projection)}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
     // The branch is the title; there is no breadcrumb level after it.
     expect(panelMarkup).not.toContain('Working tree changes')
@@ -344,7 +340,6 @@ describe('Claude repository status UI', () => {
     expect(panelMarkup).toContain('feature/status')
     expect(panelMarkup).toContain('Commit')
     expect(panelMarkup).toContain('aria-label="diffCommitMenu"')
-    expect(panelMarkup).toContain('aria-label="diffMaximize"')
     // The header names the file; its directory rides in the hover tooltip.
     expect(panelMarkup).toContain('>file.ts<')
     expect(panelMarkup).toContain('aria-label="src/file.ts"')
@@ -420,9 +415,7 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook({ ...projection, repository: { ...repository, dirty } })}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
     const cleanMarkup = renderPanel(false)
     expect(cleanMarkup).toMatch(/<button[^>]*disabled[^>]*>diffCommit<\/button>/u)
@@ -437,11 +430,10 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook(projection)}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
-    expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="diffMaximize"[^>]*><svg\b/u)
+    // The Host's sidebar chrome owns fullscreen; the panel draws no maximize of its own.
+    expect(markup).not.toContain('diffMaximize')
     expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="Close diff panel"[^>]*><svg\b/u)
     expect(markup).not.toContain('>×</button>')
     expect(styles.panelIconButtonCss).toContain('width: 26px')
@@ -456,32 +448,11 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook(projection)}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
 
     expect(markup).toMatch(/aria-label="diffCommitMenu"[^>]*><svg\b/u)
     expect(markup).not.toMatch(/aria-label="diffCommitMenu"[^>]*>⌄<\/button>/u)
-  })
-
-  it('renders maximize and restore actions with vector window icons', () => {
-    const renderPanel = (maximized: boolean): string => renderToStaticMarkup(<ClaudeDiffPanel
-      useClaudeProjection={hook(projection)}
-      t={t}
-      sessionId="session"
-      maximized={maximized}
-      closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
-    />)
-
-    const maximizable = renderPanel(false)
-    expect(maximizable).toMatch(/aria-label="diffMaximize"[^>]*><svg\b/u)
-    expect(maximizable).not.toMatch(/aria-label="diffMaximize"[^>]*>↗<\/button>/u)
-
-    const restorable = renderPanel(true)
-    expect(restorable).toMatch(/aria-label="diffRestore"[^>]*><svg\b/u)
-    expect(restorable).not.toMatch(/aria-label="diffRestore"[^>]*>↙<\/button>/u)
   })
 
   it('keeps the repository action form within the DSH modal content column', () => {
@@ -520,9 +491,7 @@ describe('Claude repository status UI', () => {
       useClaudeProjection={hook(projection)}
       t={t}
       sessionId="session"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
     />)
 
     expect(markup).toContain('data-dsh-claude-repository-modal-styles="true"')

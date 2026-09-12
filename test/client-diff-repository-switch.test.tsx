@@ -27,9 +27,7 @@ function mount(projection: ClaudeClientProjection, initialRoot?: string): HTMLEl
     root.render(<ClaudeDiffPanel
       t={t}
       sessionId="session-1"
-      maximized={false}
       closeDetails={vi.fn()}
-      toggleMaximized={vi.fn()}
       {...(initialRoot === undefined ? {} : { initialRoot })}
       useClaudeProjection={(<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(projection)) as never}
     />)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCloseOutline16, IconFullscreenOutline16, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -13,8 +13,6 @@ export interface ClaudePlanPanelInjected {
   sessionId: string
   closeDetails: () => void
   /** Whether the panel is drawn in the shell overlay rather than the column. */
-  maximized: boolean
-  toggleMaximized: () => void
 }
 
 export interface ClaudePlanPanelProps extends ClaudePlanPanelInjected {
@@ -119,16 +117,6 @@ export function parsePlanReviewKey(key: string): { state: PlanState; toolUseId: 
   return { state, toolUseId: key.slice(cut + 1) }
 }
 
-/** Restore-from-maximized: four corners pulling inward. Mirrors the diff
- *  panel's own, which the primitives set has no counterpart for. */
-function RestorePanelIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M1.5 5h3V2h1.4v4.4H1.5V5Zm9.9-3h1.4v3h3v1.4h-4.4V2ZM1.5 9.6h4.4V14H4.5v-3h-3V9.6Zm9.9 0h4.4V11h-3v3h-1.4V9.6Z" />
-    </svg>
-  )
-}
-
 /** Card and rows reproduce the primitives' menu surface, like the session
  *  menu next door: r7, inverted hairline, shadow-lv3, 2px inset. */
 const PICKER_CSS = [
@@ -173,7 +161,7 @@ const STATE_LABEL: Record<PlanState, ClaudeCodeSettingsKey> = {
 /** The plan behind an `ExitPlanMode` approval, as the document it was written
  *  as. The decision itself stays with the Host's approval dialog; this panel
  *  is where the plan is actually read, under the reader's own prose palette. */
-export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetails, maximized, toggleMaximized, submitChanges = sendPlanForChanges }: ClaudePlanPanelProps) {
+export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetails, submitChanges = sendPlanForChanges }: ClaudePlanPanelProps) {
   const markdownLabels = useClaudeMarkdownLabels(t)
   const owned = useClaudeProjection(projection => projection.owned)
   const activities = useClaudeProjection(projection => projection.activities)
@@ -255,7 +243,7 @@ export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetail
     ...(state === 'pending' ? styles.planBadgePending : state === 'rejected' ? styles.planBadgeRejected : {}),
   })
   return (
-    <div className={styles.detailsCardClass} style={{ ...styles.tasksPanel, ...(maximized ? styles.diffPanelMaximized : {}) }}>
+    <div className={styles.detailsCardClass} style={styles.tasksPanel}>
       <style data-dsh-claude-panel-icon-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}{PICKER_CSS}</style>
       <div style={styles.tasksHeader}>
         {/* Title and state read as one phrase — "Plan · awaiting approval" —
@@ -303,9 +291,6 @@ export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetail
           {review === undefined ? null : <span style={badge(review.state)}>{t(STATE_LABEL[review.state])}</span>}
         </div>
         <div style={styles.planHeaderEnd}>
-          <button type="button" className={styles.panelIconButtonClass} aria-label={maximized ? t('planRestore') : t('planMaximize')} onClick={toggleMaximized}>
-            {maximized ? <RestorePanelIcon /> : <IconFullscreenOutline16 />}
-          </button>
           <button type="button" className={styles.panelIconButtonClass} aria-label={t('planClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
         </div>
       </div>
