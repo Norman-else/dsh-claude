@@ -1558,7 +1558,9 @@ export const linkedStack: CSSProperties = {
  *  elevation), which lives above the composer, so the two never meet. */
 export const linkedFoldChip: CSSProperties = {
   position: 'absolute',
-  right: -44,
+  // Past the Host's chat-width drag handle, which runs down the gutter just
+  // outside the column; 72px clears it with room to spare.
+  right: -72,
   top: '50%',
   transform: 'translateY(-50%)',
   zIndex: 8,
