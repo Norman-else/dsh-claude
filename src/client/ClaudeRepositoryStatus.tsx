@@ -880,8 +880,10 @@ function useHostJumpSeat(stack: RefObject<HTMLDivElement | null>): { shown: bool
 
 /** The fold control floats above the dock in the Host's jump-to-latest seat,
  *  stepping left of that button while the Host shows it: a circle holding a
- *  double chevron, down while folded and up once open. The count and the
- *  words live in its tooltip and accessible name. */
+ *  double chevron pointing where the bars will go -- up while folded, since
+ *  unfolding stacks more bars upward; down once open, since folding pulls
+ *  them back down toward the composer. The count and the words live in its
+ *  tooltip and accessible name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
   sessionId: string
   hidden: number
@@ -898,7 +900,7 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
         {/* Two of the Host's own chevron glyph, overlapped: the same weight as
             the jump-to-latest button beside it. */}
         <span className={styles.linkedFoldGlyphClass} style={styles.linkedFoldGlyph} aria-hidden="true">
-          {expanded ? <><IconChevronUpOutline14 /><IconChevronUpOutline14 /></> : <><IconChevronDownOutline14 /><IconChevronDownOutline14 /></>}
+          {expanded ? <><IconChevronDownOutline14 /><IconChevronDownOutline14 /></> : <><IconChevronUpOutline14 /><IconChevronUpOutline14 /></>}
         </span>
       </button>
     </Tooltip>
