@@ -1552,30 +1552,27 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
-/** How far the fold control steps left while the Host's jump-to-latest
- *  button occupies the seat: that button's 34px plus a gap. */
-export const LINKED_FOLD_SHIFT = 42
-
-/** The fold control takes the Host's jump-to-latest seat: floating above
- *  the dock at its right edge, the same 34px circle on the floating fill.
- *  The Host's theme rounds corners as squircles, so the circle is asked for
- *  by name. Holds only the double chevron; the count lives in its tooltip. */
+/** The fold control, drawn to the Host's jump-to-latest recipe exactly: a
+ *  34px circle on the floating fill, no border of its own -- the stroke is
+ *  the elevation's, set through the same variable the Host sets -- and the
+ *  circle asked for by name, since the Host's theme rounds as squircles.
+ *  Where it sits comes from the component. Holds only the double chevron;
+ *  the count lives in its tooltip. */
 export const linkedFoldChip = {
   position: 'absolute',
-  right: 0,
-  top: -50,
   zIndex: 8,
   boxSizing: 'border-box',
-  display: 'inline-flex',
+  display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   width: 34,
   height: 34,
   padding: 0,
-  border: '1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)',
-  borderRadius: '50%',
+  border: 0,
+  borderRadius: 100,
   cornerShape: 'round',
-  background: 'var(--dsw-alias-button-floating-fill, var(--dsw-alias-bg-layer-2))',
+  '--dsw-elevation-stroke-color': 'var(--dsw-alias-border-l3)',
+  background: 'var(--dsw-alias-button-floating-fill)',
   color: 'var(--dsw-alias-label-primary)',
   boxShadow: 'var(--dsw-elevation-panel)',
   font: 'inherit',

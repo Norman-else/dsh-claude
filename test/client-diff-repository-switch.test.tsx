@@ -375,18 +375,21 @@ describe('many linked checkouts', () => {
     expect(toggle.getAttribute('aria-label')).toBe(en.linkedCollapse)
     act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    // It shares the Host's jump-to-latest seat above the dock's right edge,
-    // and steps left of that button whenever the Host shows it.
-    expect(toggle.style.right).toBe('0px')
+    // It takes the Host's jump-to-latest seat -- 16px in from the dock's
+    // right edge until that button has been measured -- and steps to the
+    // left of the button, 8px clear, whenever the Host shows it. jsdom lays
+    // nothing out, so the measured button reads as zero-width at the origin.
+    expect(toggle.style.right).toBe('16px')
+    expect(toggle.style.top).toBe('-50px')
     const native = document.createElement('button')
     native.className = 'EvIC1a_toBottom'
     // The watcher settles on the next animation frame.
     document.body.append(native)
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
-    expect(toggle.style.right).toBe('42px')
+    expect(toggle.style.right).toBe('8px')
     native.remove()
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
-    expect(toggle.style.right).toBe('0px')
+    expect(toggle.style.right).toBe('16px')
     // Three or fewer: no toggle at all.
     act(() => {
       root.render(<ClaudeRepositoryStatus
