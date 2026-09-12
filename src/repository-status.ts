@@ -73,6 +73,10 @@ export interface RepositoryStatus {
   readonly conflicts?: readonly string[]
   /** The stopped operation itself, present even once every conflict is staged. */
   readonly operation?: RepositoryOperation
+  /** A pull request the session opened, read by number: no checkout of its
+   *  own sits on that branch any more. `root`, when present, is a clone of
+   *  the repository through which gh can still act on it. */
+  readonly pullRequestOnly?: boolean
 }
 
 type RepositoryRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
@@ -404,6 +408,7 @@ export class RepositoryStatusService {
         worktree: false,
         dirty: false,
         pullRequest,
+        pullRequestOnly: true,
       }
     })().then(next => this.#stabilize(key, next), (): RepositoryStatus => ({ status: 'unavailable', cwd }))
     // A pull request moves slower than a working tree, and a log can name

@@ -3,6 +3,7 @@ import { CLAUDE_REPOSITORY_FEEDBACK_PATH } from '../src/constants.ts'
 import type { PullRequestReviewThread } from '../src/pr-feedback.ts'
 import {
   composeCommentsPrompt,
+  loadFailingChecks,
   loadMentionableUsers,
   loadPullRequestThreads,
   replyToReviewThread,
@@ -32,12 +33,14 @@ describe('pull request feedback client', () => {
       .mockResolvedValueOnce(jsonResponse({ users: [] }))
       .mockResolvedValueOnce(jsonResponse({ comment: comment(1, 'a', 'b') }))
       .mockResolvedValueOnce(jsonResponse({ resolved: true }))
+      .mockResolvedValueOnce(jsonResponse({ checks: [] }))
     vi.stubGlobal('fetch', fetch)
     await loadPullRequestThreads('s', 1, undefined, '/b')
     await loadMentionableUsers('s', 1, 'al', undefined, '/b')
     await replyToReviewThread('s', 1, 1, 'ok', '/b')
     await setReviewThreadResolved('s', 1, 'T', true, '/b')
-    expect(fetch).toHaveBeenCalledTimes(4)
+    await loadFailingChecks('s', 1, undefined, '/b')
+    expect(fetch).toHaveBeenCalledTimes(5)
     for (const call of fetch.mock.calls) expect(String(call[0])).toContain('root=%2Fb')
   })
 

@@ -188,12 +188,23 @@ describe('repository merge route validation', () => {
     }), bad)
     expect(bad.statusCode).toBe(409)
     expect(JSON.parse(bad.body)).toMatchObject({ error: 'invalid-request' })
+    const numbered = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash', pullNumber: 2086,
+    }), numbered)
+    expect(numbered.statusCode).toBe(200)
+    expect(actions.execute).toHaveBeenLastCalledWith('/repo', expect.objectContaining({ pullNumber: 2086 }))
+    const badNumber = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
+      action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash', pullNumber: -1,
+    }), badNumber)
+    expect(badNumber.statusCode).toBe(409)
     const badAdmin = response()
     await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_ACTION_PATH}?sessionId=s`, {
       action: 'merge-pr', fingerprint: 'fingerprint', includeUnstaged: false, mergeMethod: 'squash', admin: 'yes',
     }), badAdmin)
     expect(badAdmin.statusCode).toBe(409)
-    expect(actions.execute).toHaveBeenCalledTimes(2)
+    expect(actions.execute).toHaveBeenCalledTimes(3)
   })
 })
 

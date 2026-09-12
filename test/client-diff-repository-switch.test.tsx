@@ -140,6 +140,61 @@ describe('Claude repository bar with linked checkouts', () => {
     expect(openDiff).toHaveBeenCalledWith('/b')
   })
 
+  it('carries the session bar controls, scoped to the linked checkout', async () => {
+    const api = await import('../src/client/repository-action-api.ts')
+    vi.spyOn(api, 'loadRepositoryActionPreview').mockResolvedValue({
+      root: '/b', branch: 'fix', head: 'h', fingerprint: 'f', files: [], patch: '', truncated: false,
+      hasStaged: false, hasUnstaged: false, hasUntracked: false, unpushedCommits: [], unpushedTruncated: false,
+    })
+    const execute = vi.spyOn(api, 'executeRepositoryAction').mockResolvedValue({ commit: 'h', pushed: true })
+    const { LinkedRepositoryBar } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const linked = {
+      ...other,
+      pullRequest: { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'open' as const, draft: false, review: 'none' as const, checks: 'failing' as const, baseBranch: 'main' },
+    }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    act(() => { root.render(<LinkedRepositoryBar sessionId="session-1" repository={linked} running={false} t={t} openDiff={vi.fn()} report={vi.fn()} submitPrompt={vi.fn()} />) })
+    const labels = [...container.querySelectorAll('button')].map(item => item.getAttribute('aria-label'))
+    expect(labels).toEqual(expect.arrayContaining([en.repositoryChecksOpen, en.autoFixLabel, en.repositoryMergeMenu]))
+    const menu = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === en.repositoryMergeMenu)
+    act(() => { menu?.click() })
+    const squash = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === en.diffMerge_squash)
+    await act(async () => { (squash as HTMLElement).click() })
+    const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
+    await act(async () => { confirm?.click() })
+    expect(execute).toHaveBeenCalledWith('session-1', expect.objectContaining({ action: 'merge-pr', mergeMethod: 'squash', pullNumber: 7 }), '/b')
+    vi.restoreAllMocks()
+  })
+
+  it('acts on a pull request without a checkout of its own only through a local clone of that repository', async () => {
+    const { LinkedRepositoryBar } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const pullRequest = { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'merged' as const, draft: false, review: 'none' as const, checks: 'none' as const, baseBranch: 'main' }
+    const render = (repository: ClaudeClientProjection['repository']): string[] => {
+      const container = document.createElement('div')
+      document.body.append(container)
+      const root = createRoot(container)
+      mounted = { root, container }
+      act(() => { root.render(<LinkedRepositoryBar sessionId="session-1" repository={repository!} running={false} t={t} openDiff={vi.fn()} report={vi.fn()} />) })
+      const labels = [...container.querySelectorAll('button')].map(item => item.getAttribute('aria-label') ?? item.textContent ?? '')
+      act(() => { root.unmount() })
+      container.remove()
+      mounted = undefined
+      return labels
+    }
+    // Merged, cleaned up already on the far side: nothing to clean up here, no diff to open.
+    const detached = render({ status: 'ready', cwd: '/a', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest })
+    expect(detached).not.toContain(en.cleanupButton)
+    expect(detached).not.toContain(en.diffOpen)
+    // Open and reachable through a clone: the merge menu is there.
+    const open = render({ status: 'ready', cwd: '/b', root: '/b', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest: { ...pullRequest, state: 'open' } })
+    expect(open).toContain(en.repositoryMergeMenu)
+    const unreachable = render({ status: 'ready', cwd: '/a', remote: 'org/b', branch: 'fix', pullRequestOnly: true, pullRequest: { ...pullRequest, state: 'open' } })
+    expect(unreachable).not.toContain(en.repositoryMergeMenu)
+  })
+
   it('offers clean-up on a linked checkout whose pull request merged', async () => {
     const { LinkedRepositoryBar } = await import('../src/client/ClaudeRepositoryStatus.tsx')
     const merged = {
@@ -151,7 +206,7 @@ describe('Claude repository bar with linked checkouts', () => {
     document.body.append(container)
     const root = createRoot(container)
     mounted = { root, container }
-    act(() => { root.render(<LinkedRepositoryBar repository={merged} t={t} openDiff={vi.fn()} report={vi.fn()} />) })
+    act(() => { root.render(<LinkedRepositoryBar sessionId="session-1" repository={merged} running={false} t={t} openDiff={vi.fn()} report={vi.fn()} />) })
     expect([...container.querySelectorAll('button')].some(item => item.textContent === en.cleanupButton)).toBe(true)
   })
 })
@@ -189,7 +244,9 @@ describe('merge pull request dialog', () => {
     const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
     if (confirm === undefined) throw new Error('no confirm button')
     await act(async () => { confirm.click() })
-    expect(execute).toHaveBeenCalledWith('session-1', expect.objectContaining({ action: 'merge-pr', mergeMethod: 'squash', admin: true }))
+    // The session's own checkout: no root, and the merge follows the branch rather than naming a number.
+    expect(execute).toHaveBeenCalledWith('session-1', expect.objectContaining({ action: 'merge-pr', mergeMethod: 'squash', admin: true }), undefined)
+    expect(execute.mock.calls[0]?.[1]).not.toHaveProperty('pullNumber')
     vi.restoreAllMocks()
   })
 })

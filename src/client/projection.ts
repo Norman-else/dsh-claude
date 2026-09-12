@@ -92,6 +92,7 @@ function validateRepository(value: unknown): value is RepositoryStatus {
     || (repository.ahead !== undefined && !nonNegativeInteger(repository.ahead))
     || (repository.behind !== undefined && !nonNegativeInteger(repository.behind))
     || (repository.operation !== undefined && !['rebase', 'merge', 'cherry-pick', 'revert'].includes(String(repository.operation)))
+    || (repository.pullRequestOnly !== undefined && typeof repository.pullRequestOnly !== 'boolean')
     || (repository.conflicts !== undefined && (!Array.isArray(repository.conflicts)
       || repository.conflicts.length > MAX_CONFLICT_PATHS
       || repository.conflicts.some(path => typeof path !== 'string' || path.length > MAX_REPOSITORY_TEXT_CHARS)))) return false

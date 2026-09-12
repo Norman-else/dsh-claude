@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
-import type { RepositoryStatus } from '../repository-status.ts'
+import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
 import { executeRepositoryAction, loadRepositoryActionPreview } from './repository-action-api.ts'
 import { useActionToast } from './action-toast.tsx'
 import { cleanupMergedRepository } from './repository-setup-api.ts'
@@ -188,9 +188,17 @@ function PullRequestLink({ repository, t }: { repository: RepositoryStatus; t: C
 
 /** Watches an open pull request and hands new review comments and failing
  *  CI runs to Claude automatically until the user switches it off. */
-export function AutoFixControl({ sessionId, repository, running, t, submitPrompt }: {
+/** A prompt about a linked checkout says which one, so Claude does not
+ *  apply it to the session's own. */
+function linkedPreamble(repository: RepositoryStatus, root: string | undefined, t: ClaudeRepositoryStatusInjected['t']): string {
+  return root === undefined ? '' : `${t('linkedRepositoryPrompt', { root, branch: repository.branch ?? '' })}\n\n`
+}
+
+export function AutoFixControl({ sessionId, repository, root, running, t, submitPrompt }: {
   sessionId: string
   repository: RepositoryStatus
+  /** A linked checkout to watch instead of the session's own. */
+  root?: string | undefined
   /** Whether a turn is in flight; the watcher only submits into an idle session. */
   running: boolean
   t: ClaudeRepositoryStatusInjected['t']
@@ -200,9 +208,11 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
   const open = pullRequest?.state === 'open'
   const number = pullRequest?.number
   const checks = pullRequest?.checks
-  const [enabled, setEnabled] = useState(() => autoFixEnabled(sessionId))
+  // The watcher's switch and memory are per checkout, not per session.
+  const scope = root === undefined ? sessionId : `${sessionId}#${root}`
+  const [enabled, setEnabled] = useState(() => autoFixEnabled(scope))
   const [focused, setFocused] = useState(false)
-  useEffect(() => { setEnabled(autoFixEnabled(sessionId)) }, [sessionId])
+  useEffect(() => { setEnabled(autoFixEnabled(scope)) }, [scope])
   // Submitting while a turn runs would queue or steer (interrupt) it depending
   // on the user's Enter-while-busy setting, so wait for idle instead; the
   // running flip re-arms the effect and polls immediately when the turn ends.
@@ -211,13 +221,13 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
     let cancelled = false
     const tick = async (): Promise<void> => {
       const [comments, failing] = await Promise.all([
-        loadPullRequestThreads(sessionId, number).catch((): readonly PullRequestReviewThread[] => []),
-        checks === 'failing' ? loadFailingChecks(sessionId, number).catch((): readonly FailingCheck[] => []) : Promise.resolve<readonly FailingCheck[]>([]),
+        loadPullRequestThreads(sessionId, number, undefined, root).catch((): readonly PullRequestReviewThread[] => []),
+        checks === 'failing' ? loadFailingChecks(sessionId, number, undefined, root).catch((): readonly FailingCheck[] => []) : Promise.resolve<readonly FailingCheck[]>([]),
       ])
       if (cancelled) return
-      const plan = planAutoFix(autoFixMemory(sessionId), comments, failing)
+      const plan = planAutoFix(autoFixMemory(scope), comments, failing)
       // A non-empty user draft defers this round instead of clobbering it.
-      if (plan.prompt !== undefined && submitPrompt(plan.prompt, 'idle')) rememberAutoFix(sessionId, plan.memory)
+      if (plan.prompt !== undefined && submitPrompt(`${linkedPreamble(repository, root, t)}${plan.prompt}`, 'idle')) rememberAutoFix(scope, plan.memory)
     }
     void tick()
     const timer = setInterval(() => { void tick() }, AUTO_FIX_INTERVAL_MS)
@@ -225,12 +235,12 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
       cancelled = true
       clearInterval(timer)
     }
-  }, [checks, enabled, number, open, running, sessionId, submitPrompt])
+  }, [checks, enabled, number, open, repository, root, running, scope, sessionId, submitPrompt, t])
   if (!open || submitPrompt === undefined) return null
   const toggle = (): void => {
     const next = !enabled
     setEnabled(next)
-    setAutoFixEnabled(sessionId, next)
+    setAutoFixEnabled(scope, next)
   }
   return (
     <Tooltip label={`${t('autoFixLabel')} · ${t('autoFixTitle')}`} side="top" delayMs={250} maxWidth={320}>
@@ -261,12 +271,15 @@ export function AutoFixControl({ sessionId, repository, running, t, submitPrompt
   )
 }
 
-export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }: {
+export function FailingChecksControl({ sessionId, repository, root, t, submitPrompt }: {
   sessionId: string
-  pullNumber: number
+  repository: RepositoryStatus & { readonly pullRequest: RepositoryPullRequestStatus }
+  /** A linked checkout the pull request belongs to. */
+  root?: string | undefined
   t: ClaudeRepositoryStatusInjected['t']
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
+  const pullNumber = repository.pullRequest.number
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [checks, setChecks] = useState<readonly FailingCheck[]>([])
@@ -291,7 +304,7 @@ export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }:
     controller.current = aborter
     setLoading(true)
     setError(undefined)
-    void loadFailingChecks(sessionId, pullNumber, aborter.signal).then(value => {
+    void loadFailingChecks(sessionId, pullNumber, aborter.signal, root).then(value => {
       setChecks(value)
       setLoading(false)
     }, (reason: unknown) => {
@@ -320,7 +333,7 @@ export function FailingChecksControl({ sessionId, pullNumber, t, submitPrompt }:
           ))}
           {!loading && error === undefined && checks.length === 0 ? <span style={styles.repositoryChecksHint}>{t('checksCardEmpty')}</span> : null}
           {submitPrompt !== undefined && checks.length > 0 ? (
-            <button type="button" style={styles.repositoryChecksFix} onClick={() => { submitPrompt(composeChecksPrompt(checks)); setOpen(false) }}>{t('checksCardFix')}</button>
+            <button type="button" style={styles.repositoryChecksFix} onClick={() => { submitPrompt(`${linkedPreamble(repository, root, t)}${composeChecksPrompt(checks)}`); setOpen(false) }}>{t('checksCardFix')}</button>
           ) : null}
         </span>
       ) : null}
@@ -339,9 +352,10 @@ interface ResolveDialogState {
  *  hides every other control on this bar, and the update-branch dialog that
  *  started it takes its conflict list along when it closes -- so this one is
  *  mounted from repository state instead, and survives being dismissed. */
-export function ConflictControl({ sessionId, repository, t, report, submitPrompt }: {
+export function ConflictControl({ sessionId, repository, root, t, report, submitPrompt }: {
   sessionId: string
   repository: RepositoryStatus
+  root?: string | undefined
   t: ClaudeRepositoryStatusInjected['t']
   report: (text: string) => void
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
@@ -364,7 +378,7 @@ export function ConflictControl({ sessionId, repository, t, report, submitPrompt
       message: '',
       includeUnstaged: false,
       push: dialog.push,
-    }).then(result => {
+    }, root).then(result => {
       // A rebase replays commit by commit, so continuing can stop again on the
       // next one: the bar picks the new conflicts up, the panel stays put.
       if (result.conflicts !== undefined && result.conflicts.length > 0) {
@@ -422,7 +436,7 @@ export function ConflictControl({ sessionId, repository, t, report, submitPrompt
           </div>
           {conflicts.length === 0 ? null : <ul style={styles.diffModalConflicts}>{conflicts.map(file => <li key={file}>{file}</li>)}</ul>}
           {conflicts.length === 0 || submitPrompt === undefined ? null : (
-            <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(conflicts, operation, repository.pullRequest?.baseBranch)); closeDialog() }}>{t('conflictResolve')}</button>
+            <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(`${linkedPreamble(repository, root, t)}${composeConflictsPrompt(conflicts, operation, repository.pullRequest?.baseBranch)}`); closeDialog() }}>{t('conflictResolve')}</button>
           )}
           {repository.remote === undefined ? null : (
             <label style={styles.diffModalCheckbox}>
@@ -456,9 +470,10 @@ export function updateBranchMounted(repository: RepositoryStatus, dialogOpen: bo
     && repository.dirty !== true && (repository.baseBehind ?? 0) > 0)
 }
 
-export function UpdateBranchControl({ sessionId, repository, t, report, submitPrompt }: {
+export function UpdateBranchControl({ sessionId, repository, root, t, report, submitPrompt }: {
   sessionId: string
   repository: RepositoryStatus
+  root?: string | undefined
   t: ClaudeRepositoryStatusInjected['t']
   report: (text: string) => void
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
@@ -477,7 +492,7 @@ export function UpdateBranchControl({ sessionId, repository, t, report, submitPr
     setDialog({ loading: true, submitting: false })
     const aborter = new AbortController()
     controller.current = aborter
-    void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
+    void loadRepositoryActionPreview(sessionId, aborter.signal, root).then(preview => {
       setDialog({ loading: false, submitting: false, fingerprint: preview.fingerprint })
     }, (reason: unknown) => {
       if (!aborter.signal.aborted) setDialog({ loading: false, submitting: false, error: reason instanceof Error ? reason.message : t('diffActionFailed') })
@@ -500,7 +515,7 @@ export function UpdateBranchControl({ sessionId, repository, t, report, submitPr
       includeUnstaged: false,
       baseBranch: base,
       mergeMethod: method,
-    }).then(result => {
+    }, root).then(result => {
       // Conflicts are work, not news: they keep the dialog and its resolve
       // action. A clean update has nothing left to say here.
       if (result.conflicts !== undefined && result.conflicts.length > 0) {
@@ -539,7 +554,7 @@ export function UpdateBranchControl({ sessionId, repository, t, report, submitPr
             <p style={styles.diffModalStatus}>{t('diffUpdateBranchConflicts')}</p>
             <ul style={styles.diffModalConflicts}>{dialog.conflicts.map(file => <li key={file}>{file}</li>)}</ul>
             {submitPrompt === undefined ? null : (
-              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(composeConflictsPrompt(dialog.conflicts ?? [], method, base)); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
+              <button type="button" style={styles.diffModalConflictResolve} onClick={() => { submitPrompt(`${linkedPreamble(repository, root, t)}${composeConflictsPrompt(dialog.conflicts ?? [], method, base)}`); closeDialog() }}>{t('diffUpdateBranchResolve')}</button>
             )}
           </>}
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}
@@ -613,9 +628,12 @@ interface MergeDialogState {
   readonly error?: string
 }
 
-export function MergePullRequestControl({ sessionId, repository, t, report }: {
+export function MergePullRequestControl({ sessionId, repository, root, t, report }: {
   sessionId: string
   repository: RepositoryStatus
+  /** A linked checkout: the merge names the pull request, since that
+   *  checkout may sit on another branch than the one it opened. */
+  root?: string | undefined
   t: ClaudeRepositoryStatusInjected['t']
   report: (text: string) => void
 }) {
@@ -631,7 +649,7 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
     setDialog({ method, admin: false, loading: true, submitting: false })
     const aborter = new AbortController()
     controller.current = aborter
-    void loadRepositoryActionPreview(sessionId, aborter.signal).then(preview => {
+    void loadRepositoryActionPreview(sessionId, aborter.signal, root).then(preview => {
       setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, fingerprint: preview.fingerprint }))
     }, (error: unknown) => {
       if (!aborter.signal.aborted) setDialog(current => ({ method, admin: current?.admin ?? false, loading: false, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') }))
@@ -654,7 +672,8 @@ export function MergePullRequestControl({ sessionId, repository, t, report }: {
       includeUnstaged: false,
       mergeMethod: dialog.method,
       ...(dialog.admin ? { admin: true } : {}),
-    }).then(() => {
+      ...(root === undefined ? {} : { pullNumber: pullRequest.number }),
+    }, root).then(() => {
       report(t('diffMergeCompleted', { number: pullRequest.number }))
       setDialog(undefined)
     }, (error: unknown) => {
@@ -700,17 +719,85 @@ function LinkIcon() {
   )
 }
 
+/** Everything to the right of the branch: the diff counts and the pull
+ *  request's controls. One row for the session checkout and each linked one;
+ *  `root` scopes the requests to a linked checkout. */
+function RepositoryControls({ sessionId, repository, root, running, t, report, openDiff, submitPrompt, deleteWorkspace }: {
+  sessionId: string
+  repository: RepositoryStatus
+  root?: string | undefined
+  running: boolean
+  t: ClaudeRepositoryStatusInjected['t']
+  report: (text: string) => void
+  openDiff: () => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+  deleteWorkspace?: () => Promise<void>
+}) {
+  const pullRequest = repository.pullRequest
+  const merged = pullRequest?.state === 'merged'
+  const mergedAge = merged ? relativeAge(pullRequest.mergedAt) : undefined
+  const aheadCount = repository.ahead ?? 0
+  const pushable = repository.remote !== undefined && repository.detached !== true && (aheadCount > 0 || repository.upstream === false)
+  const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  // A pull request read by number has no checkout on its branch: nothing to
+  // rebase, nothing to clean up, and without a clone to go through, nothing
+  // gh can act on either.
+  const actionable = repository.pullRequestOnly !== true || root !== undefined
+  const prompt = submitPrompt === undefined ? {} : { submitPrompt }
+  return (
+    <span style={styles.repositoryStatusItems}>
+      <ConflictControl sessionId={sessionId} repository={repository} root={root} t={t} report={report} {...prompt} />
+      {hasDiff || pushable ? (
+        <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={openDiff} aria-label={t('diffOpen')}>
+          {hasDiff && repository.diff !== undefined ? <>
+            <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
+            <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
+          </> : null}
+          {pushable ? <span style={merged ? styles.diffAheadMuted : styles.diffAhead}>↑{aheadCount > 0 ? aheadCount : ''}</span> : null}
+        </button>
+      ) : null}
+      {pullRequest === undefined ? null : merged ? (<>
+        <span style={styles.repositoryMergedStatus}>
+          <span style={styles.repositoryMergedDot} aria-hidden="true" />
+          {t('repositoryState_merged')}
+          {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
+        </span>
+        {repository.pullRequestOnly === true ? null : <CleanupControl repository={repository} t={t} report={report} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />}
+      </>) : <>
+        {pullRequest.checks === 'failing' && actionable
+          ? <FailingChecksControl sessionId={sessionId} repository={{ ...repository, pullRequest }} root={root} t={t} {...prompt} />
+          : pullRequest.checks === 'none' ? null : <StatusGlyph
+              label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
+              tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : 'warning'}
+            ><ChecksGlyph state={pullRequest.checks} /></StatusGlyph>}
+        {pullRequest.review === 'none' ? null : <StatusGlyph
+          label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
+          tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
+        ><ReviewGlyph /></StatusGlyph>}
+        {actionable ? <>
+          <AutoFixControl sessionId={sessionId} repository={repository} root={root} running={running} t={t} {...prompt} />
+          <UpdateBranchControl sessionId={sessionId} repository={repository} root={root} t={t} report={report} {...prompt} />
+          <MergePullRequestControl sessionId={sessionId} repository={repository} root={root} t={t} report={report} />
+        </> : null}
+      </>}
+    </span>
+  )
+}
+
 /** A checkout the session wrote into besides its own, stacked above the
  *  session bar so that one stays put next to the composer. The same readout
- *  as the session bar, minus the controls that act on the session (auto-fix, update,
- *  merge, cleanup), which live with the checkout the session was opened on. */
-export function LinkedRepositoryBar({ repository, t, openDiff, report }: {
+ *  and controls as the session bar, scoped to that checkout; only the
+ *  workspace deletion after a clean-up stays with the session's own. */
+export function LinkedRepositoryBar({ sessionId, repository, running, t, openDiff, report, submitPrompt }: {
+  sessionId: string
   repository: RepositoryStatus
+  running: boolean
   t: ClaudeRepositoryStatusInjected['t']
   openDiff: (root?: string) => void
   report: (text: string) => void
+  submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
 }) {
-  const key = repository.root ?? repository.cwd
+  const key = repository.root ?? `${repository.remote ?? repository.cwd}#${repository.pullRequest?.number ?? ''}`
   if (repository.status !== 'ready') {
     return (
       <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked }} data-dsh-claude-linked-repository={key}>
@@ -720,9 +807,7 @@ export function LinkedRepositoryBar({ repository, t, openDiff, report }: {
     )
   }
   const branch = branchLabel(repository, t)
-  const pullRequest = repository.pullRequest
-  const merged = pullRequest?.state === 'merged'
-  const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  const merged = repository.pullRequest?.state === 'merged'
   return (
     <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...(merged ? styles.repositoryBarMerged : {}) }} data-dsh-claude-linked-repository={key}>
       <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
@@ -732,29 +817,7 @@ export function LinkedRepositoryBar({ repository, t, openDiff, report }: {
         <span style={styles.repositoryBranch}>{branch}</span>
       </Tooltip>
       {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
-      <span style={styles.repositoryStatusItems}>
-        {hasDiff && repository.diff !== undefined ? (
-          <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={() => openDiff(repository.root)} aria-label={t('diffOpen')}>
-            <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
-            <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
-          </button>
-        ) : null}
-        {pullRequest === undefined ? null : merged ? (<>
-          <span style={styles.repositoryMergedStatus}><span style={styles.repositoryMergedDot} aria-hidden="true" />{t('repositoryState_merged')}</span>
-          {/* No workspace to delete: the linked checkout is not this session's. Once it is
-              cleaned up the Host stops listing it and the bar comes down on the next sweep. */}
-          <CleanupControl repository={repository} t={t} report={report} />
-        </>) : <>
-          {pullRequest.checks === 'none' ? null : <StatusGlyph
-            label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
-            tone={pullRequest.checks === 'passing' ? 'success' : pullRequest.checks === 'failing' ? 'error' : 'warning'}
-          ><ChecksGlyph state={pullRequest.checks} /></StatusGlyph>}
-          {pullRequest.review === 'none' ? null : <StatusGlyph
-            label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
-            tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
-          ><ReviewGlyph /></StatusGlyph>}
-        </>}
-      </span>
+      <RepositoryControls sessionId={sessionId} repository={repository} root={repository.root} running={running} t={t} report={report} openDiff={() => openDiff(repository.root)} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
     </div>
   )
 }
@@ -770,14 +833,9 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const { toast, report } = useActionToast()
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
-  const pullRequest = repository.pullRequest
-  const merged = pullRequest?.state === 'merged'
-  const mergedAge = merged ? relativeAge(pullRequest.mergedAt) : undefined
-  const aheadCount = repository.ahead ?? 0
-  const pushable = repository.remote !== undefined && repository.detached !== true && (aheadCount > 0 || repository.upstream === false)
-  const hasDiff = repository.diff !== undefined && (repository.diff.additions > 0 || repository.diff.deletions > 0)
+  const merged = repository.pullRequest?.state === 'merged'
   const linked = (projection.repositories ?? []).map(item => (
-    <LinkedRepositoryBar key={item.root ?? item.cwd} repository={item} t={t} openDiff={openDiff} report={report} />
+    <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
   ))
   if (repository.status !== 'ready') {
     return (
@@ -804,40 +862,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
           <span style={styles.repositoryBranch}>{branch}</span>
         </Tooltip>
         {repository.worktree === true ? <span style={styles.repositoryWorktree}>{t('repositoryWorktree')}</span> : null}
-        <span style={styles.repositoryStatusItems}>
-          <ConflictControl sessionId={sessionId} repository={repository} t={t} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-          {hasDiff || pushable ? (
-            <button type="button" style={{ ...styles.diffTrigger, ...(merged ? styles.diffTriggerMuted : {}) }} onClick={() => openDiff()} aria-label={t('diffOpen')}>
-              {hasDiff && repository.diff !== undefined ? <>
-                <span style={merged ? styles.diffAddMuted : styles.diffAdd}>+{repository.diff.additions}</span>
-                <span style={merged ? styles.diffDeleteMuted : styles.diffDelete}>−{repository.diff.deletions}</span>
-              </> : null}
-              {pushable ? <span style={merged ? styles.diffAheadMuted : styles.diffAhead}>↑{aheadCount > 0 ? aheadCount : ''}</span> : null}
-            </button>
-          ) : null}
-          {pullRequest === undefined ? null : merged ? (<>
-            <span style={styles.repositoryMergedStatus}>
-              <span style={styles.repositoryMergedDot} aria-hidden="true" />
-              {t('repositoryState_merged')}
-              {mergedAge === undefined ? null : <span style={styles.repositoryMergedAge}>· {t('repositoryMergedAgo', { age: mergedAge })}</span>}
-            </span>
-            <CleanupControl repository={repository} t={t} report={report} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />
-          </>) : <>
-            {pullRequest.checks === 'failing'
-              ? <FailingChecksControl sessionId={sessionId} pullNumber={pullRequest.number} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-              : pullRequest.checks === 'none' ? null : <StatusGlyph
-                  label={t(`repositoryChecks_${pullRequest.checks}` as ClaudeCodeSettingsKey)}
-                  tone={pullRequest.checks === 'passing' ? 'success' : 'warning'}
-                ><ChecksGlyph state={pullRequest.checks} /></StatusGlyph>}
-            {pullRequest.review === 'none' ? null : <StatusGlyph
-              label={t(`repositoryReview_${pullRequest.review}` as ClaudeCodeSettingsKey)}
-              tone={pullRequest.review === 'approved' ? 'success' : pullRequest.review === 'changes-requested' ? 'error' : 'neutral'}
-            ><ReviewGlyph /></StatusGlyph>}
-            <AutoFixControl sessionId={sessionId} repository={repository} running={running} t={t} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-            <UpdateBranchControl sessionId={sessionId} repository={repository} t={t} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-            <MergePullRequestControl sessionId={sessionId} repository={repository} t={t} report={report} />
-          </>}
-        </span>
+        <RepositoryControls sessionId={sessionId} repository={repository} running={running} t={t} report={report} openDiff={() => openDiff()} {...(submitPrompt === undefined ? {} : { submitPrompt })} {...(deleteWorkspace === undefined ? {} : { deleteWorkspace })} />
       </div>
     </div>
   )

@@ -457,16 +457,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (cwd === undefined) return []
       const [own, ownStatus] = await Promise.all([repositoryStatus.rootOf(cwd), repositoryStatus.inspect(cwd)])
       const roots = await touchedRepositoryRoots(touchedFilePaths(activities), own ?? cwd, directory => repositoryStatus.rootOf(directory), MAX_EXTRA_REPOSITORIES)
-      const checkouts = (await Promise.all(roots.map(root => repositoryStatus.inspect(root)))).filter(linkedRepositoryShown)
-      extraRoots.set(sessionId, checkouts.flatMap(status => (status.root === undefined ? [] : [status.root])))
+      const probed = await Promise.all(roots.map(root => repositoryStatus.inspect(root)))
+      const checkouts = probed.filter(linkedRepositoryShown)
       // Pull requests the log names that no linked checkout is sitting on any
-      // more: the checkout moved on, the pull request did not.
+      // more: the checkout moved on, the pull request did not. A clone of the
+      // same repository the session went through, even one back on its base
+      // branch, is still where gh can merge it or read its checks from.
       const covered = new Set(checkouts.map(status => `${status.remote?.toLowerCase()}#${status.pullRequest?.number}`))
       const pullRequests = touchedPullRequests(activities, ownStatus.remote)
         .filter(item => !covered.has(`${item.repository}#${item.number}`))
         .slice(0, Math.max(0, MAX_EXTRA_REPOSITORIES - checkouts.length))
-      const detached = (await Promise.all(pullRequests.map(item => repositoryStatus.inspectPullRequest(cwd, item.repository, item.number)))).filter(linkedRepositoryShown)
-      return [...checkouts, ...detached]
+      const detached = (await Promise.all(pullRequests.map(async item => {
+        const clone = probed.find(status => status.status === 'ready' && status.remote?.toLowerCase() === item.repository && status.root !== undefined)
+        const status = await repositoryStatus.inspectPullRequest(clone?.root ?? cwd, item.repository, item.number)
+        return clone?.root === undefined || status.status !== 'ready' ? status : { ...status, root: clone.root }
+      }))).filter(linkedRepositoryShown)
+      const linked = [...checkouts, ...detached]
+      extraRoots.set(sessionId, linked.flatMap(status => (status.root === undefined ? [] : [status.root])))
+      return linked
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
     registerClaudePromptsRoute(webCtx)

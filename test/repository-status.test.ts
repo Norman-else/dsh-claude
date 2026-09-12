@@ -441,7 +441,7 @@ describe('pull request lookup by number', () => {
     const service = new RepositoryStatusService(fake, 60_000)
     const status = await service.inspectPullRequest('/session', 'org/repo-b', 2086)
     expect(status).toMatchObject({
-      status: 'ready', cwd: '/session', remote: 'org/repo-b', branch: 'PSOS-5567', dirty: false,
+      status: 'ready', cwd: '/session', remote: 'org/repo-b', branch: 'PSOS-5567', dirty: false, pullRequestOnly: true,
       pullRequest: { number: 2086, state: 'open', review: 'approved', checks: 'passing', headBranch: 'PSOS-5567', baseBranch: 'master' },
     })
     expect(status.root).toBeUndefined()

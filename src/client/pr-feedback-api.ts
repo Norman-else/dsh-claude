@@ -128,8 +128,8 @@ export async function loadMentionableUsers(
   return users
 }
 
-export async function loadFailingChecks(sessionId: string, pullNumber: number, signal?: AbortSignal): Promise<readonly FailingCheck[]> {
-  const body = await loadJson('/checks', sessionId, pullNumber, signal)
+export async function loadFailingChecks(sessionId: string, pullNumber: number, signal?: AbortSignal, root?: string): Promise<readonly FailingCheck[]> {
+  const body = await loadJson('/checks', sessionId, pullNumber, signal, root)
   if (!Array.isArray(body.checks)) throw new Error('Invalid pull request checks response.')
   const checks: FailingCheck[] = []
   for (const item of body.checks) {
