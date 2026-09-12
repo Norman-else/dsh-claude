@@ -1552,25 +1552,28 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
-/** The fold control: a bare double chevron floating centred above the
- *  linked bars, taking no room of its own. No border, no fill. */
+/** The fold control floating centred above the linked bars, taking no room
+ *  of its own: a round bordered button on the floating fill -- a circle
+ *  holding the double chevron once open, a pill with the count while folded. */
 export const linkedFoldChip: CSSProperties = {
   position: 'absolute',
   left: '50%',
-  top: -28,
+  top: -36,
   transform: 'translateX(-50%)',
   zIndex: 8,
+  boxSizing: 'border-box',
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 5,
-  height: 28,
-  minWidth: 96,
   justifyContent: 'center',
-  padding: '0 16px',
-  border: 0,
-  borderRadius: 6,
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-tertiary)',
+  gap: 4,
+  height: 32,
+  minWidth: 32,
+  padding: '0 10px',
+  border: '1px solid var(--dsw-alias-border-l3, color-mix(in srgb, currentColor 20%, transparent))',
+  borderRadius: 16,
+  background: 'var(--dsw-alias-button-floating-fill, var(--dsw-alias-bg-layer-2))',
+  color: 'var(--dsw-alias-label-secondary)',
+  boxShadow: 'var(--dsw-elevation-panel)',
   font: 'inherit',
   cursor: 'pointer',
 }
