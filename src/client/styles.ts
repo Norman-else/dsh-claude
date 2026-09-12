@@ -1547,25 +1547,33 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The fold control in the link glyph's 16px seat on the first linked bar,
- *  so nothing else on the bar moves. */
+/** The linked bars as one stack, so the fold control can float beside it. */
+export const linkedStack: CSSProperties = {
+  position: 'relative',
+}
+
+/** The fold control, floating in the gutter left of the linked stack and
+ *  centred on it: outside every bar, so none of them changes shape. */
 export const linkedFoldChip: CSSProperties = {
-  width: 16,
-  height: 16,
+  position: 'absolute',
+  left: -30,
+  top: '50%',
+  transform: 'translateY(-50%)',
+  width: 24,
+  height: 24,
   boxSizing: 'border-box',
-  flex: 'none',
   display: 'grid',
   placeItems: 'center',
   padding: 0,
   border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 5,
+  borderRadius: 12,
   background: 'var(--dsw-alias-bg-layer-2)',
   color: 'var(--dsw-alias-label-secondary)',
+  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent)',
   font: 'inherit',
-  fontSize: 9,
-  lineHeight: '14px',
+  fontSize: 11,
+  lineHeight: '22px',
   fontWeight: 700,
-  letterSpacing: '-0.02em',
   cursor: 'pointer',
 }
 
