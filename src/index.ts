@@ -40,6 +40,7 @@ import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-route
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
+import { SessionRootLedger } from './session-root-ledger.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
@@ -443,14 +444,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())
     const repositoryActions = new RepositoryActionService(subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))
-    /** Roots the latest projection probe vouched for, per session: the only
-     *  checkouts a route may act on besides the session's own. */
-    const extraRoots = new Map<string, readonly string[]>()
+    /** Checkouts besides its own a session's routes may act on: every root a
+     *  projection sweep has ever vouched for, so a transient probe failure in
+     *  one sweep does not un-authorise a linked bar the client still shows. */
+    const extraRoots = new SessionRootLedger(MAX_EXTRA_REPOSITORIES * 4)
     const cwdForClaudeSession = (sessionId: string, root?: string): string | undefined => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       if (root === undefined) return agent.session.header.cwd
-      return extraRoots.get(sessionId)?.includes(root) === true ? root : undefined
+      return extraRoots.allows(sessionId, root) ? root : undefined
     }
     const extraRepositoriesForClaudeSession = async (sessionId: string, activities: readonly ClaudeActivityEvent[]): Promise<readonly RepositoryStatus[]> => {
       const cwd = cwdForClaudeSession(sessionId)
@@ -473,7 +475,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         return clone?.root === undefined || status.status !== 'ready' ? status : { ...status, root: clone.root }
       }))).filter(linkedRepositoryShown)
       const linked = [...checkouts, ...detached]
-      extraRoots.set(sessionId, linked.flatMap(status => (status.root === undefined ? [] : [status.root])))
+      extraRoots.vouch(sessionId, linked.flatMap(status => (status.root === undefined ? [] : [status.root])))
       return linked
     }
     registerRepositoryActionRoute(webCtx, repositoryActions, cwdForClaudeSession)
