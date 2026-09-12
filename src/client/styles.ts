@@ -1552,6 +1552,23 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
+/** Two chevron glyphs stacked into one double chevron: 14px tall in all,
+ *  the second pulled up over the first. */
+export const linkedFoldGlyph: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  height: 14,
+  marginTop: 2,
+}
+
+export const linkedFoldGlyphClass = 'dshClaudeLinkedFoldGlyph'
+
+/** The second chevron rides 7px up over the first. */
+export const linkedFoldGlyphCss = `
+.${linkedFoldGlyphClass} > svg + svg { margin-top: -7px; }
+`
+
 /** The fold control, drawn to the Host's jump-to-latest recipe exactly: a
  *  34px circle on the floating fill, no border of its own -- the stroke is
  *  the elevation's, set through the same variable the Host sets -- and the

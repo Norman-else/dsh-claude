@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, IconChevronUpOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
@@ -895,11 +895,11 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={{ ...styles.linkedFoldChip, top: seat.top, right: seat.right }} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          {expanded
-            ? <><path d="M3 7.5 7 3.5l4 4" /><path d="M3 11.5 7 7.5l4 4" /></>
-            : <><path d="M3 2.5 7 6.5l4-4" /><path d="M3 6.5 7 10.5l4-4" /></>}
-        </svg>
+        {/* Two of the Host's own chevron glyph, overlapped: the same weight as
+            the jump-to-latest button beside it. */}
+        <span className={styles.linkedFoldGlyphClass} style={styles.linkedFoldGlyph} aria-hidden="true">
+          {expanded ? <><IconChevronUpOutline14 /><IconChevronUpOutline14 /></> : <><IconChevronDownOutline14 /><IconChevronDownOutline14 /></>}
+        </span>
       </button>
     </Tooltip>
   )
@@ -953,7 +953,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   }
   return (
     <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
-      <style data-dsh-claude-repository-bar-styles>{styles.repositoryAutoFixCss}</style>
+      <style data-dsh-claude-repository-bar-styles>{styles.repositoryAutoFixCss}{styles.linkedFoldGlyphCss}</style>
       {toast}
       {linked}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
