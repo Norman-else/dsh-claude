@@ -832,8 +832,8 @@ export const LINKED_BARS_SHOWN = 3
 const linkedExpanded = new Map<string, boolean>()
 
 /** The fold control floats centred directly above the linked bars, taking
- *  no room: a round bordered button with a double chevron, the folded count
- *  beside it while folded. The words live in its tooltip and accessible name. */
+ *  no room: a circle holding a double chevron, down while folded and up once
+ *  open. The count and the words live in its tooltip and accessible name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -850,7 +850,6 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
             ? <><path d="M3 7.5 7 3.5l4 4" /><path d="M3 11.5 7 7.5l4 4" /></>
             : <><path d="M3 2.5 7 6.5l4-4" /><path d="M3 6.5 7 10.5l4-4" /></>}
         </svg>
-        {expanded ? null : <span style={styles.linkedFoldCount}>+{hidden}</span>}
       </button>
     </Tooltip>
   )

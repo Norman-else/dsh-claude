@@ -1553,8 +1553,8 @@ export const linkedStack: CSSProperties = {
 }
 
 /** The fold control floating centred above the linked bars, taking no room
- *  of its own: a round bordered button on the floating fill -- a circle
- *  holding the double chevron once open, a pill with the count while folded. */
+ *  of its own: a 32px circle with a hairline border on the floating fill,
+ *  holding only the double chevron; the count lives in its tooltip. */
 export const linkedFoldChip: CSSProperties = {
   position: 'absolute',
   left: '50%',
@@ -1565,12 +1565,11 @@ export const linkedFoldChip: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  gap: 4,
+  width: 32,
   height: 32,
-  minWidth: 32,
-  padding: '0 10px',
-  border: '1px solid var(--dsw-alias-border-l3, color-mix(in srgb, currentColor 20%, transparent))',
-  borderRadius: 16,
+  padding: 0,
+  border: '1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)',
+  borderRadius: '50%',
   background: 'var(--dsw-alias-button-floating-fill, var(--dsw-alias-bg-layer-2))',
   color: 'var(--dsw-alias-label-secondary)',
   boxShadow: 'var(--dsw-elevation-panel)',
@@ -1579,12 +1578,6 @@ export const linkedFoldChip: CSSProperties = {
 }
 
 /** The folded count beside the chevrons. */
-export const linkedFoldCount: CSSProperties = {
-  fontSize: 12,
-  lineHeight: '14px',
-  fontWeight: 600,
-}
-
 /** A checkout the session wrote into besides its own: lighter, dashed, and
  *  stacked above the session bar so it reads as attached rather than primary.
  *  It keeps the bar's opaque fill: the dock floats over the end of the
