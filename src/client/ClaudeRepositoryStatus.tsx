@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { IconChevronDownOutline14, IconChevronUpOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
@@ -831,50 +832,60 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** Where the Host's jump-to-latest button sits relative to the linked
- *  stack, remembered from the last time it was on screen: the seat the fold
- *  control takes while the Host's button is away. Until it has been seen
- *  once, the Host's own geometry: 16px in from the column's edge, 16px above
- *  the composer. */
-// ponytail: module-level so the seat survives re-mounts; measured, not
-// derived, because the Host's column and this dock are sized by different
-// variables.
-let hostSeat = { top: -50, rightInset: 16 }
+/** The Host's jump-to-latest geometry: a 34px button 16px above the composer
+ *  block, at the conversation column's right edge, sticky in the scroller.
+ *  The Host writes the composer block's height onto the scroller as a
+ *  variable; its default stands in until it has. */
+const HOST_JUMP_SIZE = 34
+const HOST_JUMP_LIFT = 16
 const HOST_JUMP_GAP = 8
+const HOST_COMPOSER_DEFAULT = 152
+const HOST_COLUMN_INSET = 16
 
-/** The fold control's place: the Host's seat, or 8px left of the Host's
- *  button while that is showing. Found by the Host's class stem; one cheap
- *  query and two rects per DOM change or resize, on the next frame. */
-function useHostJumpSeat(stack: RefObject<HTMLDivElement | null>): { shown: boolean; top: number; right: number } {
-  const [seat, setSeat] = useState({ shown: false, top: hostSeat.top, right: hostSeat.rightInset })
+/** The fold control's place in viewport coordinates: the Host's seat, taken
+ *  from the same measurements the Host's own button is laid out by -- the
+ *  conversation scroller's bottom less the composer block's height, and the
+ *  column's right edge -- so it holds still whatever the dock contains
+ *  (queued messages, comment chips) above the bars. While the Host's button
+ *  is showing, 8px to its left. One query and a couple of rects per DOM
+ *  change or resize, on the next frame. */
+function useHostJumpSeat(): { top: number; right: number } {
+  const [seat, setSeat] = useState({ top: 0, right: HOST_COLUMN_INSET })
   useEffect(() => {
     if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
     let frame: number | undefined
     const check = (): void => {
       frame = undefined
       const native = document.querySelector<HTMLElement>('button[class*="toBottom"]')
-      const frameRect = stack.current?.getBoundingClientRect()
-      if (native === null || frameRect === undefined) {
-        setSeat({ shown: false, top: hostSeat.top, right: hostSeat.rightInset })
+      const rect = native?.getBoundingClientRect()
+      if (rect !== undefined) {
+        setSeat({ top: rect.top, right: window.innerWidth - rect.left + HOST_JUMP_GAP })
         return
       }
-      const rect = native.getBoundingClientRect()
-      if (rect.width > 0) hostSeat = { top: rect.top - frameRect.top, rightInset: frameRect.right - rect.right }
-      setSeat({ shown: true, top: hostSeat.top, right: frameRect.right - rect.left + HOST_JUMP_GAP })
+      const scroller = document.querySelector<HTMLElement>('[data-conversation-scroll]')
+      const scrollerRect = scroller?.getBoundingClientRect()
+      const composer = scroller === null || scroller === undefined ? Number.NaN : Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--dsh-composer-height'))
+      const bottom = scrollerRect?.bottom ?? window.innerHeight
+      const column = scroller?.firstElementChild?.getBoundingClientRect()
+      setSeat({
+        top: bottom - (Number.isFinite(composer) ? composer : HOST_COMPOSER_DEFAULT) - HOST_JUMP_LIFT - HOST_JUMP_SIZE,
+        right: column !== undefined && column.width > 0 ? window.innerWidth - column.right : HOST_COLUMN_INSET,
+      })
     }
     const schedule = (): void => {
       if (frame === undefined) frame = requestAnimationFrame(check)
     }
     check()
     const observer = new MutationObserver(schedule)
-    observer.observe(document.body, { childList: true, subtree: true })
+    // Attributes too: the Host writes the composer height as an inline style.
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] })
     window.addEventListener('resize', schedule)
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', schedule)
       if (frame !== undefined) cancelAnimationFrame(frame)
     }
-  }, [stack])
+  }, [])
   return seat
 }
 
@@ -894,7 +905,10 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
   seat: { top: number; right: number }
 }) {
   const label = expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`
-  return (
+  // Fixed to the viewport and rendered at the document root, so no transform
+  // or overflow in the dock's ancestry can move or clip it.
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={{ ...styles.linkedFoldChip, top: seat.top, right: seat.right }} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
         {/* Two of the Host's own chevron glyph, overlapped: the same weight as
@@ -903,7 +917,8 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
           {expanded ? <><IconChevronDownOutline14 /><IconChevronDownOutline14 /></> : <><IconChevronUpOutline14 /><IconChevronUpOutline14 /></>}
         </span>
       </button>
-    </Tooltip>
+    </Tooltip>,
+    document.body,
   )
 }
 
@@ -921,8 +936,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // is React error 310 and a bar that never comes back.
   const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
   useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
-  const stackRef = useRef<HTMLDivElement>(null)
-  const seat = useHostJumpSeat(stackRef)
+  const seat = useHostJumpSeat()
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
   const merged = repository.pullRequest?.state === 'merged'
@@ -931,7 +945,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // transcript: past three they fold behind one row that unfolds them.
   const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
   const linked = all.length === 0 ? null : (
-    <div ref={stackRef} style={styles.linkedStack}>
+    <div style={styles.linkedStack}>
       {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} seat={seat} t={t} onToggle={() => {
         const next = !expanded
         setExpanded(next)

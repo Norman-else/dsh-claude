@@ -1576,7 +1576,7 @@ export const linkedFoldGlyphCss = `
  *  Where it sits comes from the component. Holds only the double chevron;
  *  the count lives in its tooltip. */
 export const linkedFoldChip = {
-  position: 'absolute',
+  position: 'fixed',
   zIndex: 8,
   boxSizing: 'border-box',
   display: 'flex',

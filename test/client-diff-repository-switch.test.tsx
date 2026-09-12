@@ -361,8 +361,8 @@ describe('many linked checkouts', () => {
     })
     const bars = (): string[] => [...container.querySelectorAll('[data-dsh-claude-linked-repository]')].map(item => item.getAttribute('data-dsh-claude-linked-repository') ?? '')
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    // A small chip on the stack's top-left corner, not a row of its own.
-    const toggle = container.querySelector<HTMLButtonElement>('button[data-dsh-claude-linked-fold]')
+    // Rendered at the document root, fixed to the viewport, not in the stack.
+    const toggle = document.querySelector<HTMLButtonElement>('button[data-dsh-claude-linked-fold]')
     if (toggle === null) throw new Error('no fold chip')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(toggle.getAttribute('aria-label')).toBe(`${t('linkedMore', { count: 2 })} · ${en.linkedShowAll}`)
@@ -375,18 +375,22 @@ describe('many linked checkouts', () => {
     expect(toggle.getAttribute('aria-label')).toBe(en.linkedCollapse)
     act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    // It takes the Host's jump-to-latest seat -- 16px in from the dock's
-    // right edge until that button has been measured -- and steps to the
-    // left of the button, 8px clear, whenever the Host shows it. jsdom lays
-    // nothing out, so the measured button reads as zero-width at the origin.
+    // It is fixed to the viewport in the Host's jump-to-latest seat -- above
+    // the composer as the Host measures it, at the column's right edge -- and
+    // steps 8px left of that button whenever the Host shows it. jsdom lays
+    // nothing out and has no conversation scroller, so the seat falls back to
+    // the Host's default composer height and a 16px inset, and a measured
+    // button reads as zero-width at the origin.
+    expect(toggle.style.position).toBe('fixed')
     expect(toggle.style.right).toBe('16px')
-    expect(toggle.style.top).toBe('-50px')
+    expect(toggle.style.top).toBe(`${window.innerHeight - 152 - 16 - 34}px`)
     const native = document.createElement('button')
     native.className = 'EvIC1a_toBottom'
     // The watcher settles on the next animation frame.
     document.body.append(native)
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
-    expect(toggle.style.right).toBe('8px')
+    expect(toggle.style.right).toBe(`${window.innerWidth + 8}px`)
+    expect(toggle.style.top).toBe('0px')
     native.remove()
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
     expect(toggle.style.right).toBe('16px')
@@ -401,7 +405,7 @@ describe('many linked checkouts', () => {
       />)
     })
     expect(bars()).toEqual(['/b', '/c', '/d'])
-    expect(container.querySelector('button[data-dsh-claude-linked-fold]')).toBeNull()
+    expect(document.querySelector('button[data-dsh-claude-linked-fold]')).toBeNull()
   })
 })
 
