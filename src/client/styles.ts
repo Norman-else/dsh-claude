@@ -1552,30 +1552,36 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
-/** The fold control floating centred above the linked bars, taking no room
- *  of its own: a 32px circle with a hairline border on the floating fill,
- *  holding only the double chevron; the count lives in its tooltip. */
-export const linkedFoldChip: CSSProperties = {
+/** How far the fold control steps left while the Host's jump-to-latest
+ *  button occupies the seat: that button's 34px plus a gap. */
+export const LINKED_FOLD_SHIFT = 42
+
+/** The fold control takes the Host's jump-to-latest seat: floating above
+ *  the dock at its right edge, the same 34px circle on the floating fill.
+ *  The Host's theme rounds corners as squircles, so the circle is asked for
+ *  by name. Holds only the double chevron; the count lives in its tooltip. */
+export const linkedFoldChip = {
   position: 'absolute',
-  left: '50%',
-  top: -36,
-  transform: 'translateX(-50%)',
+  right: 0,
+  top: -50,
   zIndex: 8,
   boxSizing: 'border-box',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  width: 32,
-  height: 32,
+  width: 34,
+  height: 34,
   padding: 0,
   border: '1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent)',
   borderRadius: '50%',
+  cornerShape: 'round',
   background: 'var(--dsw-alias-button-floating-fill, var(--dsw-alias-bg-layer-2))',
-  color: 'var(--dsw-alias-label-secondary)',
+  color: 'var(--dsw-alias-label-primary)',
   boxShadow: 'var(--dsw-elevation-panel)',
   font: 'inherit',
   cursor: 'pointer',
-}
+  transition: 'right .15s ease',
+} as CSSProperties
 
 /** The folded count beside the chevrons. */
 /** A checkout the session wrote into besides its own: lighter, dashed, and

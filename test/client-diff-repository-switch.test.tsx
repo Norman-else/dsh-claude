@@ -375,6 +375,18 @@ describe('many linked checkouts', () => {
     expect(toggle.getAttribute('aria-label')).toBe(en.linkedCollapse)
     act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d'])
+    // It shares the Host's jump-to-latest seat above the dock's right edge,
+    // and steps left of that button whenever the Host shows it.
+    expect(toggle.style.right).toBe('0px')
+    const native = document.createElement('button')
+    native.className = 'EvIC1a_toBottom'
+    // The watcher settles on the next animation frame.
+    document.body.append(native)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+    expect(toggle.style.right).toBe('42px')
+    native.remove()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)) })
+    expect(toggle.style.right).toBe('0px')
     // Three or fewer: no toggle at all.
     act(() => {
       root.render(<ClaudeRepositoryStatus

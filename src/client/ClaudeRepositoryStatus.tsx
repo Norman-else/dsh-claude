@@ -831,20 +831,48 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The fold control floats centred directly above the linked bars, taking
- *  no room: a circle holding a double chevron, down while folded and up once
- *  open. The count and the words live in its tooltip and accessible name. */
-function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
+/** Whether the Host's own jump-to-latest button is on screen. It shares
+ *  the seat the fold control uses, so the control steps aside while it is
+ *  there. Found by the Host's class stem; one cheap query per DOM change. */
+function useHostJumpButton(): boolean {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
+    let frame: number | undefined
+    const check = (): void => {
+      frame = undefined
+      setShown(document.querySelector('button[class*="toBottom"]') !== null)
+    }
+    check()
+    const observer = new MutationObserver(() => {
+      if (frame === undefined) frame = requestAnimationFrame(check)
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [])
+  return shown
+}
+
+/** The fold control floats above the dock in the Host's jump-to-latest seat,
+ *  stepping left of that button while the Host shows it: a circle holding a
+ *  double chevron, down while folded and up once open. The count and the
+ *  words live in its tooltip and accessible name. */
+function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, aside }: {
   sessionId: string
   hidden: number
   expanded: boolean
   onToggle: () => void
   t: ClaudeRepositoryStatusInjected['t']
+  /** Step left: the Host's own button is in the seat. */
+  aside: boolean
 }) {
   const label = expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`
   return (
     <Tooltip label={label} side="top" delayMs={250}>
-      <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
+      <button type="button" style={{ ...styles.linkedFoldChip, right: aside ? styles.LINKED_FOLD_SHIFT : 0 }} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
         <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           {expanded
             ? <><path d="M3 7.5 7 3.5l4 4" /><path d="M3 11.5 7 7.5l4 4" /></>
@@ -869,6 +897,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // is React error 310 and a bar that never comes back.
   const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
   useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
+  const hostJump = useHostJumpButton()
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
   const merged = repository.pullRequest?.state === 'merged'
@@ -878,7 +907,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
   const linked = all.length === 0 ? null : (
     <div style={styles.linkedStack}>
-      {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
+      {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} aside={hostJump} t={t} onToggle={() => {
         const next = !expanded
         setExpanded(next)
         linkedExpanded.set(sessionId, next)
