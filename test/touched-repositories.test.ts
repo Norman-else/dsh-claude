@@ -63,6 +63,16 @@ describe('touched repository roots', () => {
     expect(asked).toEqual(['/a/src', '/b/src', '/b/lib', '/tmp', '/c'])
   })
 
+  it('ignores a repository that contains the session checkout, such as a dotfiles home directory', async () => {
+    const rootOf = async (directory: string): Promise<string | undefined> => (
+      directory.startsWith('/home/n/repo-a') ? '/home/n/repo-a' : directory.startsWith('/home/n') ? '/home/n' : undefined
+    )
+    await expect(touchedRepositoryRoots(['/home/n/.zshrc', '/home/n/notes/x.md'], '/home/n/repo-a', rootOf, 8, async () => false)).resolves.toEqual([])
+    // A repository nested inside the session checkout is still its own.
+    const nested = async (directory: string): Promise<string | undefined> => (directory.startsWith('/home/n/repo-a/vendor/lib') ? '/home/n/repo-a/vendor/lib' : '/home/n/repo-a')
+    await expect(touchedRepositoryRoots(['/home/n/repo-a/vendor/lib/x.ts'], '/home/n/repo-a', nested, 8, async () => false)).resolves.toEqual(['/home/n/repo-a/vendor/lib'])
+  })
+
   it('probes a directory path itself, so a checkout named whole in a command resolves to its own root', async () => {
     const asked: string[] = []
     const rootOf = async (directory: string): Promise<string | undefined> => {

@@ -7,7 +7,7 @@
  *  are already on the activity log, so the extra roots are derived from there
  *  rather than tracked as new state. */
 import { stat } from 'node:fs/promises'
-import { dirname, isAbsolute } from 'node:path'
+import { dirname, isAbsolute, sep } from 'node:path'
 import type { ClaudeActivityEvent } from './events.ts'
 import type { RepositoryStatus } from './repository-status.ts'
 
@@ -86,6 +86,10 @@ export async function touchedRepositoryRoots(
   for (const directory of directories) {
     const root = await rootOf(directory)
     if (root === undefined || root === sessionRoot || roots.includes(root)) continue
+    // A repository the session checkout sits inside (a dotfiles home
+    // directory, a monorepo the checkout is a nested clone in) is not
+    // somewhere the session went; every path under it would drag it in.
+    if (sessionRoot.startsWith(root.endsWith(sep) ? root : root + sep)) continue
     roots.push(root)
     if (roots.length >= max) break
   }
