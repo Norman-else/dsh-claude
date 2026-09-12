@@ -114,21 +114,27 @@ describe('linked repository visibility', () => {
 })
 
 describe('touched pull requests', () => {
-  it('collects the GitHub pull requests named anywhere in the log, other than the session repository, once each', () => {
+  it('collects only the pull requests the session opened through gh, other than the session repository, once each', () => {
+    const create = (id: string, command: string): ClaudeActivityEvent => ({ turn: 1, step: 1, ordinal: 0, kind: 'tool-call', toolUseId: id, toolName: 'Bash', detail: JSON.stringify({ command }) })
+    const result = (id: string, detail: string): ClaudeActivityEvent => ({ turn: 1, step: 1, ordinal: 1, kind: 'tool-result', toolUseId: id, detail })
     const activities: ClaudeActivityEvent[] = [
-      call('Bash', { command: 'gh pr create --title x' }),
-      { turn: 1, step: 1, ordinal: 2, kind: 'tool-result', detail: 'https://github.com/org/repo-b/pull/2086\n' },
-      { turn: 1, step: 2, ordinal: 0, kind: 'text', text: '前端 PR 已建好：https://github.com/org/repo-b/pull/2086 ，后端 https://github.com/org/own/pull/5171' },
-      { turn: 2, step: 1, ordinal: 0, kind: 'tool-result', detail: 'see https://github.com/Org/Repo-B/pull/7 and https://gitlab.com/x/y/-/merge_requests/3 and https://github.com/org/repo-b/pulls' },
+      create('c1', 'cd /Users/n/repo-b && gh pr create --title x --body y'),
+      result('c1', 'Creating pull request for PSOS-1 into master in org/repo-b\n\nhttps://github.com/org/repo-b/pull/2086\n'),
+      create('c2', 'gh pr create --repo org/own --title z'),
+      result('c2', 'https://github.com/org/own/pull/5171\n'),
+      create('c3', 'gh pr create --title again'),
+      result('c3', 'https://github.com/Org/Repo-B/pull/2086\n'),
+      // Read, quoted or merely mentioned: not opened by this session.
+      create('c4', 'sed -n 1,40p test/fixture.ts'),
+      result('c4', "url: 'https://github.com/org/other/pull/12'"),
+      { turn: 1, step: 2, ordinal: 0, kind: 'text', text: 'see https://github.com/org/other/pull/7' },
+      create('c5', 'gh pr view https://github.com/org/other/pull/9'),
+      result('c5', 'https://github.com/org/other/pull/9'),
     ]
-    expect(touchedPullRequests(activities, 'org/own')).toEqual([
-      { repository: 'org/repo-b', number: 2086 },
-      { repository: 'org/repo-b', number: 7 },
-    ])
+    expect(touchedPullRequests(activities, 'org/own')).toEqual([{ repository: 'org/repo-b', number: 2086 }])
     expect(touchedPullRequests(activities, undefined)).toEqual([
       { repository: 'org/repo-b', number: 2086 },
       { repository: 'org/own', number: 5171 },
-      { repository: 'org/repo-b', number: 7 },
     ])
   })
 })

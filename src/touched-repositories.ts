@@ -91,25 +91,36 @@ export interface TouchedPullRequest {
   readonly number: number
 }
 
-/** GitHub pull requests named anywhere in the log -- a `gh pr create`
- *  result, Claude's own summary -- other than the session repository's, once
- *  each in first-seen order. A checkout that has since moved back to its base
- *  branch no longer knows about its pull request; the log still does. */
+const PR_CREATE = /\bgh\s+pr\s+create\b/u
+
+/** The pull requests the session opened: the URL `gh pr create` printed,
+ *  read off that call's own result. Other than the session repository's,
+ *  once each in first-seen order. A URL merely read, quoted or mentioned
+ *  (a fixture, a summary, a `gh pr view`) is not one the session made.
+ *  A checkout that has since moved back to its base branch no longer knows
+ *  about its pull request; the log still does. */
 export function touchedPullRequests(activities: readonly ClaudeActivityEvent[], ownRepository: string | undefined): readonly TouchedPullRequest[] {
   const found = new Map<string, TouchedPullRequest>()
   const own = ownRepository?.toLowerCase()
+  const creating = new Set<string>()
   for (const activity of activities) {
-    for (const text of [activity.detail, activity.text, activity.summary]) {
-      if (text === undefined) continue
-      for (const match of text.matchAll(PULL_REQUEST_URL)) {
-        const repository = match[1]?.toLowerCase()
-        const number = Number(match[2])
-        if (repository === undefined || repository === own || !Number.isSafeInteger(number) || number <= 0) continue
-        const key = `${repository}#${number}`
-        if (found.has(key)) continue
-        found.set(key, { repository, number })
-        if (found.size >= MAX_PULL_REQUESTS) return [...found.values()]
-      }
+    if (activity.toolUseId === undefined) continue
+    if (activity.kind === 'tool-call' || (activity.kind === 'subagent' && activity.toolName !== undefined)) {
+      if (activity.toolName !== 'Bash' || activity.detail === undefined) continue
+      const escaped = COMMAND_KEY.exec(activity.detail)?.[1]
+      const command = escaped === undefined ? undefined : unescaped(escaped)
+      if (command !== undefined && PR_CREATE.test(command)) creating.add(activity.toolUseId)
+      continue
+    }
+    if (activity.detail === undefined || !creating.has(activity.toolUseId)) continue
+    for (const match of activity.detail.matchAll(PULL_REQUEST_URL)) {
+      const repository = match[1]?.toLowerCase()
+      const number = Number(match[2])
+      if (repository === undefined || repository === own || !Number.isSafeInteger(number) || number <= 0) continue
+      const key = `${repository}#${number}`
+      if (found.has(key)) continue
+      found.set(key, { repository, number })
+      if (found.size >= MAX_PULL_REQUESTS) return [...found.values()]
     }
   }
   return [...found.values()]
