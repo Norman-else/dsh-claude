@@ -1547,6 +1547,22 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
+/** The fold row: the same dashed strip, holding only its toggle. */
+export const repositoryBarFold: CSSProperties = {
+  minHeight: 28,
+  padding: '3px 11px',
+  justifyContent: 'center',
+}
+
+export const repositoryFoldButton: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
+  font: 'inherit',
+  fontSize: 12,
+  cursor: 'pointer',
+}
+
 /** A checkout the session wrote into besides its own: lighter, dashed, and
  *  stacked above the session bar so it reads as attached rather than primary.
  *  It keeps the bar's opaque fill: the dock floats over the end of the

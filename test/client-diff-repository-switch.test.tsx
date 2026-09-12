@@ -340,3 +340,47 @@ describe('merge pull request dialog', () => {
     vi.restoreAllMocks()
   })
 })
+
+describe('many linked checkouts', () => {
+  it('shows three and folds the rest behind a toggle that expands and collapses them', async () => {
+    const { ClaudeRepositoryStatus } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const repositories = ['b', 'c', 'd', 'e', 'f'].map(name => ({ ...other, cwd: `/${name}`, root: `/${name}`, remote: `org/${name}` }))
+    const projection: ClaudeClientProjection = { ...EMPTY_CLAUDE_PROJECTION, owned: true, repository: own, repositories }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    act(() => {
+      root.render(<ClaudeRepositoryStatus
+        sessionId="session-1"
+        t={t}
+        openDiff={vi.fn()}
+        useSessions={(<S,>(selector: (value: { byId: Record<string, { blank: boolean; running?: boolean }> }) => S): S => selector({ byId: { 'session-1': { blank: false } } })) as never}
+        useClaudeProjection={(<S,>(selector: (value: ClaudeClientProjection) => S): S => selector(projection)) as never}
+      />)
+    })
+    const bars = (): string[] => [...container.querySelectorAll('[data-dsh-claude-linked-repository]')].map(item => item.getAttribute('data-dsh-claude-linked-repository') ?? '')
+    expect(bars()).toEqual(['/b', '/c', '/d'])
+    const toggle = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-expanded') !== null && item.textContent?.includes(t('linkedMore', { count: 2 })))
+    if (toggle === undefined) throw new Error('no fold toggle')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    act(() => { toggle.click() })
+    expect(bars()).toEqual(['/b', '/c', '/d', '/e', '/f'])
+    const collapse = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-expanded') === 'true')
+    expect(collapse?.textContent).toContain(en.linkedCollapse)
+    act(() => { collapse?.click() })
+    expect(bars()).toEqual(['/b', '/c', '/d'])
+    // Three or fewer: no toggle at all.
+    act(() => {
+      root.render(<ClaudeRepositoryStatus
+        sessionId="session-1"
+        t={t}
+        openDiff={vi.fn()}
+        useSessions={(<S,>(selector: (value: { byId: Record<string, { blank: boolean; running?: boolean }> }) => S): S => selector({ byId: { 'session-1': { blank: false } } })) as never}
+        useClaudeProjection={(<S,>(selector: (value: ClaudeClientProjection) => S): S => selector({ ...projection, repositories: repositories.slice(0, 3) })) as never}
+      />)
+    })
+    expect(bars()).toEqual(['/b', '/c', '/d'])
+    expect([...container.querySelectorAll('button')].some(item => item.getAttribute('aria-expanded') !== null && item.textContent?.includes(en.linkedCollapse))).toBe(false)
+  })
+})

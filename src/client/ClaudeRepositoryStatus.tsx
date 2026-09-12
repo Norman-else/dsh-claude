@@ -825,6 +825,29 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   )
 }
 
+/** How many linked bars stand open before the rest fold away. */
+export const LINKED_BARS_SHOWN = 3
+// ponytail: module-level so the fold survives re-renders and session
+// switches within one page, like the auto-fix switch next to it.
+const linkedExpanded = new Map<string, boolean>()
+
+/** The row that stands in for the folded linked bars, and unfolds them. */
+function LinkedFoldToggle({ sessionId, hidden, expanded, onToggle, t }: {
+  sessionId: string
+  hidden: number
+  expanded: boolean
+  onToggle: () => void
+  t: ClaudeRepositoryStatusInjected['t']
+}) {
+  return (
+    <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...styles.repositoryBarFold }} data-dsh-claude-linked-fold={sessionId}>
+      <button type="button" style={styles.repositoryFoldButton} aria-expanded={expanded} onClick={onToggle}>
+        {expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`}
+      </button>
+    </div>
+  )
+}
+
 export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt, openOverview, deleteWorkspace }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const running = useSessions(value => value.byId[sessionId]?.running === true)
@@ -837,9 +860,24 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
   const merged = repository.pullRequest?.state === 'merged'
-  const linked = (projection.repositories ?? []).map(item => (
-    <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-  ))
+  const all = projection.repositories ?? []
+  const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
+  useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
+  // A fan-out over many services would otherwise stack a dozen bars over the
+  // transcript: past three they fold behind one row that unfolds them.
+  const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
+  const linked = [
+    ...shown.map(item => (
+      <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
+    )),
+    ...(all.length > LINKED_BARS_SHOWN ? [
+      <LinkedFoldToggle key="fold" sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
+        const next = !expanded
+        setExpanded(next)
+        linkedExpanded.set(sessionId, next)
+      }} />,
+    ] : []),
+  ]
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
