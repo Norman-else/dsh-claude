@@ -122,10 +122,17 @@ export async function bindRepositoryLease(leaseId: string, sessionId: string): P
 }
 
 /** `branch` names the merged branch when the checkout is no longer on it (a
- *  linked pull request whose clone is back on base). */
-export async function cleanupMergedRepository(path: string, baseBranch: string, branch?: string): Promise<RepositoryCleanupResult> {
+ *  linked pull request whose clone is back on base). Without a pull request
+ *  there is no base, and `requirePushed` has the Host refuse a branch whose
+ *  commits are on no remote. */
+export async function cleanupMergedRepository(path: string, baseBranch?: string, branch?: string, requirePushed?: boolean): Promise<RepositoryCleanupResult> {
   const body = await pluginWrite<Record<string, unknown>>(`${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, 'remote', undefined, {
-    json: { path, baseBranch, ...(branch === undefined ? {} : { branch }) },
+    json: {
+      path,
+      ...(baseBranch === undefined ? {} : { baseBranch }),
+      ...(branch === undefined ? {} : { branch }),
+      ...(requirePushed === true ? { requirePushed: true } : {}),
+    },
   })
   if ((body.mode !== 'worktree' && body.mode !== 'checkout') || typeof body.root !== 'string' || typeof body.branch !== 'string') {
     throw new Error('Invalid repository cleanup response.')

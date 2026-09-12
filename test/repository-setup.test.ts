@@ -662,6 +662,28 @@ describe('merged cleanup', () => {
       .rejects.toMatchObject<Partial<RepositorySetupError>>({ code: 'dirty-workspace' })
   })
 
+  it('cleans up a worktree that never got a pull request only once its commits are on a remote', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const service = (fake: ReturnType<typeof runtime>) => new RepositorySetupService(fake, { leasePath, worktreeRoot })
+    // The same setup exchange the merged case above drives; the surplus
+    // answers are never asked for.
+    const setupRuntime = runtime(Array.from({ length: 9 }, (_, index) => (
+      index === 0 ? { stdout: `${root}\n` } : index === 1 ? { stdout: '# branch.head main\n' } : index === 2 ? { stdout: 'main\n' } : { stdout: '' }
+    )))
+    const result = await service(setupRuntime).setup(root, 'main', true)
+    await mkdir(result.path, { recursive: true })
+    // Local commits nobody else has: refused, nothing removed.
+    const unpushed = runtime([{ stdout: '' }, { stdout: '2\n' }])
+    await expect(service(unpushed).cleanupMerged(result.path, undefined, undefined, true))
+      .rejects.toMatchObject<Partial<RepositorySetupError>>({ code: 'unpushed-commits' })
+    expect(unpushed.spawn.mock.calls.map(call => call[0].argv)).toContainEqual(['/bin/git', 'rev-list', '--count', result.branch, '--not', '--remotes'])
+    expect(unpushed.spawn.mock.calls.some(call => call[0].argv.includes('remove'))).toBe(false)
+    // Pushed (or never committed): the worktree and branch go, no base needed.
+    const pushed = runtime([{ stdout: '' }, { stdout: '0\n' }, { stdout: '' }, { stdout: '' }])
+    await expect(service(pushed).cleanupMerged(result.path, undefined, undefined, true))
+      .resolves.toEqual({ mode: 'worktree', root, branch: result.branch })
+  })
+
   it('cleans up a named branch behind a checkout already back on base, and refuses without a name', async () => {
     const { root, leasePath, worktreeRoot } = await roots()
     // A session that opened a pull request elsewhere switched that clone back to

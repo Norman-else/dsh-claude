@@ -574,14 +574,20 @@ export function CleanupControl({ repository, t, report, deleteWorkspace }: {
   const [dialog, setDialog] = useState<CleanupDialogState>()
   const pullRequest = repository.pullRequest
   const base = pullRequest?.baseBranch
-  if (pullRequest?.state !== 'merged' || base === undefined || repository.root === undefined || repository.detached === true) return null
+  // Merged: the branch is done, base is known. No pull request at all: only a
+  // clean worktree is offered -- a plain checkout with no pull request is the
+  // user's own clone -- and the Host refuses it unless its commits are pushed.
+  const merged = pullRequest?.state === 'merged' && base !== undefined
+  const unmerged = pullRequest === undefined && repository.worktree === true && repository.dirty !== true
+  if ((!merged && !unmerged) || repository.root === undefined || repository.detached === true) return null
   const root = repository.root
   const closeDialog = (): void => { if (dialog?.submitting !== true) setDialog(undefined) }
   const confirm = (): void => {
     setDialog({ submitting: true })
     // A pull request read by number: its clone is back on base already, so
     // the branch to delete has to be named rather than read off HEAD.
-    void cleanupMergedRepository(root, base, repository.pullRequestOnly === true ? repository.branch : undefined).then(async result => {
+    const named = repository.pullRequestOnly === true || unmerged ? repository.branch : undefined
+    void cleanupMergedRepository(root, base, named, unmerged).then(async result => {
       report(t('cleanupCompleted', { branch: result.branch }))
       setDialog(undefined)
       if (result.mode === 'worktree' && deleteWorkspace !== undefined) await deleteWorkspace()
@@ -593,7 +599,7 @@ export function CleanupControl({ repository, t, report, deleteWorkspace }: {
     <>
       <button type="button" style={styles.repositoryUpdateTrigger} title={t('cleanupTitle')} onClick={() => { setDialog({ submitting: false }) }}>{t('cleanupButton')}</button>
       {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
-      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('cleanupTitle')} closeLabel={t('diffCancel')} description={t('cleanupDescription')} footer={
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={dialog !== undefined} onClose={closeDialog} title={t('cleanupTitle')} closeLabel={t('diffCancel')} description={t(unmerged ? 'cleanupDescriptionUnmerged' : 'cleanupDescription')} footer={
         <div style={styles.diffModalFooter}>
           <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{t('diffCancel')}</button>
           <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={confirm}>{dialog?.submitting === true ? t('diffSubmitting') : t('diffConfirm')}</button>
@@ -601,7 +607,7 @@ export function CleanupControl({ repository, t, report, deleteWorkspace }: {
       }>
         {dialog === undefined ? null : <div style={styles.diffModalBody}>
           <div style={styles.diffModalMeta}>
-            <strong style={styles.diffModalMetaText}>{repository.branch ?? t('repositoryUnknownBranch')} → {base}</strong>
+            <strong style={styles.diffModalMetaText}>{repository.branch ?? t('repositoryUnknownBranch')}{base === undefined ? '' : ` → ${base}`}</strong>
             <span style={styles.diffModalFileState}>{repository.worktree === true ? t('repositoryWorktree') : t('repositoryLocal')}</span>
           </div>
           {dialog.error === undefined ? null : <p role="alert" style={styles.diffModalError}>{dialog.error}</p>}

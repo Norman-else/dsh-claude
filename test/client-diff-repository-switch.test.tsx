@@ -211,7 +211,7 @@ describe('Claude repository bar with linked checkouts', () => {
     act(() => { button.click() })
     const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
     await act(async () => { confirm?.click() })
-    expect(cleanup).toHaveBeenCalledWith('/clone-b', 'main', 'fix')
+    expect(cleanup).toHaveBeenCalledWith('/clone-b', 'main', 'fix', false)
     vi.restoreAllMocks()
     act(() => { root.unmount() })
     container.remove()
@@ -248,6 +248,41 @@ describe('Claude repository bar with linked checkouts', () => {
     expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass} {`)
     expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}[aria-checked="true"]`)
     expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}:focus-visible`)
+  })
+
+  it('offers clean-up on a clean worktree that never got a pull request, refusing dirty ones and open ones', async () => {
+    const { CleanupControl } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const setup = await import('../src/client/repository-setup-api.ts')
+    const cleanup = vi.spyOn(setup, 'cleanupMergedRepository').mockResolvedValue({ mode: 'worktree', root: '/repo', branch: 'PSOS-5569' })
+    const render = (repository: ClaudeClientProjection['repository']): { container: HTMLElement; unmount: () => void } => {
+      const container = document.createElement('div')
+      document.body.append(container)
+      const root = createRoot(container)
+      act(() => { root.render(<CleanupControl repository={repository!} t={t} report={vi.fn()} />) })
+      return { container, unmount: () => { act(() => { root.unmount() }); container.remove() } }
+    }
+    const worktree = { status: 'ready' as const, cwd: '/wt', root: '/wt', branch: 'PSOS-5569', worktree: true, dirty: false, remote: 'org/a' }
+    const has = (container: HTMLElement): boolean => [...container.querySelectorAll('button')].some(item => item.textContent === en.cleanupButton)
+    const clean = render(worktree)
+    expect(has(clean.container)).toBe(true)
+    const button = [...clean.container.querySelectorAll('button')].find(item => item.textContent === en.cleanupButton)
+    act(() => { button?.click() })
+    expect(document.body.textContent).toContain(en.cleanupDescriptionUnmerged)
+    const confirm = [...document.querySelectorAll('button')].find(item => item.textContent === en.diffConfirm)
+    await act(async () => { confirm?.click() })
+    expect(cleanup).toHaveBeenCalledWith('/wt', undefined, 'PSOS-5569', true)
+    clean.unmount()
+    const dirty = render({ ...worktree, dirty: true })
+    expect(has(dirty.container)).toBe(false)
+    dirty.unmount()
+    const open = render({ ...worktree, pullRequest: { number: 1, title: 'T', url: 'https://github.com/org/a/pull/1', state: 'open', draft: false, review: 'none', checks: 'none', baseBranch: 'main' } })
+    expect(has(open.container)).toBe(false)
+    open.unmount()
+    // A plain checkout with no pull request is the user's own clone: left alone.
+    const plain = render({ ...worktree, worktree: false })
+    expect(has(plain.container)).toBe(false)
+    plain.unmount()
+    vi.restoreAllMocks()
   })
 
   it('offers clean-up on a linked checkout whose pull request merged', async () => {

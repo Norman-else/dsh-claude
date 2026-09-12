@@ -174,7 +174,7 @@ describe('repository setup cleanup route', () => {
     const cleanup = response()
     await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/wt', baseBranch: 'main' }), cleanup)
     expect(cleanup.statusCode).toBe(200)
-    expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main', undefined)
+    expect(service.cleanupMerged).toHaveBeenCalledWith('/wt', 'main', undefined, false)
     expect(JSON.parse(cleanup.body)).toMatchObject({ mode: 'worktree', branch: 'PSOS-1' })
     // Status readers cache per path; the checkout that just changed must not
     // keep answering from before.
@@ -184,8 +184,15 @@ describe('repository setup cleanup route', () => {
     const named = response()
     await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/clone', baseBranch: 'main', branch: 'PSOS-5567' }), named)
     expect(named.statusCode).toBe(200)
-    expect(service.cleanupMerged).toHaveBeenLastCalledWith('/clone', 'main', 'PSOS-5567')
+    expect(service.cleanupMerged).toHaveBeenLastCalledWith('/clone', 'main', 'PSOS-5567', false)
     expect(cleaned).toHaveBeenLastCalledWith('/clone', 'PSOS-5567')
+
+    // A worktree with no pull request: no base to name, and the service must
+    // refuse unless the branch is on a remote.
+    const unmerged = response()
+    await ctx.handler(request('POST', `${CLAUDE_REPOSITORY_SETUP_PATH}/cleanup`, { path: '/wt', requirePushed: true }), unmerged)
+    expect(unmerged.statusCode).toBe(200)
+    expect(service.cleanupMerged).toHaveBeenLastCalledWith('/wt', undefined, undefined, true)
   })
 
   it('kicks the worktree sweep the Client asks for, and answers without one', async () => {

@@ -141,7 +141,8 @@ export function registerRepositorySetupRoute(
           const input = await readJson(io)
           const path = string(input, 'path')
           const branch = typeof input.branch === 'string' && input.branch.length > 0 ? input.branch : undefined
-          const result = await service.cleanupMerged(path, string(input, 'baseBranch'), branch)
+          const baseBranch = typeof input.baseBranch === 'string' && input.baseBranch.length > 0 ? input.baseBranch : undefined
+          const result = await service.cleanupMerged(path, baseBranch, branch, input.requirePushed === true)
           cleaned?.(path, branch)
           return json(res, 200, result)
         }

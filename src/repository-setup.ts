@@ -278,10 +278,13 @@ export class RepositorySetupService {
    *  the merged branch. Refuses dirty trees. */
   /** `branch` names the merged branch when the checkout is no longer on it:
    *  a session that opened a pull request in another clone switched that
-   *  clone back to base itself, and only the local branch is left to delete. */
-  async cleanupMerged(pathValue: string, baseBranch: string, branch?: string): Promise<RepositoryCleanupResult> {
+   *  clone back to base itself, and only the local branch is left to delete.
+   *  `requirePushed` is for a branch no pull request vouches for: it is only
+   *  removed once every commit on it is reachable from some remote, so a
+   *  worktree that never got as far as a pull request cannot take work with it. */
+  async cleanupMerged(pathValue: string, baseBranch?: string, branch?: string, requirePushed = false): Promise<RepositoryCleanupResult> {
     const path = safePath(pathValue)
-    const base = safeBranch(baseBranch)
+    const base = baseBranch === undefined ? undefined : safeBranch(baseBranch)
     const named = branch === undefined ? undefined : safeBranch(branch)
     const git = await this.#git()
     const status = await this.#run(git, ['status', '--porcelain=v1', '--untracked-files=normal'], path)
@@ -289,6 +292,7 @@ export class RepositorySetupService {
     if (status.stdout.trim().length > 0) throw new RepositorySetupError('dirty-workspace', 'Commit or stash workspace changes before cleaning up.')
     const lease = (await this.#readLeases()).find(item => comparablePath(item.path) === comparablePath(path))
     if (lease !== undefined) {
+      if (requirePushed) await this.#requirePushed(git, lease.root, lease.branch)
       return this.#serialize(async () => {
         const removed = await this.#run(git, ['worktree', 'remove', '--', lease.path], lease.root)
         if (removed.exitCode !== 0) throw new RepositorySetupError('worktree-remove-failed', 'Git could not remove the worktree.')
@@ -299,14 +303,17 @@ export class RepositorySetupService {
       })
     }
     const root = await this.#repositoryRoot(git, path)
+    if (base === undefined) throw new RepositorySetupError('nothing-to-clean', 'A plain checkout needs the base branch to return to.')
     const head = await this.#run(git, ['symbolic-ref', '--quiet', '--short', 'HEAD'], root)
     const current = head.exitCode === 0 ? head.stdout.trim() : ''
     if (current.length === 0 || current === base) {
       if (named === undefined || named === base) throw new RepositorySetupError('nothing-to-clean', 'The checkout is already on the base branch.')
+      if (requirePushed) await this.#requirePushed(git, root, named)
       await this.#run(git, ['branch', '-D', '--', named], root).catch(() => undefined)
       await this.#run(git, ['pull', '--ff-only'], root, GIT_FETCH_TIMEOUT_MS).catch(() => undefined)
       return { mode: 'checkout', root, branch: named }
     }
+    if (requirePushed) await this.#requirePushed(git, root, current)
     const switched = await this.#run(git, ['switch', '--', base], root)
     if (switched.exitCode !== 0) throw new RepositorySetupError('checkout-failed', 'Git could not switch to the base branch.')
     await this.#run(git, ['branch', '-D', '--', current], root).catch(() => undefined)
@@ -583,6 +590,14 @@ export class RepositorySetupService {
       if (summary !== undefined) return uniqueBranchName(`${prefix}/${summary}`, info.branches)
     }
     return `${prefix}/${slug(baseBranch, 'branch')}-${stamp}-${suffix}`
+  }
+
+  /** Refuse to delete a branch holding commits no remote has. */
+  async #requirePushed(git: string, root: string, branch: string): Promise<void> {
+    const count = await this.#run(git, ['rev-list', '--count', branch, '--not', '--remotes'], root)
+    if (count.exitCode !== 0 || Number(count.stdout.trim()) > 0) {
+      throw new RepositorySetupError('unpushed-commits', 'The branch has commits that are not on any remote; push or discard them first.')
+    }
   }
 
   async #repositoryRoot(git: string, cwd: string): Promise<string> {
