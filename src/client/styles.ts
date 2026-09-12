@@ -1547,57 +1547,6 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The linked bars as one stack, the fold control floating centred above. */
-export const linkedStack: CSSProperties = {
-  position: 'relative',
-}
-
-/** Two chevron glyphs stacked into one double chevron: 14px tall in all,
- *  the second pulled up over the first. */
-export const linkedFoldGlyph: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  height: 14,
-  marginTop: 2,
-}
-
-export const linkedFoldGlyphClass = 'dshClaudeLinkedFoldGlyph'
-
-/** The second chevron rides 7px up over the first. */
-export const linkedFoldGlyphCss = `
-.${linkedFoldGlyphClass} > svg + svg { margin-top: -7px; }
-`
-
-/** The fold control, drawn to the Host's jump-to-latest recipe exactly: a
- *  34px circle on the floating fill, no border of its own -- the stroke is
- *  the elevation's, set through the same variable the Host sets -- and the
- *  circle asked for by name, since the Host's theme rounds as squircles.
- *  Where it sits comes from the component. Holds only the double chevron;
- *  the count lives in its tooltip. */
-export const linkedFoldChip = {
-  position: 'fixed',
-  zIndex: 8,
-  boxSizing: 'border-box',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 34,
-  height: 34,
-  padding: 0,
-  border: 0,
-  borderRadius: 100,
-  cornerShape: 'round',
-  '--dsw-elevation-stroke-color': 'var(--dsw-alias-border-l3)',
-  background: 'var(--dsw-alias-button-floating-fill)',
-  color: 'var(--dsw-alias-label-primary)',
-  boxShadow: 'var(--dsw-elevation-panel)',
-  font: 'inherit',
-  cursor: 'pointer',
-  transition: 'right .15s ease',
-} as CSSProperties
-
-/** The folded count beside the chevrons. */
 /** A checkout the session wrote into besides its own: lighter, dashed, and
  *  stacked above the session bar so it reads as attached rather than primary.
  *  It keeps the bar's opaque fill: the dock floats over the end of the

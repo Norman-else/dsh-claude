@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { IconChevronDownOutline14, IconChevronUpOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
@@ -826,102 +825,6 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   )
 }
 
-/** How many linked bars stand open before the rest fold away. */
-export const LINKED_BARS_SHOWN = 3
-// ponytail: module-level so the fold survives re-renders and session
-// switches within one page, like the auto-fix switch next to it.
-const linkedExpanded = new Map<string, boolean>()
-
-/** The Host's jump-to-latest geometry: a 34px button 16px above the composer
- *  block, at the conversation column's right edge, sticky in the scroller.
- *  The Host writes the composer block's height onto the scroller as a
- *  variable; its default stands in until it has. */
-const HOST_JUMP_SIZE = 34
-const HOST_JUMP_LIFT = 16
-const HOST_JUMP_GAP = 8
-const HOST_COMPOSER_DEFAULT = 152
-const HOST_COLUMN_INSET = 16
-
-/** The fold control's place in viewport coordinates: the Host's seat, taken
- *  from the same measurements the Host's own button is laid out by -- the
- *  conversation scroller's bottom less the composer block's height, and the
- *  column's right edge -- so it holds still whatever the dock contains
- *  (queued messages, comment chips) above the bars. While the Host's button
- *  is showing, 8px to its left. One query and a couple of rects per DOM
- *  change or resize, on the next frame. */
-function useHostJumpSeat(): { top: number; right: number } {
-  const [seat, setSeat] = useState({ top: 0, right: HOST_COLUMN_INSET })
-  useEffect(() => {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
-    let frame: number | undefined
-    const check = (): void => {
-      frame = undefined
-      const native = document.querySelector<HTMLElement>('button[class*="toBottom"]')
-      const rect = native?.getBoundingClientRect()
-      if (rect !== undefined) {
-        setSeat({ top: rect.top, right: window.innerWidth - rect.left + HOST_JUMP_GAP })
-        return
-      }
-      const scroller = document.querySelector<HTMLElement>('[data-conversation-scroll]')
-      const scrollerRect = scroller?.getBoundingClientRect()
-      const composer = scroller === null || scroller === undefined ? Number.NaN : Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--dsh-composer-height'))
-      const bottom = scrollerRect?.bottom ?? window.innerHeight
-      const column = scroller?.firstElementChild?.getBoundingClientRect()
-      setSeat({
-        top: bottom - (Number.isFinite(composer) ? composer : HOST_COMPOSER_DEFAULT) - HOST_JUMP_LIFT - HOST_JUMP_SIZE,
-        right: column !== undefined && column.width > 0 ? window.innerWidth - column.right : HOST_COLUMN_INSET,
-      })
-    }
-    const schedule = (): void => {
-      if (frame === undefined) frame = requestAnimationFrame(check)
-    }
-    check()
-    const observer = new MutationObserver(schedule)
-    // Attributes too: the Host writes the composer height as an inline style.
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] })
-    window.addEventListener('resize', schedule)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', schedule)
-      if (frame !== undefined) cancelAnimationFrame(frame)
-    }
-  }, [])
-  return seat
-}
-
-/** The fold control floats above the dock in the Host's jump-to-latest seat,
- *  stepping left of that button while the Host shows it: a circle holding a
- *  double chevron pointing where the bars will go -- up while folded, since
- *  unfolding stacks more bars upward; down once open, since folding pulls
- *  them back down toward the composer. The count and the words live in its
- *  tooltip and accessible name. */
-function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t, seat }: {
-  sessionId: string
-  hidden: number
-  expanded: boolean
-  onToggle: () => void
-  t: ClaudeRepositoryStatusInjected['t']
-  /** Where to sit, relative to the linked stack. */
-  seat: { top: number; right: number }
-}) {
-  const label = expanded ? t('linkedCollapse') : `${t('linkedMore', { count: hidden })} · ${t('linkedShowAll')}`
-  // Fixed to the viewport and rendered at the document root, so no transform
-  // or overflow in the dock's ancestry can move or clip it.
-  if (typeof document === 'undefined') return null
-  return createPortal(
-    <Tooltip label={label} side="top" delayMs={250}>
-      <button type="button" style={{ ...styles.linkedFoldChip, top: seat.top, right: seat.right }} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        {/* Two of the Host's own chevron glyph, overlapped: the same weight as
-            the jump-to-latest button beside it. */}
-        <span className={styles.linkedFoldGlyphClass} style={styles.linkedFoldGlyph} aria-hidden="true">
-          {expanded ? <><IconChevronDownOutline14 /><IconChevronDownOutline14 /></> : <><IconChevronUpOutline14 /><IconChevronUpOutline14 /></>}
-        </span>
-      </button>
-    </Tooltip>,
-    document.body,
-  )
-}
-
 export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt, openOverview, deleteWorkspace }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const running = useSessions(value => value.byId[sessionId]?.running === true)
@@ -931,31 +834,12 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // cleaned-up worktree all unmount the button that did the work -- so the
   // completion notice belongs here, not inside them.
   const { toast, report } = useActionToast()
-  // Every hook runs before the bar decides whether to draw: a session paints
-  // once before the plugin owns it, and a hook that only appears afterwards
-  // is React error 310 and a bar that never comes back.
-  const [expanded, setExpanded] = useState(() => linkedExpanded.get(sessionId) ?? false)
-  useEffect(() => { setExpanded(linkedExpanded.get(sessionId) ?? false) }, [sessionId])
-  const seat = useHostJumpSeat()
   if (blank || !projection.owned || repository === undefined) return null
   const branch = branchLabel(repository, t)
   const merged = repository.pullRequest?.state === 'merged'
-  const all = projection.repositories ?? []
-  // A fan-out over many services would otherwise stack a dozen bars over the
-  // transcript: past three they fold behind one row that unfolds them.
-  const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
-  const linked = all.length === 0 ? null : (
-    <div style={styles.linkedStack}>
-      {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} seat={seat} t={t} onToggle={() => {
-        const next = !expanded
-        setExpanded(next)
-        linkedExpanded.set(sessionId, next)
-      }} /> : null}
-      {shown.map(item => (
-        <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-      ))}
-    </div>
-  )
+  const linked = (projection.repositories ?? []).map(item => (
+    <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
+  ))
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
@@ -969,7 +853,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   }
   return (
     <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
-      <style data-dsh-claude-repository-bar-styles>{styles.repositoryAutoFixCss}{styles.linkedFoldGlyphCss}</style>
+      <style data-dsh-claude-repository-bar-styles>{styles.repositoryAutoFixCss}</style>
       {toast}
       {linked}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
