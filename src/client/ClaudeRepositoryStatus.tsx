@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { IconChevronDownOutline14, IconChevronUpOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
@@ -831,11 +831,10 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The fold control floats in the gutter right of the linked bars, centred
- *  on the stack, drawn like the Host's own jump-to-latest button: a round
- *  floating chevron. Folded it shows the count in place of the chevron -- nothing
- *  hangs off the circle -- and the words live in its tooltip and accessible
- *  name. Over no prose and on no bar. */
+/** The fold control sits centred directly above the linked bars, in flow:
+ *  a bare double chevron with the folded count beside it, no border, no
+ *  fill. It takes its own thin row, so it covers nothing and touches no bar;
+ *  the words live in its tooltip and accessible name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -847,7 +846,12 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        {expanded ? <IconChevronUpOutline14 /> : <span style={styles.linkedFoldCount}>+{hidden}</span>}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {expanded
+            ? <><path d="M3 7.5 7 3.5l4 4" /><path d="M3 11.5 7 7.5l4 4" /></>
+            : <><path d="M3 2.5 7 6.5l4-4" /><path d="M3 6.5 7 10.5l4-4" /></>}
+        </svg>
+        {expanded ? null : <span style={styles.linkedFoldCount}>+{hidden}</span>}
       </button>
     </Tooltip>
   )

@@ -1547,45 +1547,36 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The linked bars as one stack, so the fold control can float beside it. */
+/** The linked bars as one stack, the fold control centred above them. */
 export const linkedStack: CSSProperties = {
-  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'stretch',
 }
 
-/** The fold control, floating in the empty gutter to the right of the
- *  linked stack and centred on it: over no prose, on no bar. The same recipe
- *  as the Host's jump-to-latest button (34px round, floating fill, panel
- *  elevation), which lives above the composer, so the two never meet. */
+/** The fold control: a bare double chevron centred above the linked bars,
+ *  in flow on its own thin row. No border, no fill. */
 export const linkedFoldChip: CSSProperties = {
-  position: 'absolute',
-  // Past the Host's chat-width drag handle, which runs down the gutter just
-  // outside the column; 72px clears it with room to spare.
-  right: -72,
-  top: '50%',
-  transform: 'translateY(-50%)',
-  zIndex: 8,
-  width: 34,
-  height: 34,
-  boxSizing: 'border-box',
-  display: 'flex',
+  alignSelf: 'center',
+  display: 'inline-flex',
   alignItems: 'center',
-  justifyContent: 'center',
-  padding: 0,
+  gap: 4,
+  height: 20,
+  margin: '0 0 2px',
+  padding: '0 6px',
   border: 0,
-  borderRadius: '50%',
+  borderRadius: 6,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-tertiary)',
   font: 'inherit',
-  background: 'var(--dsw-alias-button-floating-fill)',
-  color: 'var(--dsw-alias-label-primary)',
-  boxShadow: 'var(--dsw-elevation-panel)',
   cursor: 'pointer',
 }
 
-/** The folded count inside the circle, where the chevron goes once open. */
+/** The folded count beside the chevrons. */
 export const linkedFoldCount: CSSProperties = {
   fontSize: 12,
   lineHeight: '14px',
-  fontWeight: 650,
-  letterSpacing: '-0.01em',
+  fontWeight: 600,
 }
 
 /** A checkout the session wrote into besides its own: lighter, dashed, and
