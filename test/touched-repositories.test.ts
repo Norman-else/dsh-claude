@@ -132,6 +132,22 @@ describe('touched pull requests', () => {
       result('c5', 'https://github.com/org/other/pull/9'),
     ]
     expect(touchedPullRequests(activities, 'org/own')).toEqual([{ repository: 'org/repo-b', number: 2086 }])
+    // A script written with gh pr create inside, then run by name for each
+    // repository: the URLs come out of the runs, not of the write.
+    const scripted: ClaudeActivityEvent[] = [
+      create('w1', "cd /tmp/mig && cat > /tmp/mig/mkpr.sh <<'SH'\nset -e\ncd /tmp/mig/$1\ngit push -u origin HEAD\ngh pr create --title x\nSH"),
+      result('w1', ''),
+      create('r1', 'cd /tmp/mig && bash mkpr.sh mercaso-backend-crm 2>&1 | tail -2'),
+      result('r1', 'branch pushed\nhttps://github.com/org/mercaso-backend-crm/pull/138\n'),
+      create('r2', 'bash /tmp/mig/mkpr.sh mercaso-backend-shopify'),
+      result('r2', 'https://github.com/org/mercaso-backend-shopify/pull/116\n'),
+      create('r3', 'cat /tmp/mig/other.sh'),
+      result('r3', 'https://github.com/org/unrelated/pull/1'),
+    ]
+    expect(touchedPullRequests(scripted, 'org/own')).toEqual([
+      { repository: 'org/mercaso-backend-crm', number: 138 },
+      { repository: 'org/mercaso-backend-shopify', number: 116 },
+    ])
     expect(touchedPullRequests(activities, undefined)).toEqual([
       { repository: 'org/repo-b', number: 2086 },
       { repository: 'org/own', number: 5171 },

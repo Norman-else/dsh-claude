@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { dirname, join } from 'node:path'
 import type {} from '@deepseek-ai/dsh-attachment'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -70,8 +71,9 @@ const CLAUDE_SCOPE_UNAVAILABLE_MESSAGE = 'agent command scope unavailable (prese
 const CATALOG_RETRY_MS = 5_000
 const SCOPE_RETRY_MS = 500
 const MAX_CATALOG_RETRIES = 3
-/** Bounded: each extra checkout costs a git chain and a `gh pr view` per sweep. */
-const MAX_EXTRA_REPOSITORIES = 8
+/** Bounded: each extra checkout costs a git chain and a `gh pr view` per sweep.
+ *  A fan-out over every backend service is the largest real case. */
+const MAX_EXTRA_REPOSITORIES = 12
 const MAX_SCOPE_RETRIES = 24
 
 export function mountClaudeMetadata(
@@ -475,12 +477,29 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const pullRequests = touchedPullRequests(activities, ownStatus.remote)
         .filter(item => !covered.has(`${item.repository}#${item.number}`))
         .slice(0, Math.max(0, MAX_EXTRA_REPOSITORIES - checkouts.length))
+      // Clones stand side by side: the session's own next to the user's other
+      // checkouts, a fan-out's under one scratch directory. A pull request the
+      // log named but whose clone no command named by its full path is looked
+      // for under those parents by its repository name.
+      const parents = [...new Set([own ?? cwd, ...probed.flatMap(status => (status.root === undefined ? [] : [status.root]))].map(root => dirname(root)))]
+      const cloneFor = async (item: { repository: string }): Promise<string | undefined> => {
+        const named = probed.find(status => status.status === 'ready' && status.remote?.toLowerCase() === item.repository && status.root !== undefined)
+        if (named?.root !== undefined) return named.root
+        const name = item.repository.split('/').at(-1) ?? ''
+        for (const parent of parents) {
+          const root = await repositoryStatus.rootOf(join(parent, name))
+          if (root === undefined) continue
+          const status = await repositoryStatus.inspect(root)
+          if (status.status === 'ready' && status.remote?.toLowerCase() === item.repository) return root
+        }
+        return undefined
+      }
       const detached = (await Promise.all(pullRequests.map(async item => {
-        const clone = probed.find(status => status.status === 'ready' && status.remote?.toLowerCase() === item.repository && status.root !== undefined)
-        const status = await repositoryStatus.inspectPullRequest(clone?.root ?? cwd, item.repository, item.number)
-        if (clone?.root === undefined || status.status !== 'ready') return status
-        if (status.branch !== undefined && cleanedLinked.has(`${clone.root}\0${status.branch}`)) return { status: 'unavailable' as const, cwd }
-        return { ...status, root: clone.root }
+        const cloneRoot = await cloneFor(item)
+        const status = await repositoryStatus.inspectPullRequest(cloneRoot ?? cwd, item.repository, item.number)
+        if (cloneRoot === undefined || status.status !== 'ready') return status
+        if (status.branch !== undefined && cleanedLinked.has(`${cloneRoot}\0${status.branch}`)) return { status: 'unavailable' as const, cwd }
+        return { ...status, root: cloneRoot }
       }))).filter(linkedRepositoryShown)
       const linked = [...checkouts, ...detached]
       extraRoots.vouch(sessionId, linked.flatMap(status => (status.root === undefined ? [] : [status.root])))

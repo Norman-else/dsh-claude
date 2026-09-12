@@ -42,7 +42,7 @@ const WRITE_CONTEXTS: readonly RegExp[] = [
  *  hundred git probes. */
 const MAX_PATHS_PER_COMMAND = 50
 const PULL_REQUEST_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d{1,9})(?![\d])/gu
-const MAX_PULL_REQUESTS = 8
+const MAX_PULL_REQUESTS = 12
 
 function unescaped(escaped: string): string | undefined {
   try {
@@ -92,24 +92,44 @@ export interface TouchedPullRequest {
 }
 
 const PR_CREATE = /\bgh\s+pr\s+create\b/u
+/** A file a command writes (redirect, tee): where a script lands. */
+const WRITTEN_FILE = new RegExp(String.raw`(?:>{1,2}\s*|\btee\s+(?:-\S+\s+)*)(${PATH_TOKEN}|[\w.@+~-]+(?:\/[\w.@+~-]+)*)`, 'gu')
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
 
 /** The pull requests the session opened: the URL `gh pr create` printed,
  *  read off that call's own result. Other than the session repository's,
  *  once each in first-seen order. A URL merely read, quoted or mentioned
  *  (a fixture, a summary, a `gh pr view`) is not one the session made.
+ *  A script the session wrote with `gh pr create` inside and then ran by
+ *  name -- once per repository, the way a fan-out gets done -- counts the
+ *  same: the URLs come out of the runs, not of the write.
  *  A checkout that has since moved back to its base branch no longer knows
  *  about its pull request; the log still does. */
 export function touchedPullRequests(activities: readonly ClaudeActivityEvent[], ownRepository: string | undefined): readonly TouchedPullRequest[] {
   const found = new Map<string, TouchedPullRequest>()
   const own = ownRepository?.toLowerCase()
   const creating = new Set<string>()
+  /** Basenames of scripts written with `gh pr create` inside, as patterns. */
+  const scripts: RegExp[] = []
   for (const activity of activities) {
     if (activity.toolUseId === undefined) continue
     if (activity.kind === 'tool-call' || (activity.kind === 'subagent' && activity.toolName !== undefined)) {
       if (activity.toolName !== 'Bash' || activity.detail === undefined) continue
       const escaped = COMMAND_KEY.exec(activity.detail)?.[1]
       const command = escaped === undefined ? undefined : unescaped(escaped)
-      if (command !== undefined && PR_CREATE.test(command)) creating.add(activity.toolUseId)
+      if (command === undefined) continue
+      if (PR_CREATE.test(command)) {
+        creating.add(activity.toolUseId)
+        for (const match of command.matchAll(WRITTEN_FILE)) {
+          const name = match[1]?.split('/').at(-1)
+          if (name !== undefined && name.length > 0) scripts.push(new RegExp(String.raw`(?:^|[\s/])${escapeRegExp(name)}(?=$|\s)`, 'mu'))
+        }
+      } else if (scripts.some(script => script.test(command))) {
+        creating.add(activity.toolUseId)
+      }
       continue
     }
     if (activity.detail === undefined || !creating.has(activity.toolUseId)) continue
