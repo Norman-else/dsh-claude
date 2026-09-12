@@ -20,6 +20,21 @@ describe('touched file paths', () => {
     ])).toEqual(['/b/src/a.ts', '/b/src/b.ts', '/c/n.ipynb', '/e/sub.ts'])
   })
 
+  it('reads absolute paths out of Bash commands too, which is how a full-access session writes files', () => {
+    const command = [
+      'git worktree add /Users/n/repo-b/.claude/worktrees/T-1 -b T-1 && cd /Users/n/repo-b/.claude/worktrees/T-1',
+      'cat > /Users/n/repo-b/.claude/worktrees/T-1/src/a.ts <<\'EOF\'',
+      'export const url = "https://github.com/org/repo/pull/1"',
+      'EOF',
+      'sed -i \'\' "s#x#y#" src/relative.ts 2>/dev/null; echo $HOME/skip ~/skip-too',
+    ].join('\n')
+    expect(touchedFilePaths([call('Bash', { command, description: 'Set up the frontend worktree' })])).toEqual([
+      '/Users/n/repo-b/.claude/worktrees/T-1',
+      '/Users/n/repo-b/.claude/worktrees/T-1/src/a.ts',
+      '/dev/null',
+    ])
+  })
+
   it('survives a detail cut short by the redaction cap and unescapes JSON', () => {
     const cut = JSON.stringify({ file_path: '/repo/"quoted"/x.ts', content: 'a'.repeat(5_000) }).slice(0, 4_000)
     expect(touchedFilePaths([{ turn: 1, step: 1, ordinal: 1, kind: 'tool-call', toolName: 'Write', detail: cut }])).toEqual(['/repo/"quoted"/x.ts'])
@@ -42,9 +57,20 @@ describe('touched repository roots', () => {
       '/a',
       rootOf,
       2,
+      async () => false,
     )).resolves.toEqual(['/b', '/c'])
     // One probe per distinct directory, and none once the cap is reached.
     expect(asked).toEqual(['/a/src', '/b/src', '/b/lib', '/tmp', '/c'])
+  })
+
+  it('probes a directory path itself, so a checkout named whole in a command resolves to its own root', async () => {
+    const asked: string[] = []
+    const rootOf = async (directory: string): Promise<string | undefined> => {
+      asked.push(directory)
+      return directory.startsWith('/b') ? '/b' : undefined
+    }
+    await expect(touchedRepositoryRoots(['/b', '/b/src/x.ts'], '/a', rootOf, 8, async path => path === '/b')).resolves.toEqual(['/b'])
+    expect(asked).toEqual(['/b', '/b/src'])
   })
 })
 
