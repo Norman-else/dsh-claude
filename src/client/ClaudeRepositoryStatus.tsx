@@ -833,8 +833,9 @@ const linkedExpanded = new Map<string, boolean>()
 
 /** The fold control floats in the gutter right of the linked bars, centred
  *  on the stack, drawn like the Host's own jump-to-latest button: a round
- *  floating chevron. Folded it carries the count as a badge; the words live
- *  in its tooltip and accessible name. Over no prose and on no bar. */
+ *  floating chevron. Folded it shows the count in place of the chevron -- nothing
+ *  hangs off the circle -- and the words live in its tooltip and accessible
+ *  name. Over no prose and on no bar. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -846,8 +847,7 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   return (
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
-        {expanded ? <IconChevronUpOutline14 /> : <IconChevronDownOutline14 />}
-        {expanded ? null : <span style={styles.linkedFoldBadge}>+{hidden}</span>}
+        {expanded ? <IconChevronUpOutline14 /> : <span style={styles.linkedFoldCount}>+{hidden}</span>}
       </button>
     </Tooltip>
   )

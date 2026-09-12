@@ -1564,34 +1564,26 @@ export const linkedFoldChip: CSSProperties = {
   zIndex: 8,
   width: 34,
   height: 34,
+  boxSizing: 'border-box',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   padding: 0,
   border: 0,
-  borderRadius: 100,
+  borderRadius: '50%',
+  font: 'inherit',
   background: 'var(--dsw-alias-button-floating-fill)',
   color: 'var(--dsw-alias-label-primary)',
   boxShadow: 'var(--dsw-elevation-panel)',
   cursor: 'pointer',
 }
 
-/** The folded count, riding the button's top-right edge. */
-export const linkedFoldBadge: CSSProperties = {
-  position: 'absolute',
-  top: -6,
-  right: -8,
-  minWidth: 18,
-  height: 18,
-  padding: '0 5px',
-  boxSizing: 'border-box',
-  borderRadius: 9,
-  background: 'var(--dsw-static-blue-450)',
-  color: 'var(--dsw-alias-label-on-accent, #fff)',
-  fontSize: 11,
-  lineHeight: '18px',
+/** The folded count inside the circle, where the chevron goes once open. */
+export const linkedFoldCount: CSSProperties = {
+  fontSize: 12,
+  lineHeight: '14px',
   fontWeight: 650,
-  textAlign: 'center',
+  letterSpacing: '-0.01em',
 }
 
 /** A checkout the session wrote into besides its own: lighter, dashed, and
