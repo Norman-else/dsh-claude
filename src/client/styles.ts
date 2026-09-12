@@ -1552,13 +1552,15 @@ export const linkedStack: CSSProperties = {
   position: 'relative',
 }
 
-/** The fold control, floating above the linked stack at its left edge. The
- *  same recipe as the Host's jump-to-latest button on the right (34px round,
- *  floating fill, panel elevation), so the two read as a pair. */
+/** The fold control, floating in the empty gutter to the right of the
+ *  linked stack and centred on it: over no prose, on no bar. The same recipe
+ *  as the Host's jump-to-latest button (34px round, floating fill, panel
+ *  elevation), which lives above the composer, so the two never meet. */
 export const linkedFoldChip: CSSProperties = {
   position: 'absolute',
-  left: 0,
-  top: -44,
+  right: -44,
+  top: '50%',
+  transform: 'translateY(-50%)',
   zIndex: 8,
   width: 34,
   height: 34,

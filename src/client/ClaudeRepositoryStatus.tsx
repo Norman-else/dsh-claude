@@ -831,10 +831,10 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The fold control floats above the linked bars at their left edge, drawn
- *  like the Host's own jump-to-latest button on the right: a round floating
- *  chevron. Folded it carries the count as a badge; the words live in its
- *  tooltip and accessible name. Outside every bar, so none changes shape. */
+/** The fold control floats in the gutter right of the linked bars, centred
+ *  on the stack, drawn like the Host's own jump-to-latest button: a round
+ *  floating chevron. Folded it carries the count as a badge; the words live
+ *  in its tooltip and accessible name. Over no prose and on no bar. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
