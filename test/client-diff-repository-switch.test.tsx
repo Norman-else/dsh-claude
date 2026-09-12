@@ -366,7 +366,8 @@ describe('many linked checkouts', () => {
     if (toggle === null) throw new Error('no fold chip')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(toggle.getAttribute('aria-label')).toBe(`${t('linkedMore', { count: 2 })} · ${en.linkedShowAll}`)
-    expect(toggle.textContent).toContain('+2')
+    // The count lives in the tooltip and name; the circle holds only the chevrons.
+    expect(toggle.textContent).not.toContain('+2')
     expect(container.querySelector('[data-dsh-claude-linked-fold-row]')).toBeNull()
     act(() => { toggle.click() })
     expect(bars()).toEqual(['/b', '/c', '/d', '/e', '/f'])
