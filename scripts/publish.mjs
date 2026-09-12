@@ -51,7 +51,7 @@ function capture(command, args) {
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
 async function waitForPublishedGitHead(packageVersion, expectedHead) {
-  const attempts = 12
+  const attempts = 61
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const result = run('npm', ['view', packageVersion, 'gitHead', '--json'], {
       capture: true,
@@ -66,7 +66,7 @@ async function waitForPublishedGitHead(packageVersion, expectedHead) {
     }
     if (attempt === attempts) {
       process.stderr.write(result.stderr)
-      throw new Error(`${packageVersion} was published but did not become readable from npm within 60 seconds`)
+      throw new Error(`${packageVersion} was published but did not become readable from npm within 5 minutes`)
     }
     console.log(`npm metadata is not visible yet; retrying in 5 seconds (${attempt}/${attempts})...`)
     await sleep(5_000)
