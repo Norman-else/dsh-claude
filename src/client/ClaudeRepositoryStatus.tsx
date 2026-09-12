@@ -211,7 +211,6 @@ export function AutoFixControl({ sessionId, repository, root, running, t, submit
   // The watcher's switch and memory are per checkout, not per session.
   const scope = root === undefined ? sessionId : `${sessionId}#${root}`
   const [enabled, setEnabled] = useState(() => autoFixEnabled(scope))
-  const [focused, setFocused] = useState(false)
   useEffect(() => { setEnabled(autoFixEnabled(scope)) }, [scope])
   // Submitting while a turn runs would queue or steer (interrupt) it depending
   // on the user's Enter-while-busy setting, so wait for idle instead; the
@@ -247,15 +246,10 @@ export function AutoFixControl({ sessionId, repository, root, running, t, submit
       <button
         type="button"
         role="switch"
+        className={styles.repositoryAutoFixClass}
         aria-checked={enabled}
         aria-label={t('autoFixLabel')}
-        style={{
-          ...styles.repositoryAutoFix,
-          ...(enabled ? styles.repositoryAutoFixActive : {}),
-          ...(focused ? styles.heroWorktreeToggleFocused : {}),
-        }}
-        onFocus={() => { setFocused(true) }}
-        onBlur={() => { setFocused(false) }}
+        style={styles.repositoryAutoFix}
         onClick={event => {
           toggle()
           // Mouse toggles should not leave a focus ring behind.
@@ -850,6 +844,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   }
   return (
     <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
+      <style data-dsh-claude-repository-bar-styles>{styles.repositoryAutoFixCss}</style>
       {toast}
       {linked}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>

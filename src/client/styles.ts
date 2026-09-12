@@ -1863,11 +1863,21 @@ export const repositoryAutoFix: CSSProperties = {
   cursor: 'pointer',
 }
 
-export const repositoryAutoFixActive: CSSProperties = {
-  borderColor: 'color-mix(in srgb, var(--dsw-static-blue-450) 45%, transparent)',
-  background: 'color-mix(in srgb, var(--dsw-static-blue-450) 12%, transparent)',
-  color: 'var(--dsw-static-blue-450)',
+export const repositoryAutoFixClass = 'dshClaudeAutoFix'
+
+/** The switch's states live in a stylesheet, off `aria-checked` and
+ *  `:focus-visible`, so a mouse click never leaves an inline ring behind and
+ *  the on state reads as a filled toggle rather than a faint outline. */
+export const repositoryAutoFixCss = `
+.${repositoryAutoFixClass}:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-static-blue-450) 28%, transparent);
 }
+.${repositoryAutoFixClass}[aria-checked="true"] {
+  border-color: var(--dsw-static-blue-450);
+  background: var(--dsw-static-blue-450);
+  color: var(--dsw-alias-label-on-accent, #fff);
+}
+`
 
 export const repositoryUpdateTrigger: CSSProperties = {
   flex: 'none',

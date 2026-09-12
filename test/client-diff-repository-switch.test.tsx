@@ -206,6 +206,29 @@ describe('Claude repository bar with linked checkouts', () => {
     expect(unreachable).not.toContain(en.repositoryMergeMenu)
   })
 
+  it('draws the auto-fix switch as a filled toggle when on, and shows a ring only for keyboard focus', async () => {
+    const { AutoFixControl } = await import('../src/client/ClaudeRepositoryStatus.tsx')
+    const styles = await import('../src/client/styles.ts')
+    const repository = { ...other, pullRequest: { number: 7, title: 'T', url: 'https://github.com/org/b/pull/7', state: 'open' as const, draft: false, review: 'none' as const, checks: 'none' as const } }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    mounted = { root, container }
+    act(() => { root.render(<><style>{styles.repositoryAutoFixCss}</style><AutoFixControl sessionId="session-1" repository={repository} root="/b" running={false} t={t} submitPrompt={vi.fn(() => true)} /></>) })
+    const button = [...container.querySelectorAll('button')].find(item => item.getAttribute('aria-label') === en.autoFixLabel)
+    if (button === undefined) throw new Error('no auto-fix switch')
+    expect(button.className).toBe(styles.repositoryAutoFixClass)
+    // The on state is a stylesheet rule keyed off aria-checked, not an inline
+    // ring that a mouse click could leave behind; a mouse click also drops focus.
+    expect(button.getAttribute('aria-checked')).toBe('false')
+    act(() => { button.focus(); button.click() })
+    expect(button.getAttribute('aria-checked')).toBe('true')
+    expect(document.activeElement).not.toBe(button)
+    expect(button.getAttribute('style') ?? '').not.toContain('box-shadow')
+    expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}[aria-checked="true"]`)
+    expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}:focus-visible`)
+  })
+
   it('offers clean-up on a linked checkout whose pull request merged', async () => {
     const { LinkedRepositoryBar } = await import('../src/client/ClaudeRepositoryStatus.tsx')
     const merged = {
