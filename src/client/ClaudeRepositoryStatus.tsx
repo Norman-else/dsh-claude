@@ -249,7 +249,6 @@ export function AutoFixControl({ sessionId, repository, root, running, t, submit
         className={styles.repositoryAutoFixClass}
         aria-checked={enabled}
         aria-label={t('autoFixLabel')}
-        style={styles.repositoryAutoFix}
         onClick={event => {
           toggle()
           // Mouse toggles should not leave a focus ring behind.

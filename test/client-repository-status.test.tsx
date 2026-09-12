@@ -617,7 +617,9 @@ describe('pull request feedback controls', () => {
     const markup = render({})
     expect(markup).toContain('role="switch"')
     expect(markup).toContain('aria-checked="false" aria-label="Auto fix"')
-    expect(markup).toContain('outline:none')
+    // Its look, including the suppressed native outline, is the stylesheet's.
+    expect(markup).toContain(`class="${styles.repositoryAutoFixClass}"`)
+    expect(styles.repositoryAutoFixCss).toContain('outline: none')
     expect(render({ pullRequest: { ...repository.pullRequest, state: 'merged' as const } })).not.toContain('aria-label="Auto fix"')
     const withoutSubmit = renderToStaticMarkup(<ClaudeRepositoryStatus
       sessionId="session"

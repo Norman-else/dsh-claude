@@ -223,6 +223,10 @@ describe('Claude repository bar with linked checkouts', () => {
     expect(button.getAttribute('aria-checked')).toBe('true')
     expect(document.activeElement).not.toBe(button)
     expect(button.getAttribute('style') ?? '').not.toContain('box-shadow')
+    // Nothing the on-state rule sets may also be set inline, or the inline
+    // value wins and the switch never visibly turns on.
+    for (const property of ['background', 'border', 'color']) expect(button.getAttribute('style') ?? '').not.toContain(property)
+    expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass} {`)
     expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}[aria-checked="true"]`)
     expect(styles.repositoryAutoFixCss).toContain(`.${styles.repositoryAutoFixClass}:focus-visible`)
   })

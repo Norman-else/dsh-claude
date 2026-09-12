@@ -1845,30 +1845,30 @@ export const diffTriggerMuted: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
-export const repositoryAutoFix: CSSProperties = {
-  width: 26,
-  minHeight: 26,
-  flex: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 0,
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 7,
-  outline: 'none',
-  background: 'var(--dsw-alias-bg-layer-2)',
-  color: 'var(--dsw-alias-label-tertiary)',
-  font: 'inherit',
-  lineHeight: '18px',
-  cursor: 'pointer',
-}
-
 export const repositoryAutoFixClass = 'dshClaudeAutoFix'
 
-/** The switch's states live in a stylesheet, off `aria-checked` and
- *  `:focus-visible`, so a mouse click never leaves an inline ring behind and
- *  the on state reads as a filled toggle rather than a faint outline. */
+/** The switch is styled entirely from a stylesheet: its base look, its on
+ *  state off `aria-checked`, its ring off `:focus-visible`. Nothing is set
+ *  inline, because an inline border, background or colour would outrank the
+ *  on-state rule and the switch would toggle without ever looking switched. */
 export const repositoryAutoFixCss = `
+.${repositoryAutoFixClass} {
+  width: 26px;
+  min-height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent));
+  border-radius: 7px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  line-height: 18px;
+  cursor: pointer;
+}
 .${repositoryAutoFixClass}:focus-visible {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-static-blue-450) 28%, transparent);
 }
