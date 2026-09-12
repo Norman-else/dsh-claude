@@ -834,7 +834,7 @@ export const LINKED_BARS_SHOWN = 3
 const linkedExpanded = new Map<string, boolean>()
 
 /** The fold control stands where the first linked bar's link glyph would:
- *  the same 20px seat, so every bar's content lines up. Folded it reads the
+ *  the same 16px seat, so every bar's content lines up. Folded it reads the
  *  count, unfolded a chevron; the words live in its tooltip and name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
@@ -848,7 +848,7 @@ function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
     <Tooltip label={label} side="top" delayMs={250}>
       <button type="button" style={styles.linkedFoldChip} aria-expanded={expanded} aria-label={label} data-dsh-claude-linked-fold={sessionId} onClick={onToggle}>
         {expanded
-          ? <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" /></svg>
+          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" /></svg>
           : <span>+{hidden}</span>}
       </button>
     </Tooltip>
