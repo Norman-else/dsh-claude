@@ -1547,24 +1547,25 @@ export const repositoryBarMerged: CSSProperties = {
   background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
 }
 
-/** The linked bars as one stack, the fold control centred above them. */
+/** The linked bars as one stack, the fold control floating centred above. */
 export const linkedStack: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'stretch',
+  position: 'relative',
 }
 
-/** The fold control: a bare double chevron centred above the linked bars,
- *  in flow on its own thin row. No border, no fill. */
+/** The fold control: a bare double chevron floating centred above the
+ *  linked bars, taking no room of its own. No border, no fill. */
 export const linkedFoldChip: CSSProperties = {
-  alignSelf: 'center',
+  position: 'absolute',
+  left: '50%',
+  top: -28,
+  transform: 'translateX(-50%)',
+  zIndex: 8,
   display: 'inline-flex',
   alignItems: 'center',
   gap: 5,
   height: 28,
   minWidth: 96,
   justifyContent: 'center',
-  margin: '0 0 2px',
   padding: '0 16px',
   border: 0,
   borderRadius: 6,
