@@ -789,7 +789,7 @@ function RepositoryControls({ sessionId, repository, root, running, t, report, o
  *  session bar so that one stays put next to the composer. The same readout
  *  and controls as the session bar, scoped to that checkout; only the
  *  workspace deletion after a clean-up stays with the session's own. */
-export function LinkedRepositoryBar({ sessionId, repository, running, t, openDiff, report, submitPrompt }: {
+export function LinkedRepositoryBar({ sessionId, repository, running, t, openDiff, report, submitPrompt, leading }: {
   sessionId: string
   repository: RepositoryStatus
   running: boolean
@@ -797,6 +797,8 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   openDiff: (root?: string) => void
   report: (text: string) => void
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
+  /** Something to seat ahead of the link glyph: the fold pill on the first bar. */
+  leading?: ReactNode
 }) {
   const key = repository.root ?? `${repository.remote ?? repository.cwd}#${repository.pullRequest?.number ?? ''}`
   if (repository.status !== 'ready') {
@@ -811,6 +813,7 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   const merged = repository.pullRequest?.state === 'merged'
   return (
     <div style={{ ...styles.repositoryBar, ...styles.repositoryBarLinked, ...(merged ? styles.repositoryBarMerged : {}) }} data-dsh-claude-linked-repository={key}>
+      {leading}
       <StatusGlyph label={t('repositoryLinked')} tone="neutral"><LinkIcon /></StatusGlyph>
       <PullRequestLink repository={repository} t={t} />
       <Tooltip label={repository.remote ?? repositoryLabel(repository)} side="top" delayMs={250} maxWidth={420}>
@@ -831,9 +834,9 @@ export const LINKED_BARS_SHOWN = 3
 // switches within one page, like the auto-fix switch next to it.
 const linkedExpanded = new Map<string, boolean>()
 
-/** The chip on the linked stack's top-left corner that folds and unfolds
- *  the bars past the first three: a count and a chevron, the words in its
- *  tooltip and accessible name. */
+/** The pill at the head of the first linked bar that folds and unfolds the
+ *  bars past the first three: a count and a chevron, in the row with the
+ *  bar's own glyphs, the words in its tooltip and accessible name. */
 function LinkedFoldChip({ sessionId, hidden, expanded, onToggle, t }: {
   sessionId: string
   hidden: number
@@ -875,18 +878,14 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
   // A fan-out over many services would otherwise stack a dozen bars over the
   // transcript: past three they fold behind one row that unfolds them.
   const shown = expanded ? all : all.slice(0, LINKED_BARS_SHOWN)
-  const linked = all.length === 0 ? null : (
-    <div style={styles.linkedStack}>
-      {all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
-        const next = !expanded
-        setExpanded(next)
-        linkedExpanded.set(sessionId, next)
-      }} /> : null}
-      {shown.map(item => (
-        <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} />
-      ))}
-    </div>
-  )
+  const fold = all.length > LINKED_BARS_SHOWN ? <LinkedFoldChip sessionId={sessionId} hidden={all.length - LINKED_BARS_SHOWN} expanded={expanded} t={t} onToggle={() => {
+    const next = !expanded
+    setExpanded(next)
+    linkedExpanded.set(sessionId, next)
+  }} /> : null
+  const linked = shown.map((item, index) => (
+    <LinkedRepositoryBar key={item.root ?? `${item.remote ?? item.cwd}#${item.pullRequest?.number ?? ''}`} sessionId={sessionId} repository={item} running={running} t={t} openDiff={openDiff} report={report} {...(submitPrompt === undefined ? {} : { submitPrompt })} {...(index === 0 && fold !== null ? { leading: fold } : {})} />
+  ))
   if (repository.status !== 'ready') {
     return (
       <div style={styles.repositoryBarFrame} {...{ [CLAUDE_COMPOSER_BAR_ATTRIBUTE]: '' }}>
