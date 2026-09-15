@@ -49,7 +49,16 @@ const PRESET_SEAT_CSS = [
     `background:${claudeMarkUrl()} center/contain no-repeat}`,
 ].join('')
 
-export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}`
+/** The Host's composer context meter is built from the request DSH assembled:
+ *  its ring and headline are right, but the composition it lists is DSH's own
+ *  system prompt, DSH's tool mirrors and the messages DSH can see — which for a
+ *  Claude Session is none of the context Claude Code actually holds.
+ *  `ClaudeContextMeter` draws the same ring in the same seat from the CLI's own
+ *  report, and marks the body for exactly as long as a Claude Session is on
+ *  screen; without that mark nothing here matches and the Host's meter stands. */
+const CONTEXT_METER_CSS = 'body[data-dsh-claude-context-meter] [class*="ContextMeter_root"]{display:none}'
+
+export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}${CONTEXT_METER_CSS}`
 
 /** Install the stylesheet and the one DOM flag it depends on.
  *  @returns a disposer that removes both again. */

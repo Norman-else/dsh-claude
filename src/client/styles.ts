@@ -929,6 +929,184 @@ export const tasksBadgeLabel: CSSProperties = {
   fontWeight: 500,
 }
 
+/** The live "what is it doing" pill: quieter than the task badge, because it is
+ *  a state that changes rather than a control to press. */
+export const livePill: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '2px 4px',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 13,
+  lineHeight: '20px',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const livePillDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  flex: 'none',
+  borderRadius: 999,
+  background: 'var(--dsw-static-blue-450)',
+}
+
+export const livePillElapsed: CSSProperties = {
+  color: 'var(--dsw-alias-label-caption)',
+}
+
+/** The Claude session's context meter: the Host's own ring geometry and panel
+ *  frame, filled with what the CLI reports instead of what DSH can see. */
+export const contextMeterRoot: CSSProperties = {
+  display: 'inline-flex',
+  position: 'relative',
+}
+
+export const contextMeterTrigger: CSSProperties = {
+  width: 28,
+  height: 28,
+  display: 'grid',
+  placeItems: 'center',
+  flex: 'none',
+  padding: 0,
+  border: 'none',
+  borderRadius: 999,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: 'pointer',
+}
+
+export const contextMeterTriggerOpen: CSSProperties = {
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+}
+
+export const contextMeterTrack: CSSProperties = {
+  stroke: 'var(--dsw-alias-border-l3)',
+}
+
+export const contextMeterFill: CSSProperties = {
+  stroke: 'var(--dsw-alias-label-tertiary)',
+  transition: 'stroke-dashoffset 200ms ease',
+}
+
+export const contextMeterPanel: CSSProperties = {
+  position: 'absolute',
+  right: 0,
+  bottom: 'calc(100% + 8px)',
+  zIndex: 100,
+  boxSizing: 'border-box',
+  width: 264,
+  padding: 12,
+  border: '1px solid var(--dsw-alias-border-l1)',
+  borderRadius: 12,
+  background: 'var(--dsw-specific-menu)',
+  boxShadow: 'var(--dsw-elevation-prominent)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '20px',
+  cursor: 'default',
+  textAlign: 'left',
+}
+
+export const contextMeterHeader: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+}
+
+export const contextMeterHeadline: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const contextMeterPercent: CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)',
+  fontWeight: 500,
+}
+
+export const contextMeterFigures: CSSProperties = {
+  marginLeft: 'auto',
+  color: 'var(--dsw-alias-label-primary)',
+  fontWeight: 500,
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const contextMeterWarning: CSSProperties = {
+  marginTop: 6,
+  color: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const contextMeterBar: CSSProperties = {
+  display: 'flex',
+  gap: 1,
+  height: 4,
+  margin: '10px 0 12px',
+  borderRadius: 999,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  overflow: 'hidden',
+}
+
+export const contextMeterSegment: CSSProperties = {
+  flex: 'none',
+  minWidth: 2,
+  height: '100%',
+  borderRadius: 1,
+}
+
+export const contextMeterRows: CSSProperties = {
+  margin: '6px 0 0',
+  padding: 0,
+}
+
+export const contextMeterRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '2px 0',
+}
+
+export const contextMeterRowLabel: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  minWidth: 0,
+  color: 'var(--dsw-alias-label-secondary)',
+}
+
+export const contextMeterSwatch: CSSProperties = {
+  width: 8,
+  height: 8,
+  flex: 'none',
+  marginRight: 6,
+  borderRadius: 2,
+}
+
+export const contextMeterDeferred: CSSProperties = {
+  marginLeft: 6,
+  color: 'var(--dsw-alias-label-caption)',
+}
+
+export const contextMeterRowValue: CSSProperties = {
+  margin: 0,
+  color: 'var(--dsw-alias-label-primary)',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const contextMeterSecondary: CSSProperties = {
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const contextMeterSection: CSSProperties = {
+  marginTop: 10,
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const contextMeterFoot: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  marginTop: 10,
+  color: 'var(--dsw-alias-label-caption)',
+}
+
 export const tasksHoverCard: CSSProperties = {
   position: 'absolute',
   left: 0,

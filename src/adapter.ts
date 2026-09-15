@@ -47,7 +47,20 @@ const NO_RETRY_POLICY: ResolvedRetryPolicy = Object.freeze({
 
 type ClaudePrompt = SDKUserMessage['message']['content']
 type ClaudePromptBlock = Exclude<ClaudePrompt, string>[number]
-type AttachmentReader = Pick<AttachmentStore, 'imageLimits' | 'readImage'>
+type AttachmentReader = Pick<AttachmentStore, 'imageLimits' | 'readImage' | 'fileHostPath'>
+
+/** One line per attached file, ahead of the text it came with.
+ *
+ *  Claude Code reads files through its own tools, and the SDK's prompt content
+ *  has no file block, so an attachment travels as the path it was stored at —
+ *  the same thing the CLI user would have typed. */
+function fileReferenceBlock(files: readonly { name: string; path: string }[]): ClaudePromptBlock {
+  const lines = files.map(file => `- ${file.name} — read it from ${file.path}`)
+  return {
+    type: 'text',
+    text: ['The user attached these files to this message:', ...lines].join('\n'),
+  }
+}
 
 function abortIfRequested(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) return
@@ -120,6 +133,9 @@ export async function resolveDirectUserPrompt(
   const imageRefs = message.content
     .filter((block): block is Extract<typeof block, { type: 'image' }> => block.type === 'image')
     .map(block => block.attachment)
+  // A file needs no byte accounting here: the prompt carries its path, and
+  // Claude Code reads the bytes itself.
+  const fileCount = message.content.filter(block => block.type === 'file').length
   const limits = attachments.imageLimits
   if (imageRefs.length > limits.maxImagesPerMessage) {
     throw new Error('dsh-claude: prompt exceeds the configured image-count limit')
@@ -133,7 +149,7 @@ export async function resolveDirectUserPrompt(
     }
   })
 
-  if (imageRefs.length === 0) {
+  if (imageRefs.length === 0 && fileCount === 0) {
     const text = message.content
       .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
       .map(block => block.text)
@@ -144,12 +160,23 @@ export async function resolveDirectUserPrompt(
   }
 
   const content: ClaudePromptBlock[] = []
+  const files: { name: string; path: string }[] = []
   let imageIndex = 0
+  let fileIndex = 0
   let verifiedBytes = 0
   for (const block of message.content) {
     abortIfRequested(signal)
     if (block.type === 'text') {
       content.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type === 'file') {
+      fileIndex += 1
+      const path = attachments.fileHostPath(block.attachment)
+      if (path === undefined || path.length === 0) {
+        throw new Error(`dsh-claude: file ${fileIndex} is not readable from this Host`)
+      }
+      files.push({ name: block.attachment.name, path })
       continue
     }
     if (block.type !== 'image') continue
@@ -172,6 +199,9 @@ export async function resolveDirectUserPrompt(
     }
     content.push(imageBlock(stored.data, stored.ref.mediaType))
   }
+  // The paths ride ahead of the user's own words, so Claude reads what the
+  // message is about before acting on it.
+  if (files.length > 0) content.unshift(fileReferenceBlock(files))
   if (content.length === 0) {
     throw new Error('dsh-claude: the newest direct human message has no supported content')
   }

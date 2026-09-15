@@ -130,6 +130,40 @@ describe('event normalization', () => {
     expect(normalized).not.toHaveProperty('memoryFiles')
     expect(normalized).not.toHaveProperty('mcpTools')
   })
+
+  it('keeps the report a Claude session panel needs: window, auto-compact, message mix', () => {
+    const normalized = normalizeContextUsage({
+      model: 'claude-opus-5[1M]',
+      totalTokens: 540_000,
+      maxTokens: 1_000_000,
+      rawMaxTokens: 1_000_000,
+      percentage: 54,
+      categories: [{ name: 'Messages', tokens: 445_000, color: '#3b82f6' }],
+      isAutoCompactEnabled: true,
+      autoCompactThreshold: 967_000,
+      messageBreakdown: {
+        toolCallTokens: 40_000,
+        toolResultTokens: 380_000,
+        attachmentTokens: 0,
+        assistantMessageTokens: 20_000,
+        userMessageTokens: 5_000,
+        redirectedContextTokens: 0,
+        unattributedTokens: 0,
+      },
+    })
+    expect(normalized).toMatchObject({
+      rawMaxTokens: 1_000_000,
+      isAutoCompactEnabled: true,
+      autoCompactThreshold: 967_000,
+      messageBreakdown: { toolResultTokens: 380_000, assistantMessageTokens: 20_000 },
+    })
+    // Absent means absent: the panel decides what to show, and a report from an
+    // older CLI must not read as "auto-compact is off".
+    const bare = normalizeContextUsage({ model: 'm', totalTokens: 1, maxTokens: 2, percentage: 1, categories: [] })
+    expect(bare).not.toHaveProperty('isAutoCompactEnabled')
+    expect(bare).not.toHaveProperty('messageBreakdown')
+    expect(bare).not.toHaveProperty('rawMaxTokens')
+  })
 })
 
 describe('legacy event folds', () => {

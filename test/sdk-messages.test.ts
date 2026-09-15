@@ -138,6 +138,37 @@ describe('Claude SDK message normalization', () => {
     }))).toEqual([{ kind: 'compaction' }])
   })
 
+  it('consumes thinking-token telemetry as progress instead of activity', () => {
+    // The SDK documents this frame as "approximate progress for spinners/pills,
+    // not the authoritative billed output_tokens", and the CLI emits one per
+    // estimated chunk: a single extended-thinking step produces tens of
+    // thousands. The transcript draws none of them, so the durable activity log
+    // must not store them — each stored row costs a full sidecar rewrite.
+    expect(normalizeSdkMessage(sdk({
+      type: 'system',
+      subtype: 'thinking_tokens',
+      estimated_tokens: 128,
+      estimated_tokens_delta: 2,
+      uuid: 'uuid-1',
+      session_id: 'session-1',
+    }))).toEqual([{ kind: 'progress', subtype: 'thinking_tokens' }])
+  })
+
+  it('consumes tool-progress heartbeats as progress instead of activity', () => {
+    // The CLI emits one of these while a tool runs. Like the thinking-token
+    // frames they are telemetry no row renders, and the unknown-type fallback
+    // used to store every heartbeat as a warning.
+    expect(normalizeSdkMessage(sdk({
+      type: 'tool_progress',
+      tool_use_id: 'tool-1',
+      tool_name: 'Bash',
+      parent_tool_use_id: null,
+      elapsed_time_seconds: 12,
+      uuid: 'uuid-2',
+      session_id: 'session-1',
+    }))).toEqual([{ kind: 'progress', subtype: 'tool_progress' }])
+  })
+
   it('normalizes successful result usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'result',
@@ -216,6 +247,7 @@ describe('Claude SDK message normalization', () => {
   it('preserves unknown message types as bounded-normalization inputs', () => {
     expect(normalizeSdkMessage(sdk({ type: 'future_message', value: 1 }))).toEqual([{
       kind: 'unknown',
+      type: 'future_message',
       title: 'Unknown Claude SDK message: future_message',
       detail: { type: 'future_message', value: 1 },
     }])

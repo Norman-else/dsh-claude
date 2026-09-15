@@ -27,6 +27,7 @@ import {
 } from '../src/client/ClaudeTasksPanel.tsx'
 import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from '../src/client/ClaudeActiveTasksNode.tsx'
+import { ClaudeContextMeter, ClaudeContextPanel, contextCategoryColor } from '../src/client/ClaudeContextMeter.tsx'
 import {
   ClaudeActivityNode,
   ClaudeCompactionDivider,
@@ -709,6 +710,118 @@ describe('Claude sidecar conversation projection', () => {
     expect(done).toContain('tasksTurnCompleted')
     expect(done).not.toContain('dsh-claude-act-running')
     expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' }])).toContain('tasksTurnFailed')
+  })
+
+
+  it('draws Claude\'s own context composition in the composer seat', () => {
+    const projection = {
+      owned: true,
+      activities: [{ turn: 3, step: 1, ordinal: 9, kind: 'compaction', detail: JSON.stringify({ trigger: 'auto', preTokens: 72_734, postTokens: 1_925, durationMs: 8_958 }) }],
+      contextUsage: {
+        model: 'claude-opus-5[1M]',
+        totalTokens: 540_000,
+        maxTokens: 1_000_000,
+        percentage: 54,
+        isAutoCompactEnabled: true,
+        autoCompactThreshold: 967_000,
+        categories: [
+          // The CLI reports no color of its own: this is what its real report
+          // carries for every category, which is why the panel has to separate
+          // them itself.
+          { name: 'System prompt', tokens: 4_600, color: '#8b95a5' },
+          { name: 'System tools', tokens: 8_700, color: '#8b95a5' },
+          { name: 'Messages', tokens: 445_000, color: '#8b95a5' },
+          { name: 'Free space', tokens: 460_000, color: '#8b95a5' },
+        ],
+        messageBreakdown: {
+          toolCallTokens: 40_000,
+          toolResultTokens: 380_000,
+          attachmentTokens: 0,
+          assistantMessageTokens: 20_000,
+          userMessageTokens: 5_000,
+          redirectedContextTokens: 0,
+          unattributedTokens: 0,
+        },
+      },
+    }
+    const t = ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never
+    const render = (value: Record<string, unknown>) => renderToStaticMarkup(createElement(ClaudeContextMeter, {
+      t,
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector(value)) as never,
+    }))
+    // Nothing for a session this plugin does not own: the Host keeps its meter.
+    expect(render({ owned: false, activities: [] })).toBe('')
+    expect(render({ owned: true, activities: [] })).toBe('')
+    // A fresh conversation that has sent nothing yet stays invisible even when a
+    // usage sample is already present — `importLegacy` seeds `contextUsage` from
+    // a resumed session's own log, so the figure alone does not mean this
+    // session has run. The first turn is what brings the ring in, and a session
+    // whose own history seeded it carries activities, so it still shows at once.
+    expect(render({ owned: true, activities: [], contextUsage: projection.contextUsage })).toBe('')
+    expect(render({ owned: true, activities: [projection.activities[0]], contextUsage: projection.contextUsage })).toContain('data-dsh-claude-context-meter')
+    const trigger = render(projection)
+    expect(trigger).toContain('data-dsh-claude-context-meter')
+    expect(trigger).toContain('data-dsh-claude-context-trigger')
+    expect(trigger).toContain('stroke-dasharray')
+    // The ring is closed until it is opened.
+    expect(trigger).not.toContain('data-dsh-claude-context-panel')
+
+    const panel = renderToStaticMarkup(createElement(ClaudeContextPanel, {
+      usage: projection.contextUsage as never,
+      compaction: projection.activities[0] as never,
+      t,
+    }))
+    // The CLI's own composition, not DSH's three-row heuristic.
+    expect(panel).toContain('contextUsed')
+    expect(panel).toContain('contextCategorySystemPrompt')
+    expect(panel).toContain('contextCategoryMcpTools'.replace('McpTools', 'SystemTools'))
+    expect(panel).toContain('445K')
+    expect(panel).toContain('540K')
+    // Every category wears the same "no color reported" value, so the legend
+    // has to separate them itself: the rows and their bar segments must not all
+    // come out the same color.
+    expect(panel).toContain('#a78bfa')
+    expect(panel).toContain('--dsw-static-blue-450')
+    expect(panel).toContain('--dsw-static-neutral-bluish-400')
+    // Nothing falls back to the flat grey the report itself would have drawn.
+    expect(panel).not.toContain('background:#8b95a5')
+    // Free space is the absence of usage, so it is not a row.
+    expect(panel).not.toContain('contextCategoryFree')
+    // What the messages are made of, and the state of auto-compaction.
+    expect(panel).toContain('contextBreakdownTitle')
+    expect(panel).toContain('contextBreakdownToolResults')
+    expect(panel).toContain('380K')
+    expect(panel).toContain('contextAutoCompactOn')
+    expect(panel).toContain('967K')
+    // The before/after of the last compaction, which only the boundary carries.
+    expect(panel).toContain('contextLastCompaction')
+    expect(panel).toContain('72.7K')
+    expect(panel).toContain('1.9K')
+    expect(panel).toContain('9.0')
+    // An older CLI that reports no auto-compact state must not read as "off".
+    const unknown = renderToStaticMarkup(createElement(ClaudeContextPanel, {
+      usage: { model: 'm', totalTokens: 10, maxTokens: 100, percentage: 10, categories: [] } as never,
+      t,
+    }))
+    expect(unknown).not.toContain('contextAutoCompactOn')
+    expect(unknown).not.toContain('contextAutoCompactOff')
+  })
+
+  it('separates the context categories the CLI reports no color for', () => {
+    const bare = (name: string, color = '#8b95a5') => ({ name, tokens: 1, color })
+    // The value the report carries when it has no color of its own means "no
+    // color", not "grey": each known category gets a hue of its own.
+    expect(contextCategoryColor(bare('System prompt') as never)).toContain('--dsw-static-neutral-bluish-400')
+    expect(contextCategoryColor(bare('System tools') as never)).toBe('#a78bfa')
+    expect(contextCategoryColor(bare('Messages') as never)).toContain('--dsw-static-blue-450')
+    expect(contextCategoryColor(bare('MCP tools') as never)).not.toBe(contextCategoryColor(bare('Skills') as never))
+    // A color the CLI did choose is kept as it is.
+    expect(contextCategoryColor(bare('System tools', '#123456') as never)).toBe('#123456')
+    // A category the CLI adds later still lands on one palette hue, and on the
+    // same one every time.
+    const first = contextCategoryColor(bare('Brand new category') as never)
+    expect(first).toBe(contextCategoryColor(bare('Brand new category') as never))
+    expect(['#a78bfa', '#34d399', '#fbbf24', '#f472b6', '#22d3ee']).toContain(first)
   })
 
   it('renders the active task node reactively for the owning turn', () => {

@@ -28,6 +28,15 @@ describe('host chrome suppression', () => {
     }
   })
 
+  it('stands the Host context meter down only while a Claude meter is on screen', () => {
+    expect(HOST_CHROME_CSS).toContain('body[data-dsh-claude-context-meter] [class*="ContextMeter_root"]{display:none}')
+    // Every rule that touches the Host meter must be gated on the flag, so a
+    // session this plugin does not own keeps the Host's own meter.
+    for (const rule of HOST_CHROME_CSS.split('}').map(part => part.trim()).filter(Boolean)) {
+      if (rule.includes('ContextMeter_root')) expect(rule.startsWith('body[data-dsh-claude-context-meter]')).toBe(true)
+    }
+  })
+
   it('restores the slack the tab row used to give the divider', () => {
     expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-header-diff){padding-bottom:10px}')
   })

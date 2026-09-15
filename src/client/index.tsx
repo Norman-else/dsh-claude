@@ -14,6 +14,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDefinition, selectClaudeTurn } from './conversation-sidecar.ts'
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
+import { ClaudeContextMeter } from './ClaudeContextMeter.tsx'
 import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, alertModeOf, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
@@ -27,6 +28,7 @@ import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './Claud
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import type { ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { CLAUDE_TAB_KINDS, registerClaudeSidebarTabs } from './sidebar-tabs.tsx'
+import type { ClaudeContextMeterInjected } from './ClaudeContextMeter.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { claudeBootCheckFindings } from './boot-check.ts'
@@ -361,6 +363,19 @@ ${error.stack ?? ''}`
       }
     },
   }, ClaudePromptRefineAction))
+  // The composer's own context meter seat, immediately before the submit
+  // button: the Host's meter reads a request it assembled, and for this preset
+  // the context lives inside Claude Code, so its own report is the only honest
+  // source. The entry renders nothing for any other session — its absence is
+  // what leaves the Host's meter in place there.
+  ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
+    name: 'conversation.input.right',
+    id: 'claude-context-meter',
+    // Before the submit action, beside the model selector.
+    order: 30,
+    locale: namespace,
+    inject: (): ClaudeContextMeterInjected => ({ t }),
+  }, ClaudeContextMeter))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'claude-review-comments',
