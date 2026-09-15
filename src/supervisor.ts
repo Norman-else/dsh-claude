@@ -1584,14 +1584,38 @@ export class ClaudeSupervisor {
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
   ): Promise<void> {
     if (result.usage.inputTokens === undefined && result.usage.outputTokens === undefined && result.usage.cumulativeCostUsd === undefined) return
+    // `cumulativeCostUsd` is per query() call, and a respawned Claude process
+    // starts a new one -- so a session that respawned mid-conversation would
+    // show a total that goes DOWN. What the session has spent is the sum of its
+    // processes' epochs.
+    const cumulative = this.#sessionCost(active.agent.id as string, result.usage.cumulativeCostUsd)
+    const usage = cumulative === undefined ? result.usage : { ...result.usage, cumulativeCostUsd: cumulative }
     await this.#appendSafely(active, {
       kind: 'usage',
       phase: 'completed',
       title: 'Claude usage',
-      summary: usageSummary(result.usage),
-      usage: this.#timedUsage(active, result.usage),
+      summary: usageSummary(usage),
+      usage: this.#timedUsage(active, usage),
     })
     active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
+  }
+
+  /** Cost spent by previous processes of this session, and the newest counter
+   *  reading of the epoch that is running now. */
+  readonly #costSpentBefore = new Map<string, number>()
+  readonly #costEpoch = new Map<string, number>()
+
+  #sessionCost(sessionId: string, reported: number | undefined): number | undefined {
+    if (reported === undefined) return undefined
+    const previous = this.#costEpoch.get(sessionId)
+    let spentBefore = this.#costSpentBefore.get(sessionId) ?? 0
+    if (previous !== undefined && reported < previous) {
+      // A new process: the counter it reports belongs to it alone.
+      spentBefore += previous
+      this.#costSpentBefore.set(sessionId, spentBefore)
+    }
+    this.#costEpoch.set(sessionId, reported)
+    return spentBefore + reported
   }
 
   async #completeTurn(

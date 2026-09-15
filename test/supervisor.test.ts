@@ -270,6 +270,35 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('keeps a session\'s cost whole across a respawn', async () => {
+    // The CLI's cumulative cost is per query() call, so a respawned process
+    // starts counting again from zero. The transcript is one session, and the
+    // money it spent is the sum of what its processes spent.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const turn = async (cost: number) => {
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'work' })
+      const query = transport.queries.at(-1)!
+      query.push(init())
+      query.push({ ...result('done') as object, total_cost_usd: cost } as SDKMessage)
+      await collect(output)
+    }
+    await turn(0.25)
+    await turn(0.5)
+    // The process was evicted and respawned: this counter is the new epoch's.
+    await runtime.disposeSession(owner.agent.id as string)
+    await turn(0.1)
+    const rows = (await projection(runtime)).activities.filter(activity => activity.kind === 'usage')
+    expect(rows.map(row => row.usage?.cumulativeCostUsd)).toEqual([0.25, 0.5, 0.6])
+    expect(rows.map(row => row.summary)).toEqual([
+      '4 input / 2 output tokens · $0.2500 cumulative',
+      '4 input / 2 output tokens · $0.5000 cumulative',
+      '4 input / 2 output tokens · $0.6000 cumulative',
+    ])
+    await runtime.dispose()
+  })
+
   it('starts the Query in the Claude mode mapped from DSH access', async () => {
     const transport = factory()
     const owner = fakeAgent()
