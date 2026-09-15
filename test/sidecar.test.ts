@@ -41,6 +41,36 @@ describe('Claude sidecar repository', () => {
     expect(projection.tasks?.tasks).toEqual([{ taskId: 'task', description: 'work', status: 'running', originTurn: 1 }])
   })
 
+  it('sheds the progress telemetry a projection still carries', async () => {
+    const store = await repository()
+    const file = `${Buffer.from('session').toString('base64url')}.json`
+    await writeFile(join(store.root, file), `${JSON.stringify({
+      schemaVersion: 1,
+      revision: 1,
+      activities: [
+        { turn: 1, step: 1, ordinal: 1, kind: 'status', phase: 'completed', title: 'Claude Code thinking tokens' },
+        { turn: 1, step: 1, ordinal: 2, kind: 'tool-call', phase: 'started', toolName: 'Read', title: 'Read' },
+        // Tool-progress telemetry as the unknown-type fallback filed it before
+        // the message type was classified.
+        { turn: 1, step: 1, ordinal: 3, kind: 'warning', phase: 'completed', title: 'Unknown Claude SDK message: tool_progress' },
+        // So is a type this package has since learned: the notice is stale, not
+        // evidence, and nothing reads it.
+        { turn: 1, step: 1, ordinal: 4, kind: 'warning', phase: 'completed', title: 'Unknown Claude SDK message: command_lifecycle' },
+        // An unknown type this package does not claim is still evidence, so the
+        // first sighting stays and its repetitions do not.
+        { turn: 1, step: 1, ordinal: 5, kind: 'warning', phase: 'completed', title: 'Unknown Claude SDK message: mirror_error' },
+        { turn: 1, step: 1, ordinal: 6, kind: 'warning', phase: 'completed', title: 'Unknown Claude SDK message: mirror_error' },
+      ],
+    })}\n`)
+    const projection = await store.read('session')
+    expect(projection.activities.map(item => item.ordinal)).toEqual([2, 5])
+    // The next write rebuilds the document without them, so a session that
+    // accumulated a full window of telemetry stops paying for it.
+    await store.appendActivity('session', { turn: 1, step: 1, ordinal: 7, kind: 'tool-result', toolName: 'Read', title: 'Read' })
+    const stored = JSON.parse(await readFile(join(store.root, file), 'utf8')) as { activities: { ordinal: number }[] }
+    expect(stored.activities.map(item => item.ordinal)).toEqual([2, 5, 7])
+  })
+
   it('upserts redacted visible transcript text at a stable ordinal', async () => {
     const store = await repository()
     await store.appendActivity('session', {

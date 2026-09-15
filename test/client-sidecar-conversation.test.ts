@@ -942,6 +942,44 @@ describe('Claude sidecar conversation projection', () => {
     } as never)).toEqual({ turn: 2 })
     expect(selectClaudeTurn({ turn: { data: { get: () => undefined } } } as never)).toBeNull()
   })
+
+  it('keeps one row for a mid-turn message, from queued through run', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 1, kind: 'status', phase: 'updated', commandUuid: 'p1', title: 'Claude Code queued your message', summary: 'Claude reads it at the next step of this turn' },
+      { turn: 2, step: 1, ordinal: 2, kind: 'status', phase: 'updated', commandUuid: 'p1', title: 'Claude Code picked up your queued message' },
+      { turn: 2, step: 1, ordinal: 3, kind: 'status', phase: 'completed', commandUuid: 'p1', title: 'Claude Code ran your queued message' },
+      // A status ping with no identity stays out, as before.
+      { turn: 2, step: 1, ordinal: 4, kind: 'status', phase: 'completed', title: 'Claude Code requesting' },
+    ]
+    const rows = lifecycleRows(activities, 2, 1)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.activity).toMatchObject({
+      commandUuid: 'p1',
+      title: 'Claude Code ran your queued message',
+      phase: 'completed',
+    })
+    expect(rows[0]?.running).toBe(false)
+    // The row is drawn, and reads as the reader's own message rather than as
+    // protocol noise.
+    const markup = renderToStaticMarkup(createElement(ClaudeActivityNode, {
+      node: { kind: 'claude-activity-step', data: { turn: 2, step: 1 } },
+      useClaudeProjection: ((selector: (value: unknown) => unknown) => selector({
+        owned: true, revision: 1, activities, commands: [],
+      })) as never,
+      t: (key: string) => key,
+    } as never))
+    expect(markup).toContain('Claude Code ran your queued message')
+  })
+
+  it('draws a hook that is running and the failure it ended in', () => {
+    const activities: ClaudeActivityEvent[] = [
+      { turn: 2, step: 1, ordinal: 1, kind: 'status', phase: 'updated', hookId: 'h1', title: 'Claude Code hook guard', summary: 'Stop running' },
+      { turn: 2, step: 1, ordinal: 2, kind: 'status', phase: 'failed', hookId: 'h1', title: 'Claude Code hook guard', summary: 'Stop exited 2', isError: true },
+    ]
+    const rows = lifecycleRows(activities, 2, 1)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.activity).toMatchObject({ hookId: 'h1', phase: 'failed', isError: true })
+  })
 })
 
 describe('renderer ownership per step', () => {
