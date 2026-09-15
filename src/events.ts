@@ -59,6 +59,13 @@ export interface ClaudeActivityEvent {
   /** Claude task-board identity for lifecycle activity; never a transcript path. */
   taskId?: string
   toolUseId?: string
+  /** Prompt identity a command-lifecycle row belongs to: the uuid this host put
+   *  on the message the CLI accepted. One row per prompt, updated in place. */
+  commandUuid?: string
+  /** One hook invocation, folded across its start and its response. */
+  hookId?: string
+  hookName?: string
+  hookEvent?: string
   /** Enclosing Claude tool call for subagent-nested activity. */
   parentToolUseId?: string
   toolName?: string
@@ -82,6 +89,43 @@ export interface ClaudeContextUsageCategory {
   tokens: number
   color: string
   isDeferred?: boolean
+}
+
+/** What one Claude turn is doing right now.
+ *
+ *  This is deliberately NOT part of the activity log: it is a state, not
+ *  evidence, and it changes many times per step (the CLI streams a thinking
+ *  estimate per token chunk). It travels as a live projection delta, is never
+ *  written, and is cleared when the turn it belongs to settles — so a reader
+ *  watching a turn has something that moves without a row per frame. */
+export interface ClaudeLiveProgress {
+  /** The turn this state belongs to: a transcript turn shows the pill only for
+   *  its own turn. */
+  readonly turn: number
+  /** `thinking` while the model works, `tool` while one of its tools runs,
+   *  `waiting` between them (a tool result being folded back in). */
+  readonly state: 'thinking' | 'tool' | 'waiting'
+  /** The tool that is running, for `tool`. */
+  readonly label?: string
+  /** How long the CLI says the current tool has been running. */
+  readonly elapsedMs?: number
+}
+
+const LIVE_STATES: ReadonlySet<string> = new Set(['thinking', 'tool', 'waiting'])
+
+/** Read a live state off the wire, or nothing when it does not describe one. */
+export function normalizeLiveProgress(value: unknown): ClaudeLiveProgress | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  if (!Number.isSafeInteger(input.turn) || (input.turn as number) < 0) return undefined
+  if (typeof input.state !== 'string' || !LIVE_STATES.has(input.state)) return undefined
+  const elapsed = input.elapsedMs
+  return {
+    turn: input.turn as number,
+    state: input.state as ClaudeLiveProgress['state'],
+    ...(typeof input.label !== 'string' || input.label.length === 0 ? {} : { label: input.label.slice(0, 128) }),
+    ...(typeof elapsed !== 'number' || !Number.isFinite(elapsed) || elapsed < 0 ? {} : { elapsedMs: Math.floor(elapsed) }),
+  }
 }
 
 export interface ClaudeContextUsageEvent {
@@ -116,6 +160,15 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key|env|environ|environment)(?:$|[_-])/i
 const MAX_SUMMARY_CHARS = 1_000
+/** A reasoning block gets its own, larger bound.
+ *
+ *  The generic budget is a row's summary — a line describing a tool. Thinking is
+ *  the one summary a reader reads as prose, and at 1,000 characters the median
+ *  row was exactly at the cap: more than half of what Claude reasoned was a
+ *  fragment that stopped mid-sentence. The bound still exists (a step can think
+ *  for tens of thousands of characters, and this is a durable document), just
+ *  wide enough to hold a thought. */
+const MAX_THINKING_CHARS = 4_000
 const MAX_DETAIL_CHARS = 4_000
 const MAX_TRANSCRIPT_TEXT_CHARS = 64_000
 const MAX_DEPTH = 6
@@ -127,7 +180,13 @@ const SECRET_ASSIGNMENT = /((?:password|passwd|secret|token|api[_-]?key|authoriz
 const BEARER_TOKEN = /(\bbearer\s+)[A-Za-z0-9._~+/=-]+/giu
 const PREFIXED_TOKEN = /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|ghp_|github_pat_)[A-Za-z0-9_-]{8,}/giu
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu
-const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/giu
+/** The scheme is bounded on purpose. Unbounded, this pattern is quadratic on any
+ *  long unbroken run that is not a URL: at every offset the greedy scheme run
+ *  scans to the end of the string before failing to find `://`, so redacting a
+ *  70 kB token took 8 seconds and stalled whatever was normalizing it. No real
+ *  scheme comes close to 32 characters, and the bounded run matches every
+ *  userinfo URL the unbounded one did. */
+const URL_USERINFO = /([a-z][a-z0-9+.-]{0,31}:\/\/[^:\s/@]+:)[^@\s/]+@/giu
 const URL_SECRET_PARAM = /([?&](?:password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)=)[^&#\s]+/giu
 
 export function boundText(value: string, maxChars: number): string {
@@ -201,13 +260,17 @@ export function normalizeActivity(
   if (activity.phase !== undefined) normalized.phase = activity.phase
   if (activity.taskId !== undefined) normalized.taskId = redactText(activity.taskId, 128)
   if (activity.toolUseId !== undefined) normalized.toolUseId = redactText(activity.toolUseId, 256)
+  if (activity.commandUuid !== undefined) normalized.commandUuid = redactText(activity.commandUuid, 128)
+  if (activity.hookId !== undefined) normalized.hookId = redactText(activity.hookId, 128)
+  if (activity.hookName !== undefined) normalized.hookName = redactText(activity.hookName, 256)
+  if (activity.hookEvent !== undefined) normalized.hookEvent = redactText(activity.hookEvent, 128)
   if (activity.parentToolUseId !== undefined) normalized.parentToolUseId = redactText(activity.parentToolUseId, 256)
   if (activity.toolName !== undefined) normalized.toolName = redactText(activity.toolName, 256)
   if (activity.title !== undefined) normalized.title = redactText(activity.title, MAX_SUMMARY_CHARS)
   if (activity.summary !== undefined) {
     normalized.summary = redactText(
       typeof activity.summary === 'string' ? activity.summary : safeDetail(activity.summary) ?? '',
-      MAX_SUMMARY_CHARS,
+      activity.kind === 'thinking' ? MAX_THINKING_CHARS : MAX_SUMMARY_CHARS,
     )
   }
   const detail = safeDetail(activity.detail)
