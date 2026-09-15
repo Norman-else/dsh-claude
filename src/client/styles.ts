@@ -3779,3 +3779,54 @@ export const rewindModalMessage: CSSProperties = {
   fontSize: 13,
   lineHeight: '20px',
 }
+
+export const permissionSelectClass = 'dshClaudePermissionSelect'
+export const permissionSelectTriggerClass = 'dshClaudePermissionSelectTrigger'
+export const permissionSelectIconClass = 'dshClaudePermissionSelectIcon'
+export const permissionSelectLabelClass = 'dshClaudePermissionSelectLabel'
+export const permissionSelectChevronClass = 'dshClaudePermissionSelectChevron'
+
+/** The Host's PermissionSelect trigger (PermissionSelect.module.css
+ *  `.trigger`): a 28px capsule of 13px/500 secondary text with a 4px gap,
+ *  hover fill, no border. Matched here so the plugin's selector sits where the
+ *  Host's did without the row noticing the swap. */
+export const permissionSelectCss = `
+.${permissionSelectClass} { display: inline-flex; align-items: center; min-width: 0; }
+.${permissionSelectTriggerClass} {
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-radius: 24px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  outline: none;
+}
+.${permissionSelectTriggerClass}:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.${permissionSelectTriggerClass}:disabled { cursor: default; opacity: 0.5; }
+.${permissionSelectTriggerClass}:focus-visible { outline: none; }
+.${permissionSelectIconClass} { display: inline-flex; flex: none; }
+.${permissionSelectLabelClass} { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.${permissionSelectChevronClass} { flex: none; transition: transform 120ms ease; }
+.${permissionSelectChevronClass}[data-open] { transform: rotate(180deg); }
+`
+
+export const permissionSelectRowClass = 'dshClaudePermissionSelectRow'
+export const permissionSelectRowNameClass = 'dshClaudePermissionSelectRowName'
+export const permissionSelectRowHintClass = 'dshClaudePermissionSelectRowHint'
+
+/** A mode row: its name, and under it the one line that says what the mode
+ *  does. In the row rather than a native title, which the Host never draws. */
+export const permissionSelectRowCss = `
+.${permissionSelectRowClass} { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.${permissionSelectRowNameClass} { white-space: nowrap; }
+.${permissionSelectRowHintClass} { font-size: 12px; line-height: 16px; font-weight: 400; color: var(--dsw-alias-label-tertiary); white-space: normal; max-width: 260px; }
+`

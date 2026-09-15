@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readGlobalSettings, readRenderMode, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
+import { readDefaultPermissionMode, readGlobalSettings, readRenderMode, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
 import { isGlobalSettingsView } from '../src/client/ClaudeCodeSettings.tsx'
 
 const roots: string[] = []
@@ -104,6 +104,28 @@ describe('Claude Code global settings registry', () => {
     await updateGlobalSettings({ renderer: 'plugin' }, { paths })
     expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
     await expect(updateGlobalSettings({ renderer: 'Native' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
+  it('offers every Claude Code permission mode as the default, auto unless changed', async () => {
+    const paths = await fixture()
+    const initial = await readGlobalSettings({ paths })
+    expect(initial.settings.find(setting => setting.key === 'permissionMode')).toMatchObject({ kind: 'select', value: 'auto', effect: 'next-turn' })
+    expect(initial.settings.find(setting => setting.key === 'permissionMode')?.options.map(option => option.value))
+      .toEqual(['plan', 'default', 'acceptEdits', 'dontAsk', 'auto', 'bypassPermissions'])
+    await expect(readDefaultPermissionMode({ paths })).resolves.toBe('auto')
+
+    await updateGlobalSettings({ permissionMode: 'acceptEdits' }, { paths })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({ permissionMode: 'acceptEdits' })
+    await expect(readDefaultPermissionMode({ paths })).resolves.toBe('acceptEdits')
+    // The default clears the key; a mode Claude Code lacks is refused.
+    await updateGlobalSettings({ permissionMode: 'auto' }, { paths })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
+    await expect(updateGlobalSettings({ permissionMode: 'yolo' }, { paths })).rejects.toThrow('Invalid value')
+    // Unreadable settings mean the classifier decides, not a crash.
+    await writeFile(paths.pluginSettingsFile, JSON.stringify({ permissionMode: 'yolo' }))
+    await expect(readDefaultPermissionMode({ paths })).resolves.toBe('auto')
+    await writeFile(paths.pluginSettingsFile, 'not json')
+    await expect(readDefaultPermissionMode({ paths })).resolves.toBe('auto')
   })
 
   it('falls back to the plugin transcript for a malformed or absent renderer value', async () => {

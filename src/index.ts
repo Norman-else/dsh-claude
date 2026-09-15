@@ -39,16 +39,18 @@ import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
+import { registerClaudePermissionModeRoute } from './permission-mode-routes.ts'
+import { claudePermissionMode, type ClaudePermissionModeView } from './permission-mode.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
 import { SessionRootLedger } from './session-root-ledger.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
-import { claudeModelValue, probeClaudeModels } from './model-catalog.ts'
+import { claudeModelRow, claudeModelValue, probeClaudeModels } from './model-catalog.ts'
 import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
-import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { readDefaultPermissionMode, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -272,6 +274,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     config: supervisorConfig,
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,
+    defaultPermissionMode: () => readDefaultPermissionMode(),
   })
   let resolutionError: unknown
   try {
@@ -539,11 +542,47 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       },
     })
     registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
+    const claudeSessionBusy = (sessionId: string): boolean => supervisor.snapshots().some(item => (
+      item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')
+    ))
+    /** The Host's preset service, when the profile mounts one. Not part of
+     *  this plugin's typed host surface; read through an untyped escape hatch
+     *  so a Host without it leaves Claude to enforce the mode alone. */
+    type PermissionPresetService = {
+      readonly names: readonly string[]
+      apply(session: Agent['session'], name: string, setApproval: (policy: string) => void): void
+    }
+    registerClaudePermissionModeRoute(webCtx, sidecar, {
+      ownsSession: ownsClaudeSession,
+      busy: claudeSessionBusy,
+      applyHostPreset: async (sessionId, sandbox) => {
+        const presets = webCtx.get('permissionPresets') as PermissionPresetService | undefined
+        const agent = webCtx.agents.get(sessionId as never)
+        if (presets === undefined || agent === undefined || !presets.names.includes(sandbox)) return false
+        // The command handler's own live-session path: the approval service
+        // hears the policy for the running agent, not just the log.
+        presets.apply(agent.session, sandbox, policy => { webCtx.approval.setPolicy(agent, policy as never) })
+        return true
+      },
+    })
+    const permissionModeForClaudeSession = async (sessionId: string): Promise<ClaudePermissionModeView | undefined> => {
+      const agent = webCtx.agents.get(sessionId as never)
+      if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
+      const projection = await sidecar.read(sessionId)
+      const folded = claudePermissionMode(agent.session.snapshotEvents(), projection.permissionMode ?? await readDefaultPermissionMode())
+      // `auto` is per model. The model is only known here while a process is
+      // live; a session between processes is offered the mode, and the CLI
+      // answers for itself on the next spawn.
+      const live = supervisor.snapshots().find(item => item.sessionId === sessionId)
+      const autoSupported = live === undefined ? undefined : claudeModelRow(live.model)?.supportsAutoMode
+      const mode = folded === 'auto' && autoSupported === false ? 'default' : folded
+      return { mode, locked: claudeSessionBusy(sessionId), ...(autoSupported === undefined ? {} : { autoSupported }) }
+    }
     registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const cwd = agent.session.header.cwd
       return cwd === undefined ? undefined : repositoryStatus.inspect(cwd)
-    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession)
+    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession, permissionModeForClaudeSession)
   })
 }

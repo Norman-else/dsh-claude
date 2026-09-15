@@ -292,6 +292,7 @@ export function visibleGlobalSettings(settings: readonly GlobalSettingView[]): r
  *  paragraph under the card; it now hangs off the label as a hover hint. */
 export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKey; hint: ClaudeCodeSettingsKey }>> = {
   outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
+  permissionMode: { label: 'defaultPermissionMode', hint: 'defaultPermissionModeEffect' },
   renderer: { label: 'renderer', hint: 'rendererEffect' },
   prose: { label: 'prose', hint: 'proseEffect' },
   alerts: { label: 'alerts', hint: 'alertsEffect' },
@@ -304,6 +305,12 @@ export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKe
  *  keyed `<setting>:<option>`. Options discovered on the machine (output style
  *  names) carry no entry and keep the label the route reported. */
 export const SETTING_OPTION_COPY: Readonly<Record<string, ClaudeCodeSettingsKey>> = {
+  'permissionMode:plan': 'permissionModePlan',
+  'permissionMode:default': 'permissionModeDefault',
+  'permissionMode:acceptEdits': 'permissionModeAcceptEdits',
+  'permissionMode:dontAsk': 'permissionModeDontAsk',
+  'permissionMode:auto': 'permissionModeAuto',
+  'permissionMode:bypassPermissions': 'permissionModeBypass',
   'renderer:plugin': 'rendererPlugin',
   'renderer:native': 'rendererNative',
   'prose:plain': 'prosePlain',

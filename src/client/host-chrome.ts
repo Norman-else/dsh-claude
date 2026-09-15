@@ -10,6 +10,7 @@
  */
 import { claudeMarkUrl } from './claude-mark.ts'
 import { CLAUDE_SEAT_ATTRIBUTE, trackClaudePresetSeats } from './preset-seat-mark.ts'
+import { permissionSelectClass as PERMISSION_SELECT_CLASS } from './styles.ts'
 
 /** The `Session log` capsule is contributed by
  *  `@deepseek-ai/dsh-session-log-export` into
@@ -49,7 +50,16 @@ const PRESET_SEAT_CSS = [
     `background:${claudeMarkUrl()} center/contain no-repeat}`,
 ].join('')
 
-export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}`
+/** The Host's access selector (PermissionSelect, in the composer's `modes`
+ *  group) offers DSH's three sandbox modes; a Claude session runs Claude
+ *  Code's own modes from this plugin's selector instead, which sits in the
+ *  same tool row (`conversation.input.left`). The Host's is not a slot, so it
+ *  is hidden rather than shadowed, and only in a row where the plugin's own
+ *  selector has mounted -- which it does for Claude sessions alone. The Host
+ *  element is found by its `triggerLabel` local name, unique to that module. */
+const PERMISSION_SELECT_CSS = `[class*="_tools"]:has(.${PERMISSION_SELECT_CLASS}) [class*="_modes"]>*:has(span[class*="_triggerLabel"]){display:none}`
+
+export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}${PERMISSION_SELECT_CSS}`
 
 /** Install the stylesheet and the one DOM flag it depends on.
  *  @returns a disposer that removes both again. */

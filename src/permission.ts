@@ -89,7 +89,15 @@ export function permissionReason(
   options: Parameters<CanUseTool>[2],
 ): string {
   if (planText(toolName, input) !== undefined) return PLAN_APPROVAL_PROMPT
-  const prompt = options.title ?? options.description ?? options.decisionReason ?? `Claude Code wants to use ${toolName}.`
+  const title = options.title ?? options.description
+  // Under `auto`, an ask that reaches here is one the classifier escalated,
+  // and `decisionReason` says why (a safety check, a rule, a call the
+  // classifier would not vouch for). The title alone reads as an ordinary
+  // ask; the reason is what the user is actually deciding on.
+  const reason = options.decisionReason?.trim()
+  const prompt = title === undefined
+    ? reason ?? `Claude Code wants to use ${toolName}.`
+    : reason === undefined || reason === title ? title : `${title}\n${reason}`
   const detail = safeDetail(input)
   return boundText(detail === undefined ? prompt : `${prompt}\nInput: ${detail}`, MAX_REASON_CHARS)
 }

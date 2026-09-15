@@ -9,6 +9,7 @@ import type { ClaudeActivityEvent } from './events.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
 import type { RepositoryStatus } from './repository-status.ts'
 import type { ReviewComment } from './review-comments.ts'
+import type { ClaudePermissionModeView } from './permission-mode.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
 /** Slow-moving metadata refresh and stream heartbeat cadence; deliberately off
@@ -54,6 +55,8 @@ interface ProjectionMeta {
   /** Other checkouts the session wrote into; see touched-repositories.ts. */
   readonly repositories?: readonly RepositoryStatus[]
   readonly reviewComments: readonly ReviewComment[]
+  /** The Claude permission mode and whether a turn holds it; see permission-mode.ts. */
+  readonly permissionMode?: ClaudePermissionModeView
 }
 
 function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Record<string, unknown> {
@@ -68,6 +71,7 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     ...(meta.repository === undefined ? {} : { repository: meta.repository }),
     ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
     reviewComments: meta.reviewComments,
+    ...(meta.permissionMode === undefined ? {} : { permissionMode: meta.permissionMode }),
     // Ranges only: the chain anchors behind a rewind are Claude transcript
     // identities and stay on this side of the boundary.
     ...(projection.rewind === undefined ? {} : { rewind: { ranges: projection.rewind.ranges } }),
@@ -93,6 +97,7 @@ export function registerClaudeProjectionRoute(
   repositoryForSession: (sessionId: string) => Promise<RepositoryStatus | undefined> = async () => undefined,
   reviewCommentsForSession: (sessionId: string) => readonly ReviewComment[] = () => [],
   extraRepositoriesForSession: (sessionId: string, activities: readonly ClaudeActivityEvent[]) => Promise<readonly RepositoryStatus[]> = async () => [],
+  permissionModeForSession: (sessionId: string) => Promise<ClaudePermissionModeView | undefined> = async () => undefined,
 ): void {
   const info = (message: string): void => {
     ctx.logger?.info?.(message)
@@ -111,14 +116,16 @@ export function registerClaudeProjectionRoute(
   const assembleMeta = async (sessionId: string, activities?: readonly ClaudeActivityEvent[]): Promise<ProjectionMeta> => {
     const meta = localMeta(sessionId)
     if (!meta.owned) return meta
-    const [repository, repositories] = await Promise.all([
+    const [repository, repositories, permissionMode] = await Promise.all([
       repositoryForSession(sessionId),
       extraRepositoriesForSession(sessionId, activities ?? (await sidecar.read(sessionId)).activities),
+      permissionModeForSession(sessionId),
     ])
     return {
       ...meta,
       ...(repository === undefined ? {} : { repository }),
       ...(repositories.length === 0 ? {} : { repositories }),
+      ...(permissionMode === undefined ? {} : { permissionMode }),
     }
   }
 
@@ -155,6 +162,7 @@ export function registerClaudeProjectionRoute(
         owned: meta.owned,
         commands: meta.commands,
         ...(meta.repository === undefined ? {} : { repository: meta.repository }),
+        ...(meta.permissionMode === undefined ? {} : { permissionMode: meta.permissionMode }),
         ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
         reviewComments: meta.reviewComments,
       })

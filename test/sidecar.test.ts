@@ -120,6 +120,17 @@ describe('Claude sidecar repository', () => {
     }).activities).toHaveLength(1)
   })
 
+  it('keeps the chosen Claude permission mode and refuses one Claude Code lacks', async () => {
+    const store = await repository()
+    await store.writePermissionMode('session', 'dontAsk')
+    expect((await store.read('session')).permissionMode).toBe('dontAsk')
+    // Choosing the same mode again is not a change worth a revision.
+    const before = (await store.read('session')).revision
+    await store.writePermissionMode('session', 'dontAsk')
+    expect((await store.read('session')).revision).toBe(before)
+    expect(() => parseClaudeSidecar({ schemaVersion: 1, revision: 0, activities: [], permissionMode: 'yolo' })).toThrow('invalid sidecar permission mode')
+  })
+
   it('rejects malformed persisted documents', () => {
     expect(() => parseClaudeSidecar({ schemaVersion: 2, revision: 0, activities: [] })).toThrow('invalid sidecar')
     expect(() => parseClaudeSidecar({

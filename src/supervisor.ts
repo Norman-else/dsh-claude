@@ -31,9 +31,10 @@ import { createPermissionBridge } from './permission.ts'
 import { PlanFeedbackGate } from './plan-feedback.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
+import { claudePermissionMode, type ClaudePermissionMode } from './permission-mode.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
-import { claudeModelValue, recordClaudeModels } from './model-catalog.ts'
+import { claudeModelRow, claudeModelValue, recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
@@ -73,13 +74,8 @@ export type ClaudeTurnStreamEvent =
 
 export type ClaudeThinkingMode = 'off' | 'ultracode' | EffortLevel
 
-export type DshSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
-
-const CLAUDE_MODE_BY_SANDBOX: Readonly<Record<DshSandboxMode, PermissionMode>> = {
-  'read-only': 'plan',
-  'workspace-write': 'acceptEdits',
-  'danger-full-access': 'bypassPermissions',
-}
+export type { DshSandboxMode } from './permission-mode.ts'
+export { claudePermissionMode } from './permission-mode.ts'
 
 /** Appended to the Claude Code system prompt on every session.
  *
@@ -96,19 +92,6 @@ export const PLAN_MODE_HANDOFF_PROMPT =
   'When you are in plan mode and the plan is written, end the turn by calling ExitPlanMode with the plan. '
   + 'Do not end a plan-mode turn by asking the user for confirmation in prose: '
   + 'the user reads and approves the plan through ExitPlanMode, and a turn that stops short of that call shows them nothing.'
-
-/** Fold DSH's native access selector into Claude Code's closest permission mode. */
-export function claudePermissionMode(events: readonly { type: string; data: unknown }[]): PermissionMode {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.type !== 'sandbox/mode') continue
-    const mode = (event.data as { mode?: unknown }).mode
-    return typeof mode === 'string' && mode in CLAUDE_MODE_BY_SANDBOX
-      ? CLAUDE_MODE_BY_SANDBOX[mode as DshSandboxMode]
-      : 'plan'
-  }
-  return 'plan'
-}
 
 export interface ClaudeTurnRequest {
   agent: Agent
@@ -360,6 +343,7 @@ export class ClaudeSupervisor {
   readonly #queryFactory: ClaudeQueryFactory
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
+  readonly #defaultPermissionMode: () => Promise<ClaudePermissionMode | undefined>
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -382,6 +366,9 @@ export class ClaudeSupervisor {
     queryFactory?: ClaudeQueryFactory
     runDetached?: <T>(operation: () => T) => T
     sidecar?: ClaudeSidecarRepository
+    /** The mode a session runs under until it chooses one; absent, the DSH
+     *  sandbox alone decides (see permission-mode.ts). */
+    defaultPermissionMode?: () => Promise<ClaudePermissionMode | undefined>
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
@@ -390,6 +377,7 @@ export class ClaudeSupervisor {
     this.#queryFactory = dependencies.queryFactory ?? (params => claudeQuery(params))
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
     this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
+    this.#defaultPermissionMode = dependencies.defaultPermissionMode ?? (async () => undefined)
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -862,8 +850,21 @@ export class ClaudeSupervisor {
     }
   }
 
+  /** The mode a turn runs under: the session's choice, else the configured
+   *  default, folded against the DSH sandbox; and `auto` only on a model the
+   *  catalog does not rule out, since the CLI refuses it elsewhere. */
+  async #permissionModeFor(
+    events: readonly { type: string; data: unknown }[],
+    chosen: ClaudePermissionMode | undefined,
+    model: string,
+  ): Promise<ClaudePermissionMode> {
+    const mode = claudePermissionMode(events, chosen ?? await this.#defaultPermissionMode())
+    return mode === 'auto' && claudeModelRow(model)?.supportsAutoMode === false ? 'default' : mode
+  }
+
   async #syncPermissionMode(entry: SupervisorEntry): Promise<void> {
-    const mode = claudePermissionMode(entry.ownerAgent.session.snapshotEvents())
+    const projection = await this.#sidecar.read(entry.sessionId)
+    const mode = await this.#permissionModeFor(entry.ownerAgent.session.snapshotEvents(), projection.permissionMode, entry.model)
     if (mode === entry.permissionMode) return
     await this.#control(entry, entry.query.setPermissionMode(mode), 'Claude Code permission mode switch')
     entry.permissionMode = mode
@@ -1001,7 +1002,7 @@ export class ClaudeSupervisor {
     const pendingRewind = projection.rewind?.pending
     const forkAt = pendingRewind !== undefined && 'resumeAt' in pendingRewind ? pendingRewind.resumeAt : undefined
     const startFresh = pendingRewind !== undefined && 'fresh' in pendingRewind
-    const permissionMode = claudePermissionMode(agent.session.snapshotEvents())
+    const permissionMode = await this.#permissionModeFor(agent.session.snapshotEvents(), projection.permissionMode, model)
     const entry = {
       sessionId,
       ownerAgent: agent,

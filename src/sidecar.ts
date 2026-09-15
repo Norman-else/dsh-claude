@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isClaudePermissionMode, type ClaudePermissionMode } from './permission-mode.ts'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -47,6 +48,9 @@ export interface ClaudeSidecarProjection {
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
   readonly rewind?: ClaudeRewindState
+  /** The Claude permission mode the user picked in this plugin's selector;
+   *  see permission-mode.ts for how it folds with the Host's sandbox mode. */
+  readonly permissionMode?: ClaudePermissionMode
 }
 
 /** Change notification published to live subscribers after each accepted write.
@@ -186,6 +190,9 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
   const parsedRewind = input.rewind === undefined ? undefined : rewind(input.rewind)
+  if (input.permissionMode !== undefined && !isClaudePermissionMode(input.permissionMode)) {
+    throw new Error('dsh-claude: invalid sidecar permission mode')
+  }
   if ((input.binding !== undefined && parsedBinding === undefined)
     || (input.contextUsage !== undefined && parsedUsage === undefined)
     || (input.tasks !== undefined && parsedTasks === undefined)
@@ -200,6 +207,7 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     ...(parsedUsage === undefined ? {} : { contextUsage: parsedUsage }),
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
     ...(parsedRewind === undefined ? {} : { rewind: parsedRewind }),
+    ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
   }
 }
 
@@ -418,6 +426,12 @@ export class ClaudeSidecarRepository {
   writeContextUsage(sessionId: string, value: ClaudeContextUsageInput): Promise<ClaudeSidecarProjection> {
     const normalized = normalizeContextUsage(value)
     return this.#update(sessionId, current => ({ ...current, contextUsage: normalized }), false, { kind: 'contextUsage', value: normalized })
+  }
+
+  /** Record the mode the selector picked. No delta: the projection carries
+   *  it as metadata, which the carrier refreshes on its own cadence. */
+  writePermissionMode(sessionId: string, mode: ClaudePermissionMode): Promise<ClaudeSidecarProjection> {
+    return this.#update(sessionId, current => ({ ...current, permissionMode: mode }), true)
   }
 
   writeTasks(sessionId: string, value: readonly ClaudeTaskInfo[]): Promise<ClaudeSidecarProjection> {

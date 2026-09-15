@@ -36,6 +36,8 @@ export interface ClaudeModelRow {
   readonly name: string
   readonly description: string
   readonly contextWindow?: number
+  /** Whether the CLI says this model can run the `auto` permission mode. */
+  readonly supportsAutoMode?: boolean
 }
 
 /** A 1M-context route spells it in the id (`opus[1m]`, `claude-fable-5-1[1m]`). */
@@ -94,6 +96,7 @@ function projectModel(row: ModelInfo, id: string): ClaudeModelRow {
     name: row.displayName,
     description: row.description,
     ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(row.supportsAutoMode === undefined ? {} : { supportsAutoMode: row.supportsAutoMode }),
   }
 }
 

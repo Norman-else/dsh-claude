@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { CLAUDE_PERMISSION_MODES, isClaudePermissionMode, type ClaudePermissionMode } from './permission-mode.ts'
 import { homedir } from 'node:os'
 import { chmod, mkdir, opendir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
@@ -226,6 +227,35 @@ const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
   },
 }
 
+/** `auto` unless the user says otherwise: Claude Code's classifier approves the
+ *  routine and asks about the rest, which is the mode a fresh session should
+ *  start in when nobody has thought about it yet. */
+export const DEFAULT_CLAUDE_PERMISSION_MODE: ClaudePermissionMode = 'auto'
+
+/** The Claude permission mode a session runs under until its own selector
+ *  is used. Plugin settings: DSH's access preset still decides the sandbox,
+ *  and a default this sandbox cannot carry (`auto` under read-only) yields to
+ *  the sandbox's own mode; see permission-mode.ts. Read per turn, so an
+ *  existing session that never chose picks a change up on its next turn. */
+const PERMISSION_MODE: SelectSettingDescriptor = {
+  key: 'permissionMode',
+  kind: 'select',
+  document: 'plugin',
+  effect: 'next-turn',
+  async options() {
+    return CLAUDE_PERMISSION_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) {
+    const value = document.permissionMode
+    return isClaudePermissionMode(value) ? value : DEFAULT_CLAUDE_PERMISSION_MODE
+  },
+  apply(document, value) {
+    if (!isClaudePermissionMode(value)) throw new Error('Invalid value for global setting permissionMode')
+    if (value === DEFAULT_CLAUDE_PERMISSION_MODE) delete document.permissionMode
+    else document.permissionMode = value
+  },
+}
+
 /** Which renderer draws Claude's visible output. Plugin settings, not Claude's:
  *  the CLI has no opinion about how DSH paints a turn. The option labels stay
  *  machine-readable ids; the Client translates the two known values. */
@@ -328,7 +358,7 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses, 'immediate')
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, PERMISSION_MODE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
@@ -401,6 +431,18 @@ export async function readRenderMode(deps: GlobalSettingsDependencies = {}): Pro
     return DEFAULT_CLAUDE_RENDER_MODE
   }
   return isClaudeRenderMode(document.renderer) ? document.renderer : DEFAULT_CLAUDE_RENDER_MODE
+}
+
+/** The mode a session runs under until it chooses one. A missing, unreadable,
+ *  or malformed plugin settings file means Claude Code's classifier decides. */
+export async function readDefaultPermissionMode(deps: GlobalSettingsDependencies = {}): Promise<ClaudePermissionMode> {
+  let document: JsonObject
+  try {
+    document = await readDocument(pathsFor(deps).pluginSettingsFile)
+  } catch {
+    return DEFAULT_CLAUDE_PERMISSION_MODE
+  }
+  return isClaudePermissionMode(document.permissionMode) ? document.permissionMode : DEFAULT_CLAUDE_PERMISSION_MODE
 }
 
 export async function readWorktreeBranchPrefix(deps: GlobalSettingsDependencies = {}): Promise<string> {

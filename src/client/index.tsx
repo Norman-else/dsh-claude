@@ -40,6 +40,8 @@ import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-ros
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './ClaudePromptSaveAction.tsx'
+import { ClaudePermissionSelect, type ClaudePermissionSelectInjected } from './ClaudePermissionSelect.tsx'
+import { setClaudePermissionMode } from './permission-mode-api.ts'
 import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from './ClaudePromptRefineAction.tsx'
 import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
@@ -337,6 +339,25 @@ ${error.stack ?? ''}`
   // In the composer's own tool row beside the attach and access controls: the
   // owner hands this slot the live draft, and an icon there costs the layout
   // nothing, where a docked row would move the composer on every keystroke.
+  // Claude Code's own permission modes, in the seat the Host's three-mode
+  // access selector holds for other presets (host-chrome.ts hides that one
+  // for Claude sessions). First in the row, where the access control was.
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'claude-permission-mode',
+    order: 30,
+    locale: namespace,
+    inject: (sessionId: string): ClaudePermissionSelectInjected => {
+      const scope = sessions?.scope(sessionId as SessionId)
+      return {
+        t,
+        setMode: mode => setClaudePermissionMode(sessionId, mode),
+        ...(scope === undefined || conversation === undefined
+          ? {}
+          : { notify: (level, text) => { sessionInput(conversation, scope).notify(level, text) } }),
+      }
+    },
+  }, ClaudePermissionSelect))
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',
     id: 'claude-prompt-save',

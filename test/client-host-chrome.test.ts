@@ -28,6 +28,17 @@ describe('host chrome suppression', () => {
     }
   })
 
+  it('hides the Host access selector only in a tool row holding this plugin\'s own', () => {
+    // The Host element is found by the PermissionSelect module's own local
+    // name, and only inside a row where the plugin's selector has mounted:
+    // that selector mounts for Claude sessions alone, so other presets keep
+    // the Host's three-mode control.
+    expect(HOST_CHROME_CSS).toContain('[class*="_tools"]:has(.dshClaudePermissionSelect) [class*="_modes"]>*:has(span[class*="_triggerLabel"]){display:none}')
+    for (const rule of HOST_CHROME_CSS.split('}').map(part => part.trim()).filter(Boolean)) {
+      if (rule.includes('_triggerLabel')) expect(rule.startsWith('[class*="_tools"]:has(.dshClaudePermissionSelect)')).toBe(true)
+    }
+  })
+
   it('restores the slack the tab row used to give the divider', () => {
     expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-header-diff){padding-bottom:10px}')
   })

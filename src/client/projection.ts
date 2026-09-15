@@ -6,6 +6,7 @@ import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH, isClaudeRenderMode } from '../constants.ts'
 import { MAX_MULTIPLEX_SESSIONS } from '../plugin-budget.ts'
 import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
+import { isClaudePermissionMode, type ClaudePermissionModeView } from '../permission-mode.ts'
 import { pluginProjectionStream } from './plugin-transport.ts'
 
 export interface ClaudeClientProjection {
@@ -22,6 +23,9 @@ export interface ClaudeClientProjection {
   readonly reviewComments?: readonly ReviewComment[]
   /** Surface seq spans a rewind dropped; the chat suppresses their rows. */
   readonly rewind?: { readonly ranges: readonly ClaudeRewindRange[] }
+  /** The Claude permission mode the next turn runs under, and whether a
+   *  turn in flight holds it. Absent until the carrier's first metadata. */
+  readonly permissionMode?: ClaudePermissionModeView
   /** Client-derived per-step activity slices with stable identities for
    *  untouched steps, so streaming re-renders only the active step. */
   readonly byStep?: ReadonlyMap<string, readonly ClaudeActivityEvent[]>
@@ -190,6 +194,13 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
       }
     }
   }
+  if (input.permissionMode !== undefined) {
+    const view = record(input.permissionMode)
+    if (view === undefined || !isClaudePermissionMode(view.mode) || typeof view.locked !== 'boolean'
+      || (view.autoSupported !== undefined && typeof view.autoSupported !== 'boolean')) {
+      throw new Error('invalid Claude permission mode projection')
+    }
+  }
   if (input.rewind !== undefined) {
     const ranges = record(input.rewind)?.ranges
     if (!Array.isArray(ranges) || ranges.length > MAX_REWIND_RANGES) throw new Error('invalid Claude rewind projection')
@@ -269,6 +280,7 @@ export function createClaudeProjectionSource(
   let repositories: readonly RepositoryStatus[] | undefined
   let reviewComments: readonly ReviewComment[] | undefined
   let rewind: ClaudeClientProjection['rewind']
+  let permissionMode: ClaudePermissionModeView | undefined
   const byStep = new Map<string, ClaudeActivityEvent[]>()
   const stepOrder: { turn: number; step: number; key: string }[] = []
   /** Streaming prose still being revealed: full arrived text plus shown chars. */
@@ -352,6 +364,7 @@ export function createClaudeProjectionSource(
       ...(repositories === undefined ? {} : { repositories }),
       ...(reviewComments === undefined ? {} : { reviewComments }),
       ...(rewind === undefined ? {} : { rewind }),
+      ...(permissionMode === undefined ? {} : { permissionMode }),
       byStep: new Map(byStep),
     }
     for (const listener of [...listeners]) listener()
@@ -470,6 +483,7 @@ export function createClaudeProjectionSource(
           repositories = next.repositories
           reviewComments = next.reviewComments
           rewind = next.rewind
+          permissionMode = next.permissionMode
           reset(next.activities)
           break
         }
@@ -506,12 +520,16 @@ export function createClaudeProjectionSource(
             ...(event.repository === undefined ? {} : { repository: event.repository }),
             ...(event.repositories === undefined ? {} : { repositories: event.repositories }),
             ...(event.reviewComments === undefined ? {} : { reviewComments: event.reviewComments }),
+            ...(event.permissionMode === undefined ? {} : { permissionMode: event.permissionMode }),
           })
           owned = event.owned as boolean
           commands = event.commands as readonly ClaudeCommandView[]
           repository = event.repository as RepositoryStatus | undefined
           repositories = event.repositories as readonly RepositoryStatus[] | undefined
           reviewComments = event.reviewComments as readonly ReviewComment[] | undefined
+          // A meta line without the mode is a Host that could not read it
+          // this round; the last known mode stays rather than flickering off.
+          if (event.permissionMode !== undefined) permissionMode = event.permissionMode as ClaudePermissionModeView
           revision += 1
           break
         default:

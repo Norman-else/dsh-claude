@@ -58,6 +58,16 @@ describe('permission result mapping', () => {
     expect(reason).not.toContain('nope')
   })
 
+  it('puts the reason an auto-mode ask escalated under the title', () => {
+    const escalated = permissionReason('Bash', { command: 'rm -rf build' }, { ...toolOptions(), decisionReason: 'Safety check: recursive delete outside the workspace' })
+    expect(escalated.startsWith('Claude wants to edit a file\nSafety check: recursive delete outside the workspace')).toBe(true)
+    // A reason that merely repeats the title is not said twice.
+    expect(permissionReason('Bash', { command: 'ls' }, { ...toolOptions(), decisionReason: 'Claude wants to edit a file' })).not.toContain('file\nClaude')
+    // Without a title the reason is the prompt, as before.
+    const { title: _title, ...untitled } = toolOptions()
+    expect(permissionReason('Bash', { command: 'ls' }, { ...untitled, decisionReason: 'Rule: ask for Bash' }).startsWith('Rule: ask for Bash')).toBe(true)
+  })
+
   it('points the approval dialog at the plan panel instead of pasting the plan', () => {
     const plan = `## Plan\n\n1. Read ${'the supervisor '.repeat(200)}\n2. Ship it`
     const reason = permissionReason('ExitPlanMode', { plan }, toolOptions())
