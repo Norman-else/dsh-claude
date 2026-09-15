@@ -131,6 +131,8 @@ function supervisor(
   idleTimeoutMs = 60_000,
   suppliedSidecar?: ClaudeSidecarRepository,
   renderMode: ClaudeRenderMode = 'plugin',
+  attachments?: import('../src/adapter.ts').ClaudeAttachmentReader,
+  warnings?: string[],
 ) {
   const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
   sidecarRoots.push(root)
@@ -149,6 +151,8 @@ function supervisor(
     config,
     queryFactory: create,
     sidecar,
+    ...(attachments === undefined ? {} : { attachments }),
+    ...(warnings === undefined ? {} : { logger: { warn: (message: string) => { warnings.push(message) } } }),
   })
   sidecars.set(runtime, sidecar)
   configs.set(runtime, config)
@@ -267,6 +271,35 @@ describe('Claude supervisor', () => {
     expect(transport.queries[0]?.options.model).toBe('default')
     transport.queries[0]!.push(init())
     await catalog
+    await runtime.dispose()
+  })
+
+  it('keeps a session\'s cost whole across a respawn', async () => {
+    // The CLI's cumulative cost is per query() call, so a respawned process
+    // starts counting again from zero. The transcript is one session, and the
+    // money it spent is the sum of what its processes spent.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const turn = async (cost: number) => {
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'work' })
+      const query = transport.queries.at(-1)!
+      query.push(init())
+      query.push({ ...result('done') as object, total_cost_usd: cost } as SDKMessage)
+      await collect(output)
+    }
+    await turn(0.25)
+    await turn(0.5)
+    // The process was evicted and respawned: this counter is the new epoch's.
+    await runtime.disposeSession(owner.agent.id as string)
+    await turn(0.1)
+    const rows = (await projection(runtime)).activities.filter(activity => activity.kind === 'usage')
+    expect(rows.map(row => row.usage?.cumulativeCostUsd)).toEqual([0.25, 0.5, 0.6])
+    expect(rows.map(row => row.summary)).toEqual([
+      '4 input / 2 output tokens · $0.2500 cumulative',
+      '4 input / 2 output tokens · $0.5000 cumulative',
+      '4 input / 2 output tokens · $0.6000 cumulative',
+    ])
     await runtime.dispose()
   })
 
@@ -1610,6 +1643,35 @@ describe('Claude supervisor', () => {
     query.fail(new Error('process crashed'))
     await expect(collect(output)).rejects.toBeInstanceOf(ClaudeOutcomeUnknownError)
     expect(runtime.snapshots()).toHaveLength(0)
+    await runtime.dispose()
+  })
+
+  it('says how the process ended, and logs it, when a turn dies with it', async () => {
+    // "Outcome unknown" is the truth and tells a reader nothing: whether the
+    // CLI exited on its own or something killed it, and whether a tool call was
+    // still in flight, is what decides whether the work landed.
+    const transport = factory()
+    const owner = fakeAgent()
+    const warnings: string[] = []
+    const runtime = supervisor(transport.create, 4, 60_000, undefined, 'plugin', undefined, warnings)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'edit something' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('working'))
+    query.push(toolCallMessage)
+    query.fail(new Error('process crashed'))
+    const failure = await collect(output).then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(ClaudeOutcomeUnknownError)
+    expect((failure as Error).message).toContain('side-effect outcome is unknown')
+    expect((failure as Error).message).toContain('1 tool call(s) were still unanswered')
+    // The fake query has no process to watch, and the message says so rather
+    // than leaving the reader to guess.
+    expect((failure as Error).message).toContain('no process was running')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('mid-turn after activity')
+    // The row keeps the same answer for a reader who was not watching the turn.
+    const row = (await projection(runtime)).activities.find(activity => activity.title === 'Claude Code outcome unknown')
+    expect(row?.summary).toContain('tool call(s) were still unanswered')
     await runtime.dispose()
   })
 

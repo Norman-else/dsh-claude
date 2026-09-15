@@ -272,6 +272,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     config: supervisorConfig,
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,
+    // A CLI that dies mid-turn is diagnosed from the log, not from the
+    // conversation it was in the middle of.
+    logger: { warn: message => { ctx.logger.warn(message) } },
   })
   let resolutionError: unknown
   try {
