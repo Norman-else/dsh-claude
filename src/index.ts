@@ -9,11 +9,11 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, CLAUDE_STEERING_SERVICE } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
-import { ClaudeSupervisor } from './supervisor.ts'
+import { ClaudeSupervisor, type ClaudeSteeringOutcome, type ClaudeSteeringService } from './supervisor.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
@@ -52,6 +52,11 @@ import { readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix,
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
+
+// The steering contract is published for the plugin that consumes it: the
+// service name to look up, and the shape it can rely on.
+export { CLAUDE_STEERING_SERVICE } from './constants.ts'
+export type { ClaudeSteeringOutcome, ClaudeSteeringService } from './supervisor.ts'
 
 export interface Config {
   executablePath?: string
@@ -286,6 +291,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       [...CLAUDE_CODE_PROVIDER_IDS],
       createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath)),
     )
+    // Steering entry point. A message steered into a running Claude turn has to
+    // pass through the supervisor that owns that turn's process; whoever takes it
+    // out of the agent inbox calls this first, and `unavailable` tells them to
+    // keep the message for a later turn instead of losing it.
+    ctx.provide(CLAUDE_STEERING_SERVICE, {
+      deliver: (sessionId: string, prompt: string): ClaudeSteeringOutcome => supervisor.deliverSteering(sessionId, prompt),
+    } satisfies ClaudeSteeringService)
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
       const pending = new Set<Agent>()

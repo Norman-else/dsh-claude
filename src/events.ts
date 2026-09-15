@@ -127,7 +127,15 @@ const SECRET_ASSIGNMENT = /((?:password|passwd|secret|token|api[_-]?key|authoriz
 const BEARER_TOKEN = /(\bbearer\s+)[A-Za-z0-9._~+/=-]+/giu
 const PREFIXED_TOKEN = /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|ghp_|github_pat_)[A-Za-z0-9_-]{8,}/giu
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu
-const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/giu
+/**
+ * The scheme is bounded on purpose. Unbounded, this pattern is quadratic on any
+ * long unbroken run that is not a URL: at every offset the greedy scheme run
+ * scans to the end of the string before failing to find `://`, so redacting a
+ * 70 kB token took 8 seconds and stalled whatever was normalizing it. No real
+ * scheme comes close to 32 characters, and the bounded run matches every
+ * userinfo URL the unbounded one did.
+ */
+const URL_USERINFO = /([a-z][a-z0-9+.-]{0,31}:\/\/[^:\s/@]+:)[^@\s/]+@/giu
 const URL_SECRET_PARAM = /([?&](?:password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)=)[^&#\s]+/giu
 
 export function boundText(value: string, maxChars: number): string {
