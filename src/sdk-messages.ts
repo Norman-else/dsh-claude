@@ -1,5 +1,6 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeUsage } from './events.ts'
+import { CLAUDE_PROGRESS_SUBTYPES, claudeStatusTitle } from './constants.ts'
 
 export type NormalizedSdkMessage =
   | { kind: 'init'; sessionId: string; cliVersion: string; cwd: string }
@@ -50,6 +51,13 @@ export type NormalizedSdkMessage =
   }
   | { kind: 'status'; title: string; summary?: string; detail?: unknown }
   | { kind: 'warning'; title: string; summary?: string; detail?: unknown }
+  | {
+    /** Progress telemetry the CLI streams while it works (see
+     *  {@link CLAUDE_PROGRESS_SUBTYPES}). It proves the turn is alive and
+     *  nothing else: the activity log never keeps it. */
+    kind: 'progress'
+    subtype: string
+  }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
   | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
   | { kind: 'protocol-error'; title: string; detail: unknown }
@@ -335,14 +343,21 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       detail: message,
     }]
   }
+  if (subtype !== undefined && CLAUDE_PROGRESS_SUBTYPES.has(subtype)) {
+    // Progress telemetry, not lifecycle evidence. Kept off the activity log
+    // deliberately: the SDK emits these per estimated thinking-token chunk, so
+    // one step can produce tens of thousands of durable rows — the transcript
+    // renders none of them, and each one costs a full sidecar rewrite.
+    return [{ kind: 'progress', subtype }]
+  }
   if (subtype?.startsWith('hook_') === true || subtype === 'plugin_install') {
-    return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }]
+    return [{ kind: 'status', title: claudeStatusTitle(subtype), detail: message }]
   }
   if (subtype !== undefined) {
     // Preserve unknown system lifecycle evidence (background tasks, resets,
     // worker/mirror lifecycle) as a bounded activity instead of silently
     // dropping it; the activity layer redacts and bounds the detail.
-    return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }]
+    return [{ kind: 'status', title: claudeStatusTitle(subtype), detail: message }]
   }
   return []
 }

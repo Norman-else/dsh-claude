@@ -9,6 +9,24 @@ export const CLAUDE_TASKS_EVENT = 'claude-code/tasks'
  *  gathering subagent activity instead of native tool cards. */
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(['Task', 'Agent'])
 export const SDK_VERSION = '0.3.247'
+
+/** System-message subtypes the CLI streams as progress telemetry rather than
+ *  lifecycle evidence.
+ *
+ *  `thinking_tokens` arrives once per estimated thinking-token chunk — the SDK
+ *  documents it as "approximate progress for spinners/pills, not the
+ *  authoritative billed output_tokens" — so one extended-thinking step emits
+ *  tens of thousands of them. The transcript never draws a plain status row,
+ *  and each durable row costs a full sidecar rewrite, so these are consumed as
+ *  progress and kept out of the activity log. */
+export const CLAUDE_PROGRESS_SUBTYPES: ReadonlySet<string> = new Set(['thinking_tokens'])
+
+/** Durable status title this package writes for a system subtype. Shared by the
+ *  writer and by the filter that drops a progress subtype's rows, so the two can
+ *  never drift apart. */
+export function claudeStatusTitle(subtype: string): string {
+  return `Claude Code ${subtype.replaceAll('_', ' ')}`
+}
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
 export const CLAUDE_CLIENT_DIAGNOSTICS_PATH = '/plugins/dsh-claude/client-diagnostics'
 export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'

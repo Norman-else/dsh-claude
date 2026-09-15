@@ -41,6 +41,27 @@ describe('Claude sidecar repository', () => {
     expect(projection.tasks?.tasks).toEqual([{ taskId: 'task', description: 'work', status: 'running', originTurn: 1 }])
   })
 
+  it('sheds the progress telemetry a projection still carries', async () => {
+    const store = await repository()
+    const file = `${Buffer.from('session').toString('base64url')}.json`
+    await writeFile(join(store.root, file), `${JSON.stringify({
+      schemaVersion: 1,
+      revision: 1,
+      activities: [
+        { turn: 1, step: 1, ordinal: 1, kind: 'status', phase: 'completed', title: 'Claude Code thinking tokens' },
+        { turn: 1, step: 1, ordinal: 2, kind: 'tool-call', phase: 'started', toolName: 'Read', title: 'Read' },
+        { turn: 1, step: 1, ordinal: 3, kind: 'status', phase: 'completed', title: 'Claude Code thinking tokens' },
+      ],
+    })}\n`)
+    const projection = await store.read('session')
+    expect(projection.activities.map(item => item.ordinal)).toEqual([2])
+    // The next write rebuilds the document without them, so a session that
+    // accumulated a full window of telemetry stops paying for it.
+    await store.appendActivity('session', { turn: 1, step: 1, ordinal: 4, kind: 'tool-result', toolName: 'Read', title: 'Read' })
+    const stored = JSON.parse(await readFile(join(store.root, file), 'utf8')) as { activities: { ordinal: number }[] }
+    expect(stored.activities.map(item => item.ordinal)).toEqual([2, 4])
+  })
+
   it('upserts redacted visible transcript text at a stable ordinal', async () => {
     const store = await repository()
     await store.appendActivity('session', {

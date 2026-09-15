@@ -138,6 +138,22 @@ describe('Claude SDK message normalization', () => {
     }))).toEqual([{ kind: 'compaction' }])
   })
 
+  it('consumes thinking-token telemetry as progress instead of activity', () => {
+    // The SDK documents this frame as "approximate progress for spinners/pills,
+    // not the authoritative billed output_tokens", and the CLI emits one per
+    // estimated chunk: a single extended-thinking step produces tens of
+    // thousands. The transcript draws none of them, so the durable activity log
+    // must not store them — each stored row costs a full sidecar rewrite.
+    expect(normalizeSdkMessage(sdk({
+      type: 'system',
+      subtype: 'thinking_tokens',
+      estimated_tokens: 128,
+      estimated_tokens_delta: 2,
+      uuid: 'uuid-1',
+      session_id: 'session-1',
+    }))).toEqual([{ kind: 'progress', subtype: 'thinking_tokens' }])
+  })
+
   it('normalizes successful result usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'result',
