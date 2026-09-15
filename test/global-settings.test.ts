@@ -109,7 +109,7 @@ describe('Claude Code global settings registry', () => {
   it('offers every Claude Code permission mode as the default, auto unless changed', async () => {
     const paths = await fixture()
     const initial = await readGlobalSettings({ paths })
-    expect(initial.settings.find(setting => setting.key === 'permissionMode')).toMatchObject({ kind: 'select', value: 'auto', effect: 'next-turn' })
+    expect(initial.settings.find(setting => setting.key === 'permissionMode')).toMatchObject({ kind: 'select', value: 'auto', effect: 'new-session' })
     expect(initial.settings.find(setting => setting.key === 'permissionMode')?.options.map(option => option.value))
       .toEqual(['plan', 'default', 'acceptEdits', 'dontAsk', 'auto', 'bypassPermissions'])
     await expect(readDefaultPermissionMode({ paths })).resolves.toBe('auto')

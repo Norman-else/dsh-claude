@@ -233,15 +233,17 @@ const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
 export const DEFAULT_CLAUDE_PERMISSION_MODE: ClaudePermissionMode = 'auto'
 
 /** The Claude permission mode a session runs under until its own selector
- *  is used. Plugin settings: DSH's access preset still decides the sandbox,
- *  and a default this sandbox cannot carry (`auto` under read-only) yields to
- *  the sandbox's own mode; see permission-mode.ts. Read per turn, so an
- *  existing session that never chose picks a change up on its next turn. */
+ *  is used. Plugin settings: a new Claude session is moved onto the DSH
+ *  sandbox this mode needs as it is created (permission-mode-host.ts); a
+ *  session whose sandbox was switched since yields to that sandbox's own
+ *  mode (permission-mode.ts). */
 const PERMISSION_MODE: SelectSettingDescriptor = {
   key: 'permissionMode',
   kind: 'select',
   document: 'plugin',
-  effect: 'next-turn',
+  // A new Claude session is put on this mode's sandbox as it is created;
+  // a session already open keeps the sandbox it has (see permission-mode-host.ts).
+  effect: 'new-session',
   async options() {
     return CLAUDE_PERMISSION_MODES.map(value => ({ value, label: value, source: 'built-in' as const }))
   },

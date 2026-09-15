@@ -41,6 +41,7 @@ import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-route
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { registerClaudePermissionModeRoute } from './permission-mode-routes.ts'
 import { claudePermissionMode, type ClaudePermissionModeView } from './permission-mode.ts'
+import { alignSessionWithDefault, applyHostPreset, type HostPermissionPresetService, type HostPresetAccess } from './permission-mode-host.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
 import { SessionRootLedger } from './session-root-ledger.ts'
@@ -267,6 +268,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   const reviewComments = new ReviewCommentStore()
   const commandCatalogs = new Map<string, readonly ClaudeCommandView[]>()
+  /** The Host's access knobs, driven from a Claude mode; see permission-mode-host.ts. */
+  const hostPresets: HostPresetAccess = {
+    presets: () => ctx.get('permissionPresets') as HostPermissionPresetService | undefined,
+    setPolicy: (agent, policy) => { ctx.approval.setPolicy(agent, policy as never) },
+  }
   const supervisor = new ClaudeSupervisor({
     runtime: subprocess,
     approval: ctx.approval,
@@ -294,9 +300,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const pending = new Set<Agent>()
       const MOUNT_RETRY_MS = 200
       const MOUNT_RETRY_LIMIT = 50
-      const mount = (agent: Agent) => {
+      /** A session this plugin just met (created, or switched to the Claude
+       *  preset) is put on the sandbox its default mode needs, so a Host whose
+       *  default preset is full access does not turn a configured `auto` into
+       *  bypass. Sessions found on boot keep whatever they were on. */
+      const align = async (agent: Agent): Promise<void> => {
+        const sessionId = agent.id as string
+        try {
+          const [projection, defaultMode] = await Promise.all([sidecar.read(sessionId), readDefaultPermissionMode()])
+          alignSessionWithDefault(hostPresets, agent, projection.permissionMode, defaultMode)
+        } catch (error) {
+          ctx.logger.warn(`dsh-claude: default permission mode not applied for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      const mount = (agent: Agent, fresh: boolean) => {
         if (mounted.has(agent)) return
         const sessionId = agent.id as string
+        if (fresh) void align(agent)
         const dispose = mountClaudeMetadata(
           ctx,
           supervisor,
@@ -314,10 +334,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       // The standing preset mount lands AFTER agent/created (the PresetTree is
       // applied asynchronously), so composedPreset is still undefined at that
       // point. Poll briefly until the join settles, then decide.
-      const mountWhenPresetSettles = (agent: Agent) => {
+      const mountWhenPresetSettles = (agent: Agent, fresh: boolean) => {
         if (mounted.has(agent) || pending.has(agent)) return
         if (ctx.agentPresets.composedPreset(agent.ctx) !== undefined) {
-          mount(agent)
+          mount(agent, fresh)
           return
         }
         pending.add(agent)
@@ -325,7 +345,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const retry = () => {
           if (mounted.has(agent) || !pending.has(agent)) return
           if (ctx.agentPresets.composedPreset(agent.ctx) !== undefined) {
-            mount(agent)
+            mount(agent, fresh)
             return
           }
           attempts += 1
@@ -339,7 +359,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const timer = setTimeout(retry, MOUNT_RETRY_MS)
         timer.unref?.()
       }
-      const stopCreated = ctx.on('agent/created', ({ agent }) => { mountWhenPresetSettles(agent) })
+      const stopCreated = ctx.on('agent/created', ({ agent }) => { mountWhenPresetSettles(agent, true) })
       // Belt and suspenders: the session records its preset selection as a
       // durable event, which agent-presets republishes as agent-preset/selected.
       // agent-preset/selected is emitted by dsh-agent-presets but is not part
@@ -348,9 +368,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const stopSelected = onPresetSelected('agent-preset/selected', (sessionId, preset) => {
         if (preset !== CLAUDE_CODE_PRESET_ID) return
         const agent = ctx.agents.get(sessionId as never)
-        if (agent !== undefined) mountWhenPresetSettles(agent)
+        if (agent !== undefined) mountWhenPresetSettles(agent, true)
       })
-      for (const agent of ctx.agents.list()) mountWhenPresetSettles(agent)
+      for (const agent of ctx.agents.list()) mountWhenPresetSettles(agent, false)
       return async () => {
         stopCreated()
         stopSelected()
@@ -545,24 +565,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const claudeSessionBusy = (sessionId: string): boolean => supervisor.snapshots().some(item => (
       item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')
     ))
-    /** The Host's preset service, when the profile mounts one. Not part of
-     *  this plugin's typed host surface; read through an untyped escape hatch
-     *  so a Host without it leaves Claude to enforce the mode alone. */
-    type PermissionPresetService = {
-      readonly names: readonly string[]
-      apply(session: Agent['session'], name: string, setApproval: (policy: string) => void): void
-    }
     registerClaudePermissionModeRoute(webCtx, sidecar, {
       ownsSession: ownsClaudeSession,
       busy: claudeSessionBusy,
       applyHostPreset: async (sessionId, sandbox) => {
-        const presets = webCtx.get('permissionPresets') as PermissionPresetService | undefined
         const agent = webCtx.agents.get(sessionId as never)
-        if (presets === undefined || agent === undefined || !presets.names.includes(sandbox)) return false
-        // The command handler's own live-session path: the approval service
-        // hears the policy for the running agent, not just the log.
-        presets.apply(agent.session, sandbox, policy => { webCtx.approval.setPolicy(agent, policy as never) })
-        return true
+        return agent !== undefined && applyHostPreset(hostPresets, agent, sandbox)
       },
     })
     const permissionModeForClaudeSession = async (sessionId: string): Promise<ClaudePermissionModeView | undefined> => {
