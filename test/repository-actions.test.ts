@@ -135,6 +135,23 @@ describe('repository action service', () => {
     )
   })
 
+  it('keeps at most four bullets of body, whatever the model listed', async () => {
+    const fake = runtime([
+      ...previewResults(), ...previewResults(),
+      { stdout: '' },
+      { stdout: `Rework the access control\n\n${['- One.', '- Two.', '- Three.', '- Four.', '- Five.', '- Six.'].join('\n')}\n` },
+    ])
+    const service = new RepositoryActionService(fake, 'C:/bin/claude.exe')
+    const preview = await service.preview('C:/repo/session')
+    await expect(service.generateMessage('C:/repo/session', preview.fingerprint)).resolves.toBe(
+      'Rework the access control\n\n- One.\n- Two.\n- Three.\n- Four.',
+    )
+    // The prompt says so too, so the model aims low rather than being cut.
+    const prompt = String((fake.spawn.mock.calls.at(-1)?.[0].stdio.stdin as { data: string }).data)
+    expect(prompt).toContain('Never more than 4 bullets')
+    expect(prompt).toContain('Do not list tests, documentation')
+  })
+
   it('falls back to a file-based subject when the generated subject is unusable', async () => {
     const fake = runtime([
       ...previewResults(), ...previewResults(),

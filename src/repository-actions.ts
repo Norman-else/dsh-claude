@@ -13,6 +13,9 @@ const MAX_UNPUSHED_COMMITS = 20
  *  head of it otherwise, and the prompt says which. */
 const MAX_GENERATE_PATCH_CHARS = 48 * 1024
 const MAX_SUBJECT_CHARS = 72
+/** A body is for the reader skimming `git log`, not a change list: past this
+ *  many bullets it stops being read, so the rest are dropped. */
+const MAX_BODY_BULLETS = 4
 /** Past this the first line is not a subject at all; under it, a subject a
  *  few characters over what the prompt asked for is the user's to trim. */
 const MAX_SUBJECT_KEPT_CHARS = 120
@@ -218,10 +221,12 @@ export function normalizeCommitMessage(value: string, fallback: string): string 
   const kept: string[] = [subject]
   if (body.length > 0) kept.push('')
   let previousBlank = false
+  let bullets = 0
   for (const line of body) {
     const blank = line.trim() === ''
     if (blank && previousBlank) continue
     previousBlank = blank
+    if (/^\s*[-*]\s/u.test(line) && ++bullets > MAX_BODY_BULLETS) continue
     const next = [...kept, line].join('\n')
     if (next.length > MAX_MESSAGE_CHARS) break
     kept.push(line)
@@ -316,10 +321,10 @@ export class RepositoryActionService {
       : []
     const patch = boundedPatch(preview.patch)
     const prompt = [
-      'Write a git commit message for the changes below, in English.',
-      `Line 1 is the subject: imperative mood, at most ${MAX_SUBJECT_CHARS} characters, saying what the change does rather than which files it touches.`,
-      'If the diff contains more than one independent change, leave line 2 blank and then list each change on its own line starting with "- ", one sentence each, describing what changed as the diff shows it.',
-      'A change with a single purpose gets the subject line only.',
+      'Write a git commit message for the changes below, in English, for someone skimming git log.',
+      `Line 1 is the subject: imperative mood, at most ${MAX_SUBJECT_CHARS} characters, saying what the change does for the user or the code's behaviour, not which files it touches.`,
+      'Most changes get the subject line only. Add a body only when the diff carries more than one change a reader would want to know about separately: leave line 2 blank, then one line per such change starting with "- ", a short sentence about what now behaves differently.',
+      `Never more than ${MAX_BODY_BULLETS} bullets. Do not list tests, documentation, README, translations, type or wiring plumbing, or the propagation of one change through several layers: those are part of the change they serve, not changes of their own. Do not name files or identifiers unless nothing else identifies the change.`,
       'Describe only what the diff shows. Do not invent motivation, do not summarise the file list, and do not mention that the diff is truncated.',
       'Return only the message: no quotes, no markdown fences, no explanation before or after it.',
       ...(subjects.length > 0 ? [`Recent commit subjects of this repository, as a style reference only:\n${subjects.map(subject => `- ${subject}`).join('\n')}`] : []),
@@ -368,7 +373,7 @@ export class RepositoryActionService {
       'Changes:',
       '- <one line per independent change, describing what changed in the code>',
       '',
-      'List every independent change the diff contains as its own bullet. Do not merge unrelated changes into one bullet, and do not describe anything the diff does not show.',
+      `One bullet per change a reviewer would want to know about separately, at most ${MAX_BODY_BULLETS + 2}; a change with a single purpose gets one bullet. Tests, documentation, translations, and the plumbing that carries a change through several layers belong to the change they serve, not to bullets of their own. Do not describe anything the diff does not show.`,
       'No markdown headings, no quotes, no fences, no text before "Title:" or after the last bullet.',
       ...(commits.length > 0
         ? [`Commits on this branch, newest first:\n${commits.map(commit => (commit.body.length > 0 ? `- ${commit.subject}\n${commit.body}` : `- ${commit.subject}`)).join('\n')}`]
