@@ -123,12 +123,32 @@ function palette(entries: readonly (readonly [string, string, string])[], surfac
   ].join('')
 }
 
+// The code block's own surface, deliberately set to DSH's values rather than
+// Claude's. The Host paints the block from these two tokens, and DSH resolves
+// them to adjacent steps of its neutral ramp — light uses bluish-50 for both,
+// dark uses bluish-900 with bluish-850 on the banner bar. Claude's desktop
+// build replaces both with one flat colour, which is what makes a dsh-claude
+// block read as flatter than a native DSH one (whiter than the page in light,
+// and with no banner separation in dark). This fork keeps the block DSH
+// native: 浅色 #f9fafb（两处相同），深色 block #1b1b1c / banner #2c2c2e.
+//
+// The syntax colours themselves stay Claude's Pierre mapping — only the
+// surface these two tokens describe goes native.
+const DSH_CODE_SURFACE_LIGHT = '#f9fafb'
+const DSH_CODE_BANNER_LIGHT = '#f9fafb'
+const DSH_CODE_SURFACE_DARK = '#1b1b1c'
+const DSH_CODE_BANNER_DARK = '#2c2c2e'
+
+/** The hairline drawn around a corrected block, on the ramp it sits in. */
+const DSH_CODE_RING_LIGHT = '#e1e5ee'
+const DSH_CODE_RING_DARK = '#353638'
+
 export const CLAUDE_MARKDOWN_THEME_CSS = [
   `.${CLAUDE_MARKDOWN_SCOPE}{display:contents;`,
-    palette(PIERRE_LIGHT, '#ffffff', '#ffffff', INLINE_FILL_LIGHT),
+    palette(PIERRE_LIGHT, DSH_CODE_SURFACE_LIGHT, DSH_CODE_BANNER_LIGHT, INLINE_FILL_LIGHT),
   '}',
   `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE}{`,
-    palette(PIERRE_DARK, '#1a1a19', '#1a1a19', INLINE_FILL_DARK),
+    palette(PIERRE_DARK, DSH_CODE_SURFACE_DARK, DSH_CODE_BANNER_DARK, INLINE_FILL_DARK),
   '}',
   // The Host's inline-code rule sets a background but no colour, so the chip
   // inherits body text. Claude's build tints it with the brand clay.
@@ -165,6 +185,14 @@ export const CLAUDE_MARKDOWN_THEME_CSS = [
   // intact and scrolls. Specificity beats the primitive's `:where(pre)`.
   `.${CLAUDE_MARKDOWN_SCOPE} pre{white-space:pre;word-break:normal;overflow-x:auto}`,
   `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]{--dsl-code-block-border-radius:${BLOCK_RADIUS}}`,
+  // The hairline. `bannerWrap` is the one local name unique to CodeBlock — the
+  // other block primitives (DiffBlock, TerminalBlock, ReadBlock, SearchBlock)
+  // all emit a local named `block` too, so a bare [class*="block"] would draw
+  // this ring around a tool result's diff or terminal as well. Requiring the
+  // block to CONTAIN a bannerWrap picks out only the real code block. A ring,
+  // not a border, because a border would add layout the sticky banner fights.
+  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]:has([class*="bannerWrap"]){box-shadow:0 0 0 1px ${DSH_CODE_RING_LIGHT}}`,
+  `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} [class*="block"]:has([class*="bannerWrap"]){box-shadow:0 0 0 1px ${DSH_CODE_RING_DARK}}`,
 
 ].join('')
 
@@ -193,10 +221,15 @@ export const CLAUDE_MARKDOWN_ENHANCED_CSS = [
   `.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code,body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${PROSE.inlineCode}}`,
 
   // Claude's own code surface, replaced by the palette the setting names. The
-  // base sheet deliberately paints this from a UI token (see `--shiki-background`
-  // at the top of this file); opting in trades that parity for the darker,
-  // outlined block the highlight palette is drawn against.
-  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]{background:${PROSE.codeBackground};box-shadow:0 0 0 1px ${PROSE.codeBorder}}`,
+  // base sheet deliberately paints this from DSH's own surface tokens (see the
+  // note near the top of this file); opting in trades that parity for the
+  // darker, outlined block the highlight palette is drawn against.
+  //
+  // The selector carries the same `:has([class*="bannerWrap"])` as the base
+  // ring, so these two rules TIE in specificity and the enhanced one wins on
+  // source order — otherwise the base sheet's ring would out-rank this border
+  // and an enhanced block would keep the flat-ring colour it opted out of.
+  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]:has([class*="bannerWrap"]){background:${PROSE.codeBackground};box-shadow:0 0 0 1px ${PROSE.codeBorder}}`,
   `.${CLAUDE_MARKDOWN_SCOPE} pre{background:${PROSE.codeBackground}}`,
 
   // GitHub review comments never pass through MarkdownText — `comment-markdown.ts`
