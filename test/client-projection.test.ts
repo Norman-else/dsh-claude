@@ -252,6 +252,30 @@ describe('Claude client sidecar projection', () => {
     store.dispose()
   })
 
+  it('advances past a line kind this bundle does not know', async () => {
+    // A newer Host can publish a kind this bundle predates. Ignoring the payload
+    // must not freeze the count: the next line would look like a hole and drop a
+    // healthy stream into a resync.
+    vi.useFakeTimers()
+    const first = carrier()
+    const second = carrier()
+    const { store, opened, reported } = projectionStore([first, second])
+    const source = store.source('session/a')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    first.push('session/a', { ...valid, type: 'snapshot', seq: 4 })
+    first.push('session/a', { type: 'kind-from-the-future', detail: 'ignored', seq: 5 })
+    first.push('session/a', { type: 'activity', activity: { turn: 1, step: 1, ordinal: 9, kind: 'status' }, seq: 6 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(opened).toHaveLength(1)
+    expect(reported.join(' ')).not.toContain('projection-gap')
+    unsubscribe()
+    first.close()
+    second.close()
+    store.dispose()
+  })
+
   it('resyncs when the turn-end checkpoint stands ahead of what it applied', async () => {
     // The trailing loss: the missing delta is the LAST one, so no later line
     // exposes the hole. The checkpoint the supervisor writes at settlement is
@@ -422,6 +446,39 @@ describe('Claude client sidecar projection', () => {
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     expect(source.getSnapshot().repositories).toBeUndefined()
+    unsubscribe()
+    stream.close()
+    store.dispose()
+  })
+
+  it('tracks the live state of a running turn and drops it on the next snapshot', async () => {
+    vi.useFakeTimers()
+    const stream = carrier()
+    const { store } = projectionStore([stream])
+    const source = store.source('session')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    stream.push('session', { ...valid, type: 'snapshot', seq: 1 })
+    await flush()
+    stream.push('session', { type: 'live', value: { turn: 2, state: 'thinking' }, seq: 2 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().live).toEqual({ turn: 2, state: 'thinking' })
+    stream.push('session', { type: 'live', value: { turn: 2, state: 'tool', label: 'Bash', elapsedMs: 4_000 }, seq: 3 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().live).toEqual({ turn: 2, state: 'tool', label: 'Bash', elapsedMs: 4_000 })
+    // An absent value is the turn saying it has nothing left to report.
+    stream.push('session', { type: 'live', seq: 4 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().live).toBeUndefined()
+    // A live state a hostile carrier invented is refused the same way any other
+    // malformed payload is.
+    stream.push('session', { type: 'live', value: { turn: 2, state: 'exploding' }, seq: 5 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().live).toBeUndefined()
     unsubscribe()
     stream.close()
     store.dispose()

@@ -269,6 +269,34 @@ describe('Claude sidecar projection route', () => {
     expect(unsubscribed).toEqual(['session/a', 'session-b'])
   })
 
+  it('carries the live state of a running turn without inventing one for a settled session', async () => {
+    const ctx = context()
+    const listeners = new Map<string, (delta: unknown) => void>()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 2, activities: [] }),
+      sequence: () => 0,
+      subscribe: (sessionId: string, callback: (delta: unknown) => void) => {
+        listeners.set(sessionId, callback)
+        return () => undefined
+      },
+    } as unknown as ClaudeSidecarRepository
+    registerClaudeProjectionRoute(ctx, sidecar, () => true)
+    const res = response()
+    const pending = ctx.handler(request(multi('session')), res)
+    await settled()
+    expect(lines(res)).toHaveLength(1)
+    listeners.get('session')!({ kind: 'live', value: { turn: 2, state: 'tool', label: 'Bash', elapsedMs: 4_000 }, seq: 1 })
+    listeners.get('session')!({ kind: 'live', value: undefined, seq: 2 })
+    expect(lines(res).slice(1)).toEqual([
+      { type: 'live', session: 'session', value: { turn: 2, state: 'tool', label: 'Bash', elapsedMs: 4_000 }, seq: 1 },
+      // A cleared state serializes as no value at all, which is how a client
+      // reads "the turn is not doing anything any more".
+      { type: 'live', session: 'session', seq: 2 },
+    ])
+    for (const callback of res.closeHandlers) callback()
+    await pending
+  })
+
   it('numbers the stream so the client can detect a line it never received', async () => {
     const ctx = context()
     const listeners = new Map<string, (delta: unknown) => void>()

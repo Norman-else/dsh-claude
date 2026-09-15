@@ -84,6 +84,43 @@ export interface ClaudeContextUsageCategory {
   isDeferred?: boolean
 }
 
+/** What one Claude turn is doing right now.
+ *
+ *  This is deliberately NOT part of the activity log: it is a state, not
+ *  evidence, and it changes many times per step (the CLI streams a thinking
+ *  estimate per token chunk). It travels as a live projection delta, is never
+ *  written, and is cleared when the turn it belongs to settles — so a reader
+ *  watching a turn has something that moves without a row per frame. */
+export interface ClaudeLiveProgress {
+  /** The turn this state belongs to: a transcript turn shows the pill only for
+   *  its own turn. */
+  readonly turn: number
+  /** `thinking` while the model works, `tool` while one of its tools runs,
+   *  `waiting` between them (a tool result being folded back in). */
+  readonly state: 'thinking' | 'tool' | 'waiting'
+  /** The tool that is running, for `tool`. */
+  readonly label?: string
+  /** How long the CLI says the current tool has been running. */
+  readonly elapsedMs?: number
+}
+
+const LIVE_STATES: ReadonlySet<string> = new Set(['thinking', 'tool', 'waiting'])
+
+/** Read a live state off the wire, or nothing when it does not describe one. */
+export function normalizeLiveProgress(value: unknown): ClaudeLiveProgress | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  if (!Number.isSafeInteger(input.turn) || (input.turn as number) < 0) return undefined
+  if (typeof input.state !== 'string' || !LIVE_STATES.has(input.state)) return undefined
+  const elapsed = input.elapsedMs
+  return {
+    turn: input.turn as number,
+    state: input.state as ClaudeLiveProgress['state'],
+    ...(typeof input.label !== 'string' || input.label.length === 0 ? {} : { label: input.label.slice(0, 128) }),
+    ...(typeof elapsed !== 'number' || !Number.isFinite(elapsed) || elapsed < 0 ? {} : { elapsedMs: Math.floor(elapsed) }),
+  }
+}
+
 export interface ClaudeContextUsageEvent {
   model: string
   totalTokens: number
@@ -127,7 +164,15 @@ const SECRET_ASSIGNMENT = /((?:password|passwd|secret|token|api[_-]?key|authoriz
 const BEARER_TOKEN = /(\bbearer\s+)[A-Za-z0-9._~+/=-]+/giu
 const PREFIXED_TOKEN = /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|ghp_|github_pat_)[A-Za-z0-9_-]{8,}/giu
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu
-const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/giu
+/**
+ * The scheme is bounded on purpose. Unbounded, this pattern is quadratic on any
+ * long unbroken run that is not a URL: at every offset the greedy scheme run
+ * scans to the end of the string before failing to find `://`, so redacting a
+ * 70 kB token took 8 seconds and stalled whatever was normalizing it. No real
+ * scheme comes close to 32 characters, and the bounded run matches every
+ * userinfo URL the unbounded one did.
+ */
+const URL_USERINFO = /([a-z][a-z0-9+.-]{0,31}:\/\/[^:\s/@]+:)[^@\s/]+@/giu
 const URL_SECRET_PARAM = /([?&](?:password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)=)[^&#\s]+/giu
 
 export function boundText(value: string, maxChars: number): string {

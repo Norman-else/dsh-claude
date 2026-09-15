@@ -207,6 +207,12 @@ export function registerClaudeProjectionRoute(
         case 'tasks':
           writeLine({ type: 'tasks', session: sessionId, value: delta.value, seq: delta.seq })
           return
+        case 'live':
+          // Non-persistent by construction: the state a running turn is in. It
+          // is numbered like any other delta so ignoring it never looks like a
+          // hole, and an absent value means the turn has nothing to report.
+          writeLine({ type: 'live', session: sessionId, value: delta.value, seq: delta.seq })
+          return
         case 'checkpoint':
           writeLine({ type: 'checkpoint', session: sessionId, seq: delta.seq })
           return

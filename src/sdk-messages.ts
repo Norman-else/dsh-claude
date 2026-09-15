@@ -1,5 +1,6 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeUsage } from './events.ts'
+import { CLAUDE_PROGRESS_SUBTYPES, CLAUDE_UNKNOWN_MESSAGE_PREFIX, claudeStatusTitle } from './constants.ts'
 
 export type NormalizedSdkMessage =
   | { kind: 'init'; sessionId: string; cliVersion: string; cwd: string }
@@ -50,10 +51,30 @@ export type NormalizedSdkMessage =
   }
   | { kind: 'status'; title: string; summary?: string; detail?: unknown }
   | { kind: 'warning'; title: string; summary?: string; detail?: unknown }
+  | {
+    /** Progress telemetry the CLI streams while it works (see
+     *  {@link CLAUDE_PROGRESS_SUBTYPES}). It proves the turn is alive and
+     *  nothing else: the activity log never keeps it. A tool heartbeat also
+     *  says which tool is running and for how long, which is the one thing a
+     *  reader waiting on a turn wants to know. */
+    kind: 'progress'
+    subtype: string
+    toolName?: string
+    elapsedMs?: number
+    parentToolUseId?: string
+  }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
-  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
+  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; queuedTurnCount?: number; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
   | { kind: 'protocol-error'; title: string; detail: unknown }
-  | { kind: 'unknown'; title: string; detail: unknown }
+  | {
+    /** A message type this package does not handle yet. `type` is what the
+     *  supervisor dedupes on: the CLI repeats these in batches, and one piece of
+     *  evidence per session is worth keeping where a row per frame is not. */
+    kind: 'unknown'
+    type: string
+    title: string
+    detail: unknown
+  }
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : undefined
@@ -335,14 +356,21 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       detail: message,
     }]
   }
+  if (subtype !== undefined && CLAUDE_PROGRESS_SUBTYPES.has(subtype)) {
+    // Progress telemetry, not lifecycle evidence. Kept off the activity log
+    // deliberately: the SDK emits these per estimated thinking-token chunk, so
+    // one step can produce tens of thousands of durable rows — the transcript
+    // renders none of them, and each one costs a full sidecar rewrite.
+    return [{ kind: 'progress', subtype }]
+  }
   if (subtype?.startsWith('hook_') === true || subtype === 'plugin_install') {
-    return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }]
+    return [{ kind: 'status', title: claudeStatusTitle(subtype), detail: message }]
   }
   if (subtype !== undefined) {
     // Preserve unknown system lifecycle evidence (background tasks, resets,
     // worker/mirror lifecycle) as a bounded activity instead of silently
     // dropping it; the activity layer redacts and bounds the detail.
-    return [{ kind: 'status', title: `Claude Code ${subtype.replaceAll('_', ' ')}`, detail: message }]
+    return [{ kind: 'status', title: claudeStatusTitle(subtype), detail: message }]
   }
   return []
 }
@@ -370,6 +398,15 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
         return text === undefined ? [] : [{ kind: 'thinking', text, phase: 'updated', ...(parentToolUseId === undefined ? {} : { parentToolUseId }) }]
       }
     }
+    if (event?.type === 'message_delta') {
+      // The one place a single request's own usage survives. The assistant
+      // message the CLI also emits for the same request carries zeros -- it is
+      // the placeholder Claude Code forwards -- and the result reports the
+      // turn's SUM over every request, which is not a size the Host can divide
+      // by a context window. This frame is that request's prompt exactly.
+      const usage = usageOf(record(event.usage))
+      return hasUsageCounts(usage) ? [{ kind: 'request-usage', usage, ...(parentToolUseId === undefined ? {} : { parentToolUseId }) }] : []
+    }
     return []
   }
   if (value.type === 'assistant') return normalizeAssistant(value)
@@ -389,6 +426,10 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       : undefined
     const terminalReason = string(value.terminal_reason)
     const userMessageUuid = string(value.user_message_uuid)
+    // User sends still queued when this result was produced: non-zero means at
+    // least one more turn follows without further input, so this result is not
+    // the end of the turn.
+    const queuedTurnCount = finiteNumber(value.queued_turn_count)
     const permissionDenials = Array.isArray(value.permission_denials)
       ? value.permission_denials
           .map(item => record(item))
@@ -411,6 +452,7 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       usage: resultUsage(value),
       sessionId,
       ...(userMessageUuid === undefined ? {} : { userMessageUuid }),
+      ...(queuedTurnCount === undefined ? {} : { queuedTurnCount }),
     }]
   }
   if (value.type === 'auth_status') {
@@ -434,7 +476,24 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       detail: value.rate_limit_info,
     }]
   }
-  return [{ kind: 'unknown', title: `Unknown Claude SDK message: ${String(value.type)}`, detail: value }]
+  if (value.type === 'tool_progress') {
+    // Heartbeats the CLI emits while a tool runs (which tool, elapsed time, the
+    // subagent it belongs to). Same telemetry class as the thinking-token
+    // frames and equally unkeepable, but the name and the clock are what a live
+    // indicator shows.
+    const toolName = string(value.tool_name)
+    const elapsedSeconds = finiteNumber(value.elapsed_time_seconds)
+    const parentToolUseId = string(value.parent_tool_use_id)
+    return [{
+      kind: 'progress',
+      subtype: 'tool_progress',
+      ...(toolName === undefined ? {} : { toolName }),
+      ...(elapsedSeconds === undefined ? {} : { elapsedMs: Math.max(0, Math.round(elapsedSeconds * 1_000)) }),
+      ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
+    }]
+  }
+  const unknownType = String(value.type)
+  return [{ kind: 'unknown', type: unknownType, title: `${CLAUDE_UNKNOWN_MESSAGE_PREFIX}${unknownType}`, detail: value }]
 }
 
 export function extractSdkContentText(content: unknown): string {
