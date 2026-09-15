@@ -66,6 +66,9 @@ export interface ClaudeSidebarTabOptions {
   namespace: 'settings.claude-code'
   /** Per-session extras for the diff body; the rest comes from the tab. */
   diffFace: (sessionId: string) => Pick<ClaudeDiffPanelInjected, 'submitPrompt'>
+  /** Per-session extras for the tasks body: the stop control, when the Host
+   *  exposes one. */
+  tasksFace?: (sessionId: string) => Pick<ClaudeTasksPanelInjected, 'stopTask'>
   /** Per-session extras for the overview body, or nothing when the session
    *  list is not available and the body should stay empty. */
   overviewFace: (sessionId: string) => Omit<ClaudePullRequestsPanelInjected, 'closeDetails'> | undefined
@@ -204,7 +207,7 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
     key: CLAUDE_TAB_KINDS.tasks,
     locale: namespace,
     inject: (sessionId: string): Omit<ClaudeTasksPanelInjected, 'closeDetails' | 'turn'> & ClaudeTabFace => (
-      { t, ...faceFor(CLAUDE_TAB_KINDS.tasks, sessionId) }
+      { t, sessionId, ...faceFor(CLAUDE_TAB_KINDS.tasks, sessionId), ...options.tasksFace?.(sessionId) }
     ),
   }, ClaudeTasksTab))
   ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({

@@ -890,6 +890,33 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('.dshClaudePanelIconButton:hover')
   })
 
+  it('offers a stop control on a running task, and none on a finished one', () => {
+    const panel = (tasks: readonly ClaudeTaskInfo[], stopTask?: (sessionId: string, taskId: string) => Promise<void>) =>
+      renderToStaticMarkup(createElement(ClaudeTasksPanel, {
+        turn: 2,
+        t: ((key: string) => key) as never,
+        closeDetails: () => {},
+        sessionId: 'dsh-1',
+        ...(stopTask === undefined ? {} : { stopTask }),
+        useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({
+          owned: true,
+          activities: [],
+          tasks: { tasks },
+        })) as never,
+      }))
+
+    const running = panel([{ taskId: 'live', description: 'Watch logs', status: 'running', originTurn: 2, backgrounded: true }], async () => {})
+    expect(running).toContain('dsh-claude-task-stop')
+    expect(running).toContain('tasksStop')
+
+    // A settled task has nothing to stop, and a Host whose bundle predates the
+    // route offers no control at all rather than a button that cannot work.
+    expect(panel([{ taskId: 'done', description: 'Finished', status: 'completed', originTurn: 2, backgrounded: true }], async () => {}))
+      .not.toContain('dsh-claude-task-stop')
+    expect(panel([{ taskId: 'live', description: 'Watch logs', status: 'running', originTurn: 2, backgrounded: true }]))
+      .not.toContain('dsh-claude-task-stop')
+  })
+
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {
     const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
     const assistant = (seq: number, step: number, provider = 'claude') => ({

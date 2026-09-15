@@ -9,6 +9,35 @@ export const CLAUDE_TASKS_EVENT = 'claude-code/tasks'
  *  gathering subagent activity instead of native tool cards. */
 export const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(['Task', 'Agent'])
 export const SDK_VERSION = '0.3.247'
+
+/** System-message subtypes the CLI streams as progress telemetry rather than
+ *  lifecycle evidence.
+ *
+ *  `thinking_tokens` arrives once per estimated thinking-token chunk — the SDK
+ *  documents it as "approximate progress for spinners/pills, not the
+ *  authoritative billed output_tokens" — so one extended-thinking step emits
+ *  tens of thousands of them. The transcript never draws a plain status row,
+ *  and each durable row costs a full sidecar rewrite, so these are consumed as
+ *  progress and kept out of the activity log. */
+export const CLAUDE_PROGRESS_SUBTYPES: ReadonlySet<string> = new Set(['thinking_tokens'])
+
+/** Title prefix this package gives a message type it does not handle yet. Shared
+ *  by the writer and by the projection prune, so a notice row can be recognized
+ *  without re-deriving the template. */
+export const CLAUDE_UNKNOWN_MESSAGE_PREFIX = 'Unknown Claude SDK message: '
+
+/** Durable status title this package writes for a system subtype. Shared by the
+ *  writer and by the filter that drops a progress subtype's rows, so the two can
+ *  never drift apart. */
+export function claudeStatusTitle(subtype: string): string {
+  return `Claude Code ${subtype.replaceAll('_', ' ')}`
+}
+
+/** Cordis service this package publishes so a steering plugin can hand one more
+ *  user message to the turn a Claude session is running. That turn is the only
+ *  thing that can read it into Claude at the next model step, and it lives in
+ *  this package, so the message has to come through here. */
+export const CLAUDE_STEERING_SERVICE = 'claudeSteering'
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
 export const CLAUDE_CLIENT_DIAGNOSTICS_PATH = '/plugins/dsh-claude/client-diagnostics'
 export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'
@@ -25,6 +54,7 @@ export const CLAUDE_REPOSITORY_FILE_PATH = '/plugins/dsh-claude/repository/file'
 export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'
 export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
 export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
+export const CLAUDE_TASK_STOP_PATH = '/plugins/dsh-claude/tasks/stop'
 export const CLAUDE_PLAN_FEEDBACK_PATH = '/plugins/dsh-claude/plan/feedback'
 export const CLAUDE_PROMPTS_PATH = '/plugins/dsh-claude/prompts'
 export const CLAUDE_PROMPT_NAME_PATH = '/plugins/dsh-claude/prompts/name'

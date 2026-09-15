@@ -27,6 +27,7 @@ import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './Claud
 import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import type { ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { CLAUDE_TAB_KINDS, registerClaudeSidebarTabs } from './sidebar-tabs.tsx'
+import { stopClaudeTask } from './task-api.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
 import { claudeBootCheckFindings } from './boot-check.ts'
@@ -240,6 +241,7 @@ export function apply(ctx: ClientContext): void {
       const submitPrompt = submitPromptFor(sessionId)
       return submitPrompt === undefined ? {} : { submitPrompt }
     },
+    tasksFace: () => ({ stopTask: stopClaudeTask }),
     overviewFace: () => sessions === undefined ? undefined : {
       t,
       openSession: id => { sessions.open(id as SessionId) },

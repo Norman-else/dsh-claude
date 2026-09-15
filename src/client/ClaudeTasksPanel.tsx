@@ -14,6 +14,11 @@ export interface ClaudeTasksPanelInjected {
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
   closeDetails: () => void
   turn: number
+  /** The session whose board this is: the process that owns the tasks is the
+   *  one the stop request has to reach. */
+  sessionId?: string
+  /** End one running task; absent where the Host offers no such route. */
+  stopTask?: (sessionId: string, taskId: string) => Promise<void>
 }
 
 export interface ClaudeTasksPanelProps extends ClaudeTasksPanelInjected {
@@ -119,13 +124,18 @@ function TaskCard(props: {
    *  dispatched it, not to the task, so they carry no taskId to filter on. */
   allActivities: readonly ClaudeActivityEvent[]
   t: ClaudeTasksPanelInjected['t']
+  sessionId: string | undefined
+  stopTask: ClaudeTasksPanelInjected['stopTask'] | undefined
 }) {
-  const { task, activities, allActivities, t } = props
+  const { task, activities, allActivities, t, sessionId, stopTask } = props
   const tools = useMemo(() => taskTools(allActivities, task.taskId), [allActivities, task.taskId])
   const [activityOpen, setActivityOpen] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState(false)
   const running = task.status === 'running'
   const failed = task.status === 'failed' || task.status === 'killed'
   const meta = taskMeta(task, t)
+  const stoppable = running && stopTask !== undefined && sessionId !== undefined
   return (
     <article style={{ ...styles.taskCard, ...(running ? styles.taskCardRunning : {}) }}>
       <div style={styles.taskCardTop}>
@@ -139,8 +149,29 @@ function TaskCard(props: {
             {task.backgrounded === true ? <><span aria-hidden="true"> · </span><span>{t('tasksBackground')}</span></> : null}
           </p>
         </div>
+        {stoppable ? (
+          <button
+            type="button"
+            className="dsh-claude-task-stop"
+            style={styles.taskTextButton}
+            disabled={stopping}
+            onClick={() => {
+              setStopping(true)
+              setStopError(false)
+              void (stopTask as NonNullable<typeof stopTask>)(sessionId as string, task.taskId).catch(() => {
+                // The board moved on, or the process is gone: the next snapshot
+                // is authoritative, so the card reports the refusal and stops
+                // pretending it can act.
+                setStopError(true)
+              }).finally(() => { setStopping(false) })
+            }}
+          >
+            {stopping ? t('tasksStopping') : t('tasksStop')}
+          </button>
+        ) : null}
       </div>
       {meta.length === 0 ? null : <p style={styles.taskMeta}>{meta.join(' · ')}</p>}
+      {stopError ? <p style={styles.taskStatusLine} role="status">{t('tasksStopUnavailable')}</p> : null}
       {task.summary === undefined || running ? null : <p style={styles.taskSummary}>{task.summary}</p>}
       {activities.length === 0 && tools.length === 0 ? null : (
         <div style={styles.taskActivitySection}>
@@ -178,7 +209,7 @@ function GroupHeading(props: { label: string; count: number; collapsed?: boolean
   )
 }
 
-export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }: ClaudeTasksPanelProps) {
+export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn, sessionId, stopTask }: ClaudeTasksPanelProps) {
   const projection = useClaudeProjection(value => value)
   const tasks = useMemo(
     () => tasksForTurn(projection.tasks?.tasks ?? [], turn),
@@ -210,7 +241,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
         <section aria-label={t('tasksRunning')}>
           <GroupHeading label={t('tasksRunning')} count={groups.running.length} />
           {groups.running.length === 0 ? <p style={styles.tasksGroupEmpty}>{t('tasksNoneRunning')}</p> : (
-            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.running.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} sessionId={sessionId} stopTask={stopTask} />)}</div>
           )}
         </section>
         <section aria-label={t('tasksSettled')} style={styles.tasksFinishedSection}>
@@ -222,7 +253,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
             {...(groups.finished.length === 0 ? {} : { action: { label: t('tasksClear'), onClick: clearFinished } })}
           />
           {finishedCollapsed || groups.finished.length === 0 ? null : (
-            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} />)}</div>
+            <div style={styles.taskCardList}>{groups.finished.map(task => <TaskCard key={task.taskId} task={task} activities={taskActivities.get(task.taskId) ?? []} allActivities={projection.activities} t={t} sessionId={sessionId} stopTask={stopTask} />)}</div>
           )}
         </section>
       </div>

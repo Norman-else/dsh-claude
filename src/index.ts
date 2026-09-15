@@ -39,6 +39,7 @@ import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
+import { registerClaudeTaskRoute } from './task-routes.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
 import { SessionRootLedger } from './session-root-ledger.ts'
@@ -539,6 +540,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       },
     })
     registerPlanUsageRoute(webCtx, fetchedAt => probePlanUsage(supervisorConfig.executablePath, fetchedAt))
+    registerClaudeTaskRoute(webCtx, {
+      tasksFor: sessionId => supervisor.tasks(sessionId),
+      stopTask: (sessionId, taskId) => supervisor.stopTask(sessionId, taskId),
+    })
     registerClaudeProjectionRoute(webCtx, sidecar, ownsClaudeSession, sessionId => commandCatalogs.get(sessionId) ?? [], async sessionId => {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
