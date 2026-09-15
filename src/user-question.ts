@@ -115,13 +115,23 @@ export function createUserQuestionBridge(
         question.question,
         answerText(answersById.get(question.id), question.multiSelect === true),
       ]))
+      // The row has to carry the answer, not just the fact that one was given.
+      // Nothing else records it: a question asked through the permission bridge
+      // is not a DSH tool call, so the transcript holds no call/result pair for
+      // it, and the answer would otherwise exist only inside Claude's own tool
+      // result — invisible to the reader who gave it.
+      const chosen = questions
+        .map(question => answerText(answersById.get(question.id), question.multiSelect === true))
+        .filter(text => text.length > 0)
       await active.appendActivity({
         kind: 'question',
         phase: 'completed',
         toolUseId: options.toolUseID,
         toolName: 'AskUserQuestion',
         title: 'Claude asked a question',
-        summary: 'Answered in DeepSeek Harness',
+        summary: chosen.length === 0
+          ? 'Answered in DeepSeek Harness'
+          : `Answered in DeepSeek Harness · ${chosen.join(' / ')}`,
       })
       return {
         behavior: 'allow',
