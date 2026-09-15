@@ -82,6 +82,18 @@ export function claudePermissionMode(
   return sandbox === undefined || sandbox === null ? 'plan' : CLAUDE_MODE_BY_SANDBOX[sandbox]
 }
 
+/** Which access control a Claude session shows and obeys: the Host's own
+ *  three-preset selector with the sandbox mapping alone (`native`), or this
+ *  plugin's selector over Claude Code's modes with the default mode and the
+ *  creation-time alignment (`plugin`). */
+export const CLAUDE_PERMISSION_SELECTORS = ['plugin', 'native'] as const
+export type ClaudePermissionSelector = typeof CLAUDE_PERMISSION_SELECTORS[number]
+export const DEFAULT_CLAUDE_PERMISSION_SELECTOR: ClaudePermissionSelector = 'plugin'
+
+export function isClaudePermissionSelector(value: unknown): value is ClaudePermissionSelector {
+  return value === 'plugin' || value === 'native'
+}
+
 /** What the client shows for one session. */
 export interface ClaudePermissionModeView {
   readonly mode: ClaudePermissionMode

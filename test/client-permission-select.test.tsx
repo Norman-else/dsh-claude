@@ -26,8 +26,10 @@ function outcome(mode: ClaudePermissionMode, hostSynced = true): ClaudePermissio
   return { mode, sandbox: mode === 'plan' ? 'read-only' : mode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write', hostSynced }
 }
 
-function mount({ owned = true, mode, locked = false, autoSupported, running = false, setMode, notify }: {
+function mount({ owned = true, selector = 'plugin', mode, locked = false, autoSupported, running = false, setMode, notify }: {
   owned?: boolean
+  /** `null` leaves the field off the snapshot, as before the first carrier line. */
+  selector?: 'plugin' | 'native' | null
   mode?: ClaudePermissionMode
   locked?: boolean
   autoSupported?: boolean
@@ -38,6 +40,7 @@ function mount({ owned = true, mode, locked = false, autoSupported, running = fa
   const snapshot: ClaudeClientProjection = {
     ...EMPTY_CLAUDE_PROJECTION,
     owned,
+    ...(selector === null ? {} : { permissionSelector: selector }),
     ...(mode === undefined ? {} : { permissionMode: { mode, locked, ...(autoSupported === undefined ? {} : { autoSupported }) } }),
   }
   const set = vi.fn(setMode ?? (async (next: ClaudePermissionMode) => outcome(next)))
@@ -75,6 +78,18 @@ async function settle(): Promise<void> {
 describe('Claude permission select', () => {
   it('renders nothing for a session another preset drives', () => {
     mount({ owned: false, mode: 'plan' })
+    expect(trigger()).toBeNull()
+  })
+
+  it('stands down under the Host selector, and before the setting is known', () => {
+    // Nothing rendered means the Host's own control shows: the hiding rule
+    // keys on this element's presence.
+    mount({ selector: 'native', mode: 'acceptEdits' })
+    expect(trigger()).toBeNull()
+    act(() => { mounted?.unmount() })
+    mounted = undefined
+    document.body.replaceChildren()
+    mount({ selector: null, mode: 'acceptEdits' })
     expect(trigger()).toBeNull()
   })
 

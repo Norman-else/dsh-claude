@@ -9,7 +9,7 @@ import type { ClaudeActivityEvent } from './events.ts'
 import type { ClaudeCommandView } from './command-bridge.ts'
 import type { RepositoryStatus } from './repository-status.ts'
 import type { ReviewComment } from './review-comments.ts'
-import type { ClaudePermissionModeView } from './permission-mode.ts'
+import type { ClaudePermissionModeView, ClaudePermissionSelector } from './permission-mode.ts'
 
 const MAX_SESSION_ID_CHARS = 1_024
 /** Slow-moving metadata refresh and stream heartbeat cadence; deliberately off
@@ -57,6 +57,8 @@ interface ProjectionMeta {
   readonly reviewComments: readonly ReviewComment[]
   /** The Claude permission mode and whether a turn holds it; see permission-mode.ts. */
   readonly permissionMode?: ClaudePermissionModeView
+  /** Which access control Claude sessions draw; absent for sessions this plugin does not own. */
+  readonly permissionSelector?: ClaudePermissionSelector
 }
 
 function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Record<string, unknown> {
@@ -72,6 +74,7 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
     reviewComments: meta.reviewComments,
     ...(meta.permissionMode === undefined ? {} : { permissionMode: meta.permissionMode }),
+    ...(meta.permissionSelector === undefined ? {} : { permissionSelector: meta.permissionSelector }),
     // Ranges only: the chain anchors behind a rewind are Claude transcript
     // identities and stay on this side of the boundary.
     ...(projection.rewind === undefined ? {} : { rewind: { ranges: projection.rewind.ranges } }),
@@ -98,6 +101,8 @@ export function registerClaudeProjectionRoute(
   reviewCommentsForSession: (sessionId: string) => readonly ReviewComment[] = () => [],
   extraRepositoriesForSession: (sessionId: string, activities: readonly ClaudeActivityEvent[]) => Promise<readonly RepositoryStatus[]> = async () => [],
   permissionModeForSession: (sessionId: string) => Promise<ClaudePermissionModeView | undefined> = async () => undefined,
+  /** Read from memory: it is on the first snapshot line, so the composer never draws the wrong selector. */
+  permissionSelector: () => ClaudePermissionSelector = () => 'plugin',
 ): void {
   const info = (message: string): void => {
     ctx.logger?.info?.(message)
@@ -110,6 +115,7 @@ export function registerClaudeProjectionRoute(
       owned,
       commands: commandsForSession(sessionId),
       reviewComments: owned ? reviewCommentsForSession(sessionId) : [],
+      ...(owned ? { permissionSelector: permissionSelector() } : {}),
     }
   }
 
@@ -163,6 +169,7 @@ export function registerClaudeProjectionRoute(
         commands: meta.commands,
         ...(meta.repository === undefined ? {} : { repository: meta.repository }),
         ...(meta.permissionMode === undefined ? {} : { permissionMode: meta.permissionMode }),
+        ...(meta.permissionSelector === undefined ? {} : { permissionSelector: meta.permissionSelector }),
         ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
         reviewComments: meta.reviewComments,
       })

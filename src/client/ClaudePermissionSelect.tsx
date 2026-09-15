@@ -77,6 +77,7 @@ export function ClaudePermissionModeGlyph({ mode }: { mode: ClaudePermissionMode
  */
 export function ClaudePermissionSelect({ t, setMode, notify, useClaudeProjection, useSession }: ClaudePermissionSelectProps) {
   const owned = useClaudeProjection(projection => projection.owned)
+  const selector = useClaudeProjection(projection => projection.permissionSelector)
   const view = useClaudeProjection(projection => projection.permissionMode)
   // A prop that is absent stays absent for the component's life, so the hook
   // count is the same on every render.
@@ -90,7 +91,10 @@ export function ClaudePermissionSelect({ t, setMode, notify, useClaudeProjection
   useEffect(() => {
     if (pick !== null && reported === pick) setPick(null)
   }, [pick, reported])
-  if (!owned) return null
+  // Absent until the first snapshot: drawing nothing then leaves the Host's
+  // own selector in place, which is also what `native` asks for -- and the
+  // rule in host-chrome.ts that hides the Host's keys on this element.
+  if (!owned || selector !== 'plugin') return null
   const current = pick ?? reported
   const locked = running || view?.locked === true
   const label = current === undefined ? t('permissionMode') : t(NAME_KEY[current])

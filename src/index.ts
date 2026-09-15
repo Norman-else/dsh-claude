@@ -40,7 +40,7 @@ import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
 import { registerClaudePermissionModeRoute } from './permission-mode-routes.ts'
-import { claudePermissionMode, type ClaudePermissionModeView } from './permission-mode.ts'
+import { claudePermissionMode, type ClaudePermissionModeView, type ClaudePermissionSelector } from './permission-mode.ts'
 import { alignSessionWithDefault, applyHostPreset, type HostPermissionPresetService, type HostPresetAccess } from './permission-mode-host.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
 import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
@@ -51,7 +51,7 @@ import { claudeModelRow, claudeModelValue, probeClaudeModels } from './model-cat
 import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
-import { readDefaultPermissionMode, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+import { readDefaultPermissionMode, readPermissionSelector, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -259,6 +259,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     supervisorConfig.maxProcesses = overrides.maxProcesses ?? defaultLimits.maxProcesses
   }
   await applySettingsOverrides()
+  // Cached so the projection can put it on the first snapshot line without a
+  // file read; refreshed whenever the Settings panel writes.
+  let permissionSelector: ClaudePermissionSelector = await readPermissionSelector()
   const sidecar = new ClaudeSidecarRepository()
   const repositoryStatus = new RepositoryStatusService(subprocess)
   const repositorySetup = new RepositorySetupService(subprocess, {
@@ -281,6 +284,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     runDetached: operation => ctx.agents.withoutInitiator(operation),
     sidecar,
     defaultPermissionMode: () => readDefaultPermissionMode(),
+    permissionSelector: async () => permissionSelector,
   })
   let resolutionError: unknown
   try {
@@ -305,6 +309,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
        *  default preset is full access does not turn a configured `auto` into
        *  bypass. Sessions found on boot keep whatever they were on. */
       const align = async (agent: Agent): Promise<void> => {
+        if (permissionSelector === 'native') return
         const sessionId = agent.id as string
         try {
           const [projection, defaultMode] = await Promise.all([sidecar.read(sessionId), readDefaultPermissionMode()])
@@ -461,6 +466,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       defaultLimits,
       onUpdated: async () => {
         await applySettingsOverrides()
+        permissionSelector = await readPermissionSelector()
         supervisor.limitsChanged()
       },
     })
@@ -577,7 +583,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const agent = webCtx.agents.get(sessionId as never)
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const projection = await sidecar.read(sessionId)
-      const folded = claudePermissionMode(agent.session.snapshotEvents(), projection.permissionMode ?? await readDefaultPermissionMode())
+      const folded = claudePermissionMode(agent.session.snapshotEvents(), permissionSelector === 'native' ? undefined : projection.permissionMode ?? await readDefaultPermissionMode())
       // `auto` is per model. The model is only known here while a process is
       // live; a session between processes is offered the mode, and the CLI
       // answers for itself on the next spawn.
@@ -591,6 +597,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const cwd = agent.session.header.cwd
       return cwd === undefined ? undefined : repositoryStatus.inspect(cwd)
-    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession, permissionModeForClaudeSession)
+    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession, permissionModeForClaudeSession, () => permissionSelector)
   })
 }

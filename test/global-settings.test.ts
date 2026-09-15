@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readDefaultPermissionMode, readGlobalSettings, readRenderMode, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
+import { readDefaultPermissionMode, readGlobalSettings, readPermissionSelector, readRenderMode, readSupervisorLimitOverrides, updateGlobalSettings } from '../src/global-settings.ts'
 import { isGlobalSettingsView } from '../src/client/ClaudeCodeSettings.tsx'
 
 const roots: string[] = []
@@ -104,6 +104,24 @@ describe('Claude Code global settings registry', () => {
     await updateGlobalSettings({ renderer: 'plugin' }, { paths })
     expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
     await expect(updateGlobalSettings({ renderer: 'Native' }, { paths })).rejects.toThrow('Invalid value')
+  })
+
+  it('switches between this plugin\'s permission selector and the Host\'s, plugin unless changed', async () => {
+    const paths = await fixture()
+    const initial = await readGlobalSettings({ paths })
+    expect(initial.settings.find(setting => setting.key === 'permissionSelector')).toMatchObject({ kind: 'select', value: 'plugin', effect: 'immediate' })
+    expect(initial.settings.find(setting => setting.key === 'permissionSelector')?.options.map(option => option.value)).toEqual(['plugin', 'native'])
+    // The switch sits right before the default mode it gates.
+    const keys = initial.settings.map(setting => setting.key)
+    expect(keys.indexOf('permissionSelector')).toBe(keys.indexOf('permissionMode') - 1)
+    await expect(readPermissionSelector({ paths })).resolves.toBe('plugin')
+    await updateGlobalSettings({ permissionSelector: 'native' }, { paths })
+    await expect(readPermissionSelector({ paths })).resolves.toBe('native')
+    await updateGlobalSettings({ permissionSelector: 'plugin' }, { paths })
+    expect(JSON.parse(await readFile(paths.pluginSettingsFile, 'utf8'))).toEqual({})
+    await expect(updateGlobalSettings({ permissionSelector: 'host' }, { paths })).rejects.toThrow('Invalid value')
+    await writeFile(paths.pluginSettingsFile, 'not json')
+    await expect(readPermissionSelector({ paths })).resolves.toBe('plugin')
   })
 
   it('offers every Claude Code permission mode as the default, auto unless changed', async () => {

@@ -103,6 +103,9 @@ describe('settings row visibility', () => {
 
   it('shows it under the plugin renderer', () => {
     const keys = visibleGlobalSettings([row('renderer', 'plugin'), row('prose', 'plain')]).map(s => s.key)
+    // The default permission mode only means something under the plugin's selector.
+    expect(visibleGlobalSettings([row('permissionSelector', 'native'), row('permissionMode', 'auto')]).map(s => s.key)).toEqual(['permissionSelector'])
+    expect(visibleGlobalSettings([row('permissionSelector', 'plugin'), row('permissionMode', 'auto')]).map(s => s.key)).toEqual(['permissionSelector', 'permissionMode'])
     expect(keys).toEqual(['renderer', 'prose'])
   })
 

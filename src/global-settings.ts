@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { CLAUDE_PERMISSION_MODES, isClaudePermissionMode, type ClaudePermissionMode } from './permission-mode.ts'
+import { CLAUDE_PERMISSION_MODES, CLAUDE_PERMISSION_SELECTORS, DEFAULT_CLAUDE_PERMISSION_SELECTOR, isClaudePermissionMode, isClaudePermissionSelector, type ClaudePermissionMode, type ClaudePermissionSelector } from './permission-mode.ts'
 import { homedir } from 'node:os'
 import { chmod, mkdir, opendir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
@@ -227,6 +227,31 @@ const WORKTREE_BRANCH_PREFIX: TextSettingDescriptor = {
   },
 }
 
+/** Which access control Claude sessions get. `native` is the Host's own
+ *  selector and nothing else: the sandbox alone decides the mode, as it did
+ *  before this plugin grew a selector; the default-mode setting and the
+ *  creation-time alignment stand down. The Client reads this to decide which
+ *  selector to draw, so the switch shows at once; a turn already running
+ *  keeps the mode it started under. */
+const PERMISSION_SELECTOR: SelectSettingDescriptor = {
+  key: 'permissionSelector',
+  kind: 'select',
+  document: 'plugin',
+  effect: 'immediate',
+  async options() {
+    return CLAUDE_PERMISSION_SELECTORS.map(value => ({ value, label: value, source: 'built-in' as const }))
+  },
+  read(document) {
+    const value = document.permissionSelector
+    return isClaudePermissionSelector(value) ? value : DEFAULT_CLAUDE_PERMISSION_SELECTOR
+  },
+  apply(document, value) {
+    if (!isClaudePermissionSelector(value)) throw new Error('Invalid value for global setting permissionSelector')
+    if (value === DEFAULT_CLAUDE_PERMISSION_SELECTOR) delete document.permissionSelector
+    else document.permissionSelector = value
+  },
+}
+
 /** `auto` unless the user says otherwise: Claude Code's classifier approves the
  *  routine and asks about the rest, which is the mode a fresh session should
  *  start in when nobody has thought about it yet. */
@@ -360,7 +385,7 @@ function integerSetting(
 const MAX_PROCESSES = integerSetting('maxProcesses', 1, MAX_PROCESSES_LIMIT, limits => limits.maxProcesses, 'immediate')
 const IDLE_TIMEOUT_MINUTES = integerSetting('idleTimeoutMinutes', 1, MAX_IDLE_TIMEOUT_MINUTES, limits => Math.max(1, Math.round(limits.idleTimeoutMs / 60_000)))
 
-const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, PERMISSION_MODE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
+const DESCRIPTORS: readonly SettingDescriptor[] = [OUTPUT_STYLE, PERMISSION_SELECTOR, PERMISSION_MODE, RENDERER, PROSE, ALERTS, WORKTREE_BRANCH_PREFIX, MAX_PROCESSES, IDLE_TIMEOUT_MINUTES]
 const DESCRIPTOR_BY_KEY = new Map(DESCRIPTORS.map(descriptor => [descriptor.key, descriptor]))
 let pendingWrite: Promise<unknown> = Promise.resolve()
 
@@ -433,6 +458,17 @@ export async function readRenderMode(deps: GlobalSettingsDependencies = {}): Pro
     return DEFAULT_CLAUDE_RENDER_MODE
   }
   return isClaudeRenderMode(document.renderer) ? document.renderer : DEFAULT_CLAUDE_RENDER_MODE
+}
+
+/** Which selector Claude sessions use; unreadable settings mean this plugin's. */
+export async function readPermissionSelector(deps: GlobalSettingsDependencies = {}): Promise<ClaudePermissionSelector> {
+  let document: JsonObject
+  try {
+    document = await readDocument(pathsFor(deps).pluginSettingsFile)
+  } catch {
+    return DEFAULT_CLAUDE_PERMISSION_SELECTOR
+  }
+  return isClaudePermissionSelector(document.permissionSelector) ? document.permissionSelector : DEFAULT_CLAUDE_PERMISSION_SELECTOR
 }
 
 /** The mode a session runs under until it chooses one. A missing, unreadable,

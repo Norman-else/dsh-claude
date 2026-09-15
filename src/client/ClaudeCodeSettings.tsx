@@ -284,14 +284,18 @@ export function visibleGlobalSettings(settings: readonly GlobalSettingView[]): r
   // The prose palette is a stylesheet over markup this package renders; under
   // the native renderer the Host draws the turn and the rules never match.
   const renderer = settings.find(setting => setting.key === 'renderer')
-  if (renderer === undefined || renderer.value !== 'native') return settings
-  return settings.filter(setting => setting.key !== 'prose')
+  const withProse = renderer === undefined || renderer.value !== 'native' ? settings : settings.filter(setting => setting.key !== 'prose')
+  // The default mode is read by this plugin's selector alone; under the
+  // Host's the sandbox decides and the setting would promise nothing.
+  const selector = settings.find(setting => setting.key === 'permissionSelector')
+  return selector === undefined || selector.value !== 'native' ? withProse : withProse.filter(setting => setting.key !== 'permissionMode')
 }
 
 /** Per-setting label and the effect note that used to sit as a standalone
  *  paragraph under the card; it now hangs off the label as a hover hint. */
 export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKey; hint: ClaudeCodeSettingsKey }>> = {
   outputStyle: { label: 'outputStyle', hint: 'globalSettingsNewSession' },
+  permissionSelector: { label: 'permissionSelector', hint: 'permissionSelectorEffect' },
   permissionMode: { label: 'defaultPermissionMode', hint: 'defaultPermissionModeEffect' },
   renderer: { label: 'renderer', hint: 'rendererEffect' },
   prose: { label: 'prose', hint: 'proseEffect' },
@@ -305,6 +309,8 @@ export const SETTING_COPY: Readonly<Record<string, { label: ClaudeCodeSettingsKe
  *  keyed `<setting>:<option>`. Options discovered on the machine (output style
  *  names) carry no entry and keep the label the route reported. */
 export const SETTING_OPTION_COPY: Readonly<Record<string, ClaudeCodeSettingsKey>> = {
+  'permissionSelector:plugin': 'permissionSelectorPlugin',
+  'permissionSelector:native': 'permissionSelectorNative',
   'permissionMode:plan': 'permissionModePlan',
   'permissionMode:default': 'permissionModeDefault',
   'permissionMode:acceptEdits': 'permissionModeAcceptEdits',

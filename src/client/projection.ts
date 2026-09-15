@@ -6,7 +6,7 @@ import type { ReviewComment } from '../review-comments.ts'
 import { CLAUDE_PROJECTION_PATH, isClaudeRenderMode } from '../constants.ts'
 import { MAX_MULTIPLEX_SESSIONS } from '../plugin-budget.ts'
 import { MAX_REWIND_RANGES, type ClaudeRewindRange } from '../rewind.ts'
-import { isClaudePermissionMode, type ClaudePermissionModeView } from '../permission-mode.ts'
+import { isClaudePermissionMode, isClaudePermissionSelector, type ClaudePermissionModeView, type ClaudePermissionSelector } from '../permission-mode.ts'
 import { pluginProjectionStream } from './plugin-transport.ts'
 
 export interface ClaudeClientProjection {
@@ -26,6 +26,9 @@ export interface ClaudeClientProjection {
   /** The Claude permission mode the next turn runs under, and whether a
    *  turn in flight holds it. Absent until the carrier's first metadata. */
   readonly permissionMode?: ClaudePermissionModeView
+  /** Which access control to draw: this plugin's selector, or the Host's own.
+   *  Absent until the first snapshot, when neither is drawn by this plugin. */
+  readonly permissionSelector?: ClaudePermissionSelector
   /** Client-derived per-step activity slices with stable identities for
    *  untouched steps, so streaming re-renders only the active step. */
   readonly byStep?: ReadonlyMap<string, readonly ClaudeActivityEvent[]>
@@ -194,6 +197,9 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
       }
     }
   }
+  if (input.permissionSelector !== undefined && !isClaudePermissionSelector(input.permissionSelector)) {
+    throw new Error('invalid Claude permission selector projection')
+  }
   if (input.permissionMode !== undefined) {
     const view = record(input.permissionMode)
     if (view === undefined || !isClaudePermissionMode(view.mode) || typeof view.locked !== 'boolean'
@@ -281,6 +287,7 @@ export function createClaudeProjectionSource(
   let reviewComments: readonly ReviewComment[] | undefined
   let rewind: ClaudeClientProjection['rewind']
   let permissionMode: ClaudePermissionModeView | undefined
+  let permissionSelector: ClaudePermissionSelector | undefined
   const byStep = new Map<string, ClaudeActivityEvent[]>()
   const stepOrder: { turn: number; step: number; key: string }[] = []
   /** Streaming prose still being revealed: full arrived text plus shown chars. */
@@ -365,6 +372,7 @@ export function createClaudeProjectionSource(
       ...(reviewComments === undefined ? {} : { reviewComments }),
       ...(rewind === undefined ? {} : { rewind }),
       ...(permissionMode === undefined ? {} : { permissionMode }),
+      ...(permissionSelector === undefined ? {} : { permissionSelector }),
       byStep: new Map(byStep),
     }
     for (const listener of [...listeners]) listener()
@@ -484,6 +492,7 @@ export function createClaudeProjectionSource(
           reviewComments = next.reviewComments
           rewind = next.rewind
           permissionMode = next.permissionMode
+          permissionSelector = next.permissionSelector
           reset(next.activities)
           break
         }
@@ -521,6 +530,7 @@ export function createClaudeProjectionSource(
             ...(event.repositories === undefined ? {} : { repositories: event.repositories }),
             ...(event.reviewComments === undefined ? {} : { reviewComments: event.reviewComments }),
             ...(event.permissionMode === undefined ? {} : { permissionMode: event.permissionMode }),
+            ...(event.permissionSelector === undefined ? {} : { permissionSelector: event.permissionSelector }),
           })
           owned = event.owned as boolean
           commands = event.commands as readonly ClaudeCommandView[]
@@ -530,6 +540,7 @@ export function createClaudeProjectionSource(
           // A meta line without the mode is a Host that could not read it
           // this round; the last known mode stays rather than flickering off.
           if (event.permissionMode !== undefined) permissionMode = event.permissionMode as ClaudePermissionModeView
+          permissionSelector = event.permissionSelector as ClaudePermissionSelector | undefined
           revision += 1
           break
         default:

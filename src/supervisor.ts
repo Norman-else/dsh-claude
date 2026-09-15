@@ -31,7 +31,7 @@ import { createPermissionBridge } from './permission.ts'
 import { PlanFeedbackGate } from './plan-feedback.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
-import { claudePermissionMode, type ClaudePermissionMode } from './permission-mode.ts'
+import { claudePermissionMode, type ClaudePermissionMode, type ClaudePermissionSelector } from './permission-mode.ts'
 import { CLAUDE_PRESENTER_NAMES, dynamicPresenterDefinition } from './presenters.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
 import { claudeModelRow, claudeModelValue, recordClaudeModels } from './model-catalog.ts'
@@ -344,6 +344,7 @@ export class ClaudeSupervisor {
   readonly #runDetached: <T>(operation: () => T) => T
   readonly #sidecar: ClaudeSidecarRepository
   readonly #defaultPermissionMode: () => Promise<ClaudePermissionMode | undefined>
+  readonly #permissionSelector: () => Promise<ClaudePermissionSelector>
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -369,6 +370,9 @@ export class ClaudeSupervisor {
     /** The mode a session runs under until it chooses one; absent, the DSH
      *  sandbox alone decides (see permission-mode.ts). */
     defaultPermissionMode?: () => Promise<ClaudePermissionMode | undefined>
+    /** Which access control the session obeys; `native` ignores both the
+     *  session's recorded choice and the default and reads the sandbox alone. */
+    permissionSelector?: () => Promise<ClaudePermissionSelector>
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
@@ -378,6 +382,7 @@ export class ClaudeSupervisor {
     this.#runDetached = dependencies.runDetached ?? (operation => operation())
     this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
     this.#defaultPermissionMode = dependencies.defaultPermissionMode ?? (async () => undefined)
+    this.#permissionSelector = dependencies.permissionSelector ?? (async () => 'plugin')
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -858,7 +863,8 @@ export class ClaudeSupervisor {
     chosen: ClaudePermissionMode | undefined,
     model: string,
   ): Promise<ClaudePermissionMode> {
-    const mode = claudePermissionMode(events, chosen ?? await this.#defaultPermissionMode())
+    const native = (await this.#permissionSelector()) === 'native'
+    const mode = claudePermissionMode(events, native ? undefined : chosen ?? await this.#defaultPermissionMode())
     return mode === 'auto' && claudeModelRow(model)?.supportsAutoMode === false ? 'default' : mode
   }
 
