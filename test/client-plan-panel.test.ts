@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { latestPlanReview, parsePlanReviewKey, planReviewKey, planReviews, planTitle, quotedSelection } from '../src/client/ClaudePlanPanel.tsx'
+import { clearsQuote, latestPlanReview, parsePlanReviewKey, planReviewKey, planReviews, planTitle, quotedSelection } from '../src/client/ClaudePlanPanel.tsx'
 
 let ordinal = 0
 function permission(fields: Partial<ClaudeActivityEvent>): ClaudeActivityEvent {
@@ -163,5 +163,16 @@ describe('quoting a passage of the plan', () => {
 
   it('bounds a selection of the whole plan', () => {
     expect(quotedSelection(selection({ text: 'q'.repeat(4_000) }), body)).toHaveLength(1_000)
+  })
+
+  it('drops the quote when the reader deselects inside the plan', () => {
+    expect(clearsQuote(selection({ isCollapsed: true, anchorNode: inside }), body)).toBe(true)
+  })
+
+  it('keeps the quote when focus lands outside the plan', () => {
+    expect(clearsQuote(selection({ isCollapsed: true, anchorNode: outside }), body)).toBe(false)
+    expect(clearsQuote(selection({ isCollapsed: true, anchorNode: null }), body)).toBe(false)
+    expect(clearsQuote(null, body)).toBe(false)
+    expect(clearsQuote(selection({ isCollapsed: true, anchorNode: inside }), null)).toBe(false)
   })
 })

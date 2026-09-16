@@ -99,6 +99,16 @@ export function quotedSelection(selection: Selection | null, body: Node | null):
   return text.length === 0 ? undefined : text.slice(0, MAX_QUOTE_CHARS)
 }
 
+/** Whether a selection that quotes nothing is the reader dropping the quote.
+ *
+ *  Clicking inside the plan collapses the selection there and means "never
+ *  mind". Clicking anywhere else — above all the composer, which takes focus
+ *  to type the note — must leave the quote standing, or quoting is
+ *  impossible. */
+export function clearsQuote(selection: Selection | null, body: Node | null): boolean {
+  return selection !== null && body !== null && selection.anchorNode !== null && body.contains(selection.anchorNode)
+}
+
 /** The newest review as one primitive, for readers that only need to know
  *  whether it changed. A snapshot hook keeps its value only while the
  *  selection compares equal, and a fresh object per snapshot would defeat
@@ -191,8 +201,10 @@ export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetail
   useEffect(() => {
     if (typeof document === 'undefined') return
     const read = (): void => {
-      const selected = quotedSelection(document.getSelection(), body.current)
+      const selection = document.getSelection()
+      const selected = quotedSelection(selection, body.current)
       if (selected !== undefined) setQuote(selected)
+      else if (clearsQuote(selection, body.current)) setQuote(undefined)
     }
     document.addEventListener('selectionchange', read)
     return () => { document.removeEventListener('selectionchange', read) }
