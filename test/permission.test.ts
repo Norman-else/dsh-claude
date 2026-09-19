@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createPermissionBridge, mapApprovalOutcome, permissionReason, planText } from '../src/permission.ts'
+import { createAutoModeEscalation, createPermissionBridge, mapApprovalOutcome, permissionReason, planText } from '../src/permission.ts'
 import { normalizeActivity } from '../src/events.ts'
 import { PlanFeedbackGate } from '../src/plan-feedback.ts'
 
@@ -269,5 +269,33 @@ describe('DSH approval bridge', () => {
     const canUseTool = createPermissionBridge({ request: async () => { throw new Error('audit failed') } }, () => state)
     await expect(canUseTool('Bash', {}, toolOptions())).resolves.toMatchObject({ behavior: 'deny' })
     expect(state.events.at(-1)?.data).toMatchObject({ phase: 'failed', isError: true })
+  })
+})
+
+describe('auto-mode escalation', () => {
+  const signal = new AbortController().signal
+  const base = { session_id: 's', transcript_path: 't', cwd: '/w' }
+  const call = { tool_name: 'Bash', tool_input: { command: 'gh pr merge 1' }, tool_use_id: 'tool-1' }
+
+  it('lets Claude retry a blocked call and routes that retry to the DSH approval', async () => {
+    const hooks = createAutoModeEscalation()
+    const denied = hooks.PermissionDenied![0]!.hooks[0]!
+    const preToolUse = hooks.PreToolUse![0]!.hooks[0]!
+    const before = { ...base, ...call, hook_event_name: 'PreToolUse' as const }
+
+    expect(await preToolUse(before, 'tool-1', { signal })).toEqual({})
+    expect(await denied({ ...base, ...call, hook_event_name: 'PermissionDenied', reason: '[Merge Without Review]' }, 'tool-1', { signal }))
+      .toEqual({ hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } })
+    // Another call is not the blocked one.
+    expect(await preToolUse({ ...before, tool_input: { command: 'ls' } }, 'tool-2', { signal })).toEqual({})
+    expect(await preToolUse({ ...before, tool_use_id: 'tool-3' }, 'tool-3', { signal })).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'ask',
+        permissionDecisionReason: 'Auto mode blocked this action ([Merge Without Review]). Approve to run it anyway.',
+      },
+    })
+    // One retry per block: the next identical call goes back to the classifier.
+    expect(await preToolUse({ ...before, tool_use_id: 'tool-4' }, 'tool-4', { signal })).toEqual({})
   })
 })

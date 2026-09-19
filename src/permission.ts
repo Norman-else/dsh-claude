@@ -1,4 +1,4 @@
-import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
+import type { CanUseTool, HookCallbackMatcher, HookEvent, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval'
 import {
@@ -120,6 +120,46 @@ export function mapApprovalOutcome(
     message: denialMessage(outcome),
     toolUseID,
     decisionClassification: 'user_reject',
+  }
+}
+
+/** Hooks that turn an auto-mode block into a question for the user.
+ *
+ *  A classifier block is a denial Claude Code resolves on its own:
+ *  `canUseTool` never runs, so no DSH dialog appears. The CLI lets the user
+ *  approve it afterwards from `/permissions` (Recently denied → retry); DSH
+ *  has no such surface. So every block tells Claude it may retry, and the
+ *  retry of that exact call is forced to `ask`, which reaches `canUseTool`
+ *  and the ordinary DSH approval. The user still decides; a rejection there
+ *  reaches Claude as one. */
+export function createAutoModeEscalation(): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
+  const blocked = new Map<string, string>()
+  const key = (toolName: string, input: unknown) => `${toolName}\n${JSON.stringify(input)}`
+  return {
+    PermissionDenied: [{
+      hooks: [async input => {
+        if (input.hook_event_name !== 'PermissionDenied') return {}
+        blocked.set(key(input.tool_name, input.tool_input), input.reason)
+        return { hookSpecificOutput: { hookEventName: 'PermissionDenied', retry: true } }
+      }],
+    }],
+    PreToolUse: [{
+      hooks: [async input => {
+        if (input.hook_event_name !== 'PreToolUse') return {}
+        const callKey = key(input.tool_name, input.tool_input)
+        const reason = blocked.get(callKey)
+        if (reason === undefined) return {}
+        blocked.delete(callKey)
+        const why = reason.trim() === '' ? '' : ` (${reason.trim()})`
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'ask',
+            permissionDecisionReason: `Auto mode blocked this action${why}. Approve to run it anyway.`,
+          },
+        }
+      }],
+    }],
   }
 }
 

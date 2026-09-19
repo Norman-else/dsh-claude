@@ -27,7 +27,7 @@ import {
   type ClaudeTaskInfo,
   type ClaudeUsage,
 } from './events.ts'
-import { createPermissionBridge } from './permission.ts'
+import { createAutoModeEscalation, createPermissionBridge } from './permission.ts'
 import { PlanFeedbackGate } from './plan-feedback.ts'
 import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
@@ -1057,6 +1057,7 @@ export class ClaudeSupervisor {
       permissionMode,
       allowDangerouslySkipPermissions: true,
       canUseTool,
+      hooks: createAutoModeEscalation(),
       abortController: lifetime,
       spawnClaudeCodeProcess: createManagedClaudeSpawner(this.#runtime, this.#config.executablePath, process => {
         entry.process = process

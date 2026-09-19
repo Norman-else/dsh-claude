@@ -83,6 +83,7 @@ The main conversation Query options include:
 - `permissionMode`: mapped from the session's durable DSH sandbox mode (`read-only` → `plan`, `workspace-write` → `acceptEdits`, `danger-full-access` → `bypassPermissions`)
 - `allowDangerouslySkipPermissions: true`: enables the explicitly confirmed DSH Full access mapping without activating it in other modes
 - `canUseTool`: DSH approval bridge for modes where Claude still requests approval
+- `hooks`: auto-mode escalation (`PermissionDenied` + `PreToolUse`, see §4)
 - `cwd`: immutable DSH session cwd
 - `resume`: persisted Claude session id when present
 - explicit model only when the selected alias is not `default`
@@ -259,6 +260,8 @@ The plugin may provide a plugin-owned context refresh command, but must not shad
 The native DSH access selector remains the sole write path and its `sandbox/mode` event is the sole durable source of truth. The supervisor folds that event at Query creation, before every turn or metadata operation, and before and after each approval request, mapping `read-only` to Claude `plan`, `workspace-write` to `acceptEdits`, and `danger-full-access` to `bypassPermissions`. If the user explicitly selects Full access while an approval request is open, the newest durable mode overrides the stale request being closed as rejected or cancelled. The native UI already requires explicit risk acknowledgement before Full access.
 
 The plugin keeps `canUseTool` active for modes where Claude requests approval. `bypassPermissions` skips those SDK requests only after the user selects DSH Full access. A missing or invalid sandbox event fails safe to `plan`. This is Claude behavior mapping, not kernel confinement of the Claude subprocess.
+
+Under `auto`, a classifier block never reaches `canUseTool`. A `PermissionDenied` hook tells Claude it may retry, and a `PreToolUse` hook forces that exact retry (same tool and input, once) to `ask`, so it reaches the DSH approval above. This stands in for the CLI's `/permissions` Recently denied retry, which DSH has no surface for.
 
 ### 4.1 User-question contract
 
