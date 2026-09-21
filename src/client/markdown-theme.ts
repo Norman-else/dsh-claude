@@ -35,11 +35,10 @@ export const CLAUDE_MARKDOWN_SCOPE = 'dsh-claude-markdown'
  *  scope the value was taken from, because the mapping — not the colour — is
  *  the part a reader has to check. */
 const PIERRE_DARK: readonly (readonly [string, string, string])[] = [
-  // NOT Pierre's `editor.background`, and not Claude's flat UI surface either:
-  // the Host paints `<pre>` from this token inline, so it has to name the same
-  // DSH surface the block around it uses or the code area reads as a patch.
-  // Resolved here rather than left to the Host's `:root` default so it picks up
-  // the alias of whichever theme the wrapper sits in.
+  // NOT Pierre's `editor.background`, and not Claude's flat UI surface either.
+  // The Host never paints from this token — CodeBlock.module.css routes
+  // `pre.shiki` to the block's own background with `!important` — so it only
+  // names the DSH surface for consistency with what is actually drawn.
   ['--shiki-background', 'var(--dsw-alias-markdown-code-block)', 'DSH code-block surface'],
   ['--shiki-foreground', '#fafafa', 'editor.foreground'],
   ['--shiki-token-comment', '#737373', 'comment'],
@@ -85,7 +84,8 @@ const CLAY_EMPHASIZED = '#c8603f'
  *  own hues so a long answer is scannable, the way a Markdown-highlighting
  *  editor shows it. Values are theme-independent by design (the same six read
  *  acceptably on both surfaces); split them if the light theme ever needs its
- *  own ramp.
+ *  own ramp. The two `code*` entries are the exception: they are a dark surface
+ *  and are only applied under a dark body.
  *
  *  The inline-code entry REPLACES {@link CLAY} rather than sitting beside it:
  *  two colours on the same chip is not a choice a stylesheet can make. */
@@ -171,6 +171,10 @@ export const CLAUDE_MARKDOWN_THEME_CSS = [
   // intact and scrolls. Specificity beats the primitive's `:where(pre)`.
   `.${CLAUDE_MARKDOWN_SCOPE} pre{white-space:pre;word-break:normal;overflow-x:auto}`,
   `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]{--dsl-code-block-border-radius:${BLOCK_RADIUS}}`,
+  // The Host rounds only the BOTTOM of `<pre>`; the top radii live on the banner
+  // bar. With the bar lifted out of flow above, `<pre>` is the block's first
+  // box and its opaque square top paints over the wrapper's rounded corners.
+  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"] pre{border-radius:var(--dsl-code-block-border-radius)}`,
   // The hairline. `bannerWrap` is the one local name unique to CodeBlock — the
   // other block primitives (DiffBlock, TerminalBlock, ReadBlock, SearchBlock)
   // all emit a local named `block` too, so a bare [class*="block"] would draw
@@ -206,17 +210,16 @@ export const CLAUDE_MARKDOWN_ENHANCED_CSS = [
   `.${CLAUDE_MARKDOWN_SCOPE} a{color:${PROSE.link}}`,
   `.${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code,body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} :not(pre)>code{color:${PROSE.inlineCode}}`,
 
-  // Claude's own code surface, replaced by the palette the setting names. The
-  // base sheet deliberately paints this from DSH's own surface tokens (see the
-  // note near the top of this file); opting in trades that parity for the
-  // darker, outlined block the highlight palette is drawn against.
+  // The darker, outlined code surface the highlight palette is drawn against —
+  // DARK THEME ONLY. The syntax palette follows the theme (Pierre Light under a
+  // light body), so a near-black block in light mode is both the loudest thing
+  // on the page and the wrong ground for its own tokens; there the base sheet's
+  // DSH surface and ring stay.
   //
-  // The selector carries the same `:has([class*="bannerWrap"])` as the base
-  // ring, so these two rules TIE in specificity and the enhanced one wins on
-  // source order — otherwise the base sheet's ring would out-rank this border
-  // and an enhanced block would keep the flat-ring colour it opted out of.
-  `.${CLAUDE_MARKDOWN_SCOPE} [class*="block"]:has([class*="bannerWrap"]){background:${PROSE.codeBackground};box-shadow:0 0 0 1px ${PROSE.codeBorder}}`,
-  `.${CLAUDE_MARKDOWN_SCOPE} pre{background:${PROSE.codeBackground}}`,
+  // The selector mirrors the base sheet's dark ring rule exactly, so the two
+  // TIE in specificity and this one wins on source order.
+  `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} [class*="block"]:has([class*="bannerWrap"]){background:${PROSE.codeBackground};box-shadow:0 0 0 1px ${PROSE.codeBorder}}`,
+  `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE} pre{background:${PROSE.codeBackground}}`,
 
   // GitHub review comments never pass through MarkdownText — `comment-markdown.ts`
   // renders them and the card owns their typography — so the same palette has
