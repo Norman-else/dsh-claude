@@ -4,7 +4,7 @@ import type {
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeUsage } from '../events.ts'
-import { CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
+import { API_RETRY_TITLE, CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
 import { isProjectedTaskActivity } from './task-projection.ts'
 
 export interface ClaudeSubcall {
@@ -151,6 +151,10 @@ function foldKey(
   if (value.kind === 'subagent' && value.parentToolUseId !== undefined) return `task-${value.parentToolUseId}`
   if (value.kind === 'subagent' && value.taskId !== undefined) return `subagent-task-${value.taskId}`
   if (value.kind === 'subagent' && value.toolUseId !== undefined) return `call-${value.toolUseId}`
+  // The CLI announces every retry of one failing request, up to ten of them.
+  // They are one request being re-described, so they share a row and the
+  // latest attempt count replaces the last instead of stacking underneath it.
+  if (value.kind === 'warning' && value.title === API_RETRY_TITLE) return `api-retry-${value.turn}-${value.step}`
   return `act-${value.turn}-${value.step}-${value.ordinal}`
 }
 

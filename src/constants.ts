@@ -77,3 +77,7 @@ export const DEFAULT_CLAUDE_ALERT_MODE: ClaudeAlertMode = 'on'
 export function isClaudeAlertMode(value: unknown): value is ClaudeAlertMode {
   return value === 'off' || value === 'on'
 }
+
+/** Title of the activity an SDK `api_retry` notice becomes. Shared because the
+ *  Client folds a run of them into one row and has only the title to go on. */
+export const API_RETRY_TITLE = 'Claude API retry'

@@ -264,6 +264,19 @@ describe('Claude sidecar conversation projection', () => {
     })])
   })
 
+  it('folds a run of API retries into one row showing the latest attempt', () => {
+    const retries: ClaudeActivityEvent[] = [1, 2, 3].map(attempt => ({
+      turn: 2, step: 1, ordinal: attempt, kind: 'warning', phase: 'completed',
+      title: 'Claude API retry', summary: `attempt ${attempt} of 10 · HTTP 529`,
+    }))
+    const other: ClaudeActivityEvent = { turn: 2, step: 1, ordinal: 4, kind: 'warning', phase: 'completed', title: 'Hook warning' }
+
+    expect(lifecycleRows([...retries, other], 2, 1)).toEqual([
+      expect.objectContaining({ activity: expect.objectContaining({ summary: 'attempt 3 of 10 · HTTP 529' }) }),
+      expect.objectContaining({ activity: expect.objectContaining({ title: 'Hook warning' }) }),
+    ])
+  })
+
   /** The row belongs where the work first appeared, even when later pings
    *  arrive after an unrelated tool group has opened. */
   it('anchors a folded lifecycle row at its first appearance', () => {

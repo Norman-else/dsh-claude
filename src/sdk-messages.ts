@@ -1,5 +1,6 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeUsage } from './events.ts'
+import { API_RETRY_TITLE } from './constants.ts'
 
 export type NormalizedSdkMessage =
   | { kind: 'init'; sessionId: string; cliVersion: string; cwd: string }
@@ -307,7 +308,16 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     }]
   }
   if (subtype === 'api_retry') {
-    return [{ kind: 'warning', title: 'Claude API retry', detail: message }]
+    // The summary is the whole point of the row: without one the transcript
+    // falls back to "Done", which says nothing about a request still failing.
+    const attempt = finiteNumber(message.attempt)
+    const maxRetries = finiteNumber(message.max_retries)
+    const status = finiteNumber(message.error_status)
+    const summary = [
+      attempt === undefined ? undefined : maxRetries === undefined ? `attempt ${attempt}` : `attempt ${attempt} of ${maxRetries}`,
+      status === undefined ? string(message.error) : `HTTP ${status}`,
+    ].filter(part => part !== undefined).join(' · ')
+    return [{ kind: 'warning', title: API_RETRY_TITLE, ...(summary === '' ? {} : { summary }), detail: message }]
   }
   if (subtype === 'compact_boundary') {
     // `/compact` runs entirely inside the CLI: no assistant turn, and the
