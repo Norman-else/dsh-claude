@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClaudeTaskInfo } from '../events.ts'
+import type { ClaudeLiveProgress, ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeTurnMarker } from './conversation-sidecar.ts'
 import { summarizeTurnTasks, tasksForTurn } from './ClaudeTasksPanel.tsx'
-import { ClaudeTurnUsage } from './ClaudeActivityNode.tsx'
+import { ClaudeTurnUsage, formatTurnDuration } from './ClaudeActivityNode.tsx'
 import { latestTurnUsage } from './conversation-sidecar.ts'
 import * as styles from './styles.ts'
 
@@ -115,13 +115,41 @@ export function ClaudeTaskLauncher({ turn, tasks, t, openTasks }: ClaudeTaskLaun
   )
 }
 
+/** What the running turn is doing, right now.
+ *
+ *  A turn that is thinking hard or sitting in a long tool call produces no rows
+ *  at all — the transcript only moves when something finishes. This is the one
+ *  thing that moves: the same state the CLI's own status line shows, fed by the
+ *  telemetry frames the activity log deliberately keeps out. It is not
+ *  persisted, and the turn it belongs to is the only one that draws it. */
+export function ClaudeLivePill({ live, t }: { live: ClaudeLiveProgress; t: ClaudeActivityTailInjected['t'] }) {
+  const label = live.state === 'tool'
+    ? t('liveTool', { tool: live.label ?? t('liveToolUnknown') })
+    : live.state === 'waiting' ? t('liveWaiting') : t('liveThinking')
+  return (
+    <div style={styles.tasksBadgeWrap} data-claude-live={live.state}>
+      <span style={styles.livePill}>
+        <span className="dsh-claude-act-running" style={styles.livePillDot} aria-hidden="true" />
+        <span>{label}</span>
+        {live.elapsedMs === undefined || live.elapsedMs < 1_000
+          ? null
+          : <span style={styles.livePillElapsed}>{formatTurnDuration(live.elapsedMs)}</span>}
+      </span>
+    </div>
+  )
+}
+
 /** Everything that closes a turn, in the order it reads: what the turn is
  *  still doing, then what it cost. */
 export function ClaudeTurnFooter({ turn, useClaudeProjection, t, openTasks }: ClaudeTurnFooterProps) {
   const tasks = useClaudeProjection(value => value.tasks?.tasks ?? EMPTY_TASKS)
   const usage = useClaudeProjection(value => latestTurnUsage(value.activities, turn))
+  // Only the turn the state names draws it: one live value serves the session,
+  // and every settled turn's footer is still mounted.
+  const live = useClaudeProjection(value => value.live?.turn === turn ? value.live : undefined)
   return (
     <>
+      {live === undefined ? null : <ClaudeLivePill live={live} t={t} />}
       <ClaudeTaskLauncher turn={turn} tasks={tasks} t={t} openTasks={openTasks} />
       {usage === undefined ? null : <ClaudeTurnUsage usage={usage} t={t} />}
     </>

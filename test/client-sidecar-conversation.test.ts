@@ -711,6 +711,28 @@ describe('Claude sidecar conversation projection', () => {
     expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' }])).toContain('tasksTurnFailed')
   })
 
+  it('shows a live pill only on the turn the state names', () => {
+    const render = (live: unknown, turn = 2) => renderToStaticMarkup(createElement(ClaudeActivityTail, {
+      matched: { turn },
+      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
+      openTasks: () => {},
+      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], live })) as never,
+    }))
+    expect(render(undefined)).toBe('')
+    // A settled turn's footer is still mounted: only the turn the state belongs
+    // to draws it.
+    expect(render({ turn: 3, state: 'thinking' })).toBe('')
+    const thinking = render({ turn: 2, state: 'thinking' })
+    expect(thinking).toContain('liveThinking')
+    expect(thinking).toContain('dsh-claude-act-running')
+    expect(render({ turn: 2, state: 'waiting' })).toContain('liveWaiting')
+    const tool = render({ turn: 2, state: 'tool', label: 'Bash', elapsedMs: 4_200 })
+    expect(tool).toContain('liveTool:{&quot;tool&quot;:&quot;Bash&quot;}')
+    expect(tool).toContain('4.2s')
+    // Under a second there is no clock worth showing.
+    expect(render({ turn: 2, state: 'tool', label: 'Bash', elapsedMs: 400 })).not.toContain('400')
+  })
+
   it('renders the active task node reactively for the owning turn', () => {
     const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActiveTasksNode, {
       node: { data: { turn } },

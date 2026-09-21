@@ -40,8 +40,9 @@ function attachmentStore(
     ref,
     data: Uint8Array.from([1, 2, 3]),
   }),
-): Pick<AttachmentStore, 'imageLimits' | 'readImage'> {
-  return { imageLimits, readImage }
+  fileHostPath: Pick<AttachmentStore, 'fileHostPath'>['fileHostPath'] = ref => `/var/attachments/${ref.name}`,
+): Pick<AttachmentStore, 'imageLimits' | 'readImage' | 'fileHostPath'> {
+  return { imageLimits, readImage, fileHostPath }
 }
 
 const imageMessage = (content: Message['content']) => ({
@@ -128,6 +129,39 @@ describe('direct prompt resolution', () => {
       type: 'image',
       source: { type: 'base64', media_type: 'image/png', data: 'AQID' },
     }])
+  })
+
+  it('hands an attached file to Claude as the path it can read', async () => {
+    const ref = { attachmentId: 'sha256:test-file' as never, name: 'quarterly.xlsx', bytes: 3 }
+    await expect(resolveDirectUserPrompt([
+      imageMessage([{ type: 'file', attachment: ref }]),
+    ], attachmentStore())).resolves.toEqual([{
+      type: 'text',
+      text: 'The user attached these files to this message:\n- quarterly.xlsx — read it from /var/attachments/quarterly.xlsx',
+    }])
+  })
+
+  it('places the file reference ahead of the words it came with when both are present', async () => {
+    const ref = { attachmentId: 'sha256:test-file' as never, name: 'notes.md', bytes: 3 }
+    await expect(resolveDirectUserPrompt([
+      imageMessage([
+        { type: 'text', text: 'summarize this' },
+        { type: 'file', attachment: ref },
+      ]),
+    ], attachmentStore())).resolves.toEqual([
+      {
+        type: 'text',
+        text: 'The user attached these files to this message:\n- notes.md — read it from /var/attachments/notes.md',
+      },
+      { type: 'text', text: 'summarize this' },
+    ])
+  })
+
+  it('refuses a file this Host cannot hand out a path for', async () => {
+    const ref = { attachmentId: 'sha256:test-file' as never, name: 'remote.bin', bytes: 3 }
+    await expect(resolveDirectUserPrompt([
+      imageMessage([{ type: 'file', attachment: ref }]),
+    ], attachmentStore(undefined, () => undefined))).rejects.toThrow(/file 1 is not readable from this Host/)
   })
 
   it('preserves interleaved text and multiple-image ordering', async () => {

@@ -16,11 +16,12 @@ import {
   type ClaudeActivityInput,
   type ClaudeContextUsageEvent,
   type ClaudeContextUsageInput,
+  type ClaudeLiveProgress,
   type ClaudeSessionBoundEvent,
   type ClaudeTaskInfo,
   type ClaudeTasksEvent,
 } from './events.ts'
-import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION, type ClaudeRenderMode } from './constants.ts'
+import { CLAUDE_ACTIVITY_EVENT, CLAUDE_PROGRESS_SUBTYPES, CLAUDE_UNKNOWN_MESSAGE_PREFIX, SDK_VERSION, claudeStatusTitle, type ClaudeRenderMode } from './constants.ts'
 import {
   EMPTY_REWIND_STATE,
   MAX_REWIND_ANCHORS,
@@ -64,6 +65,11 @@ export type ClaudeSidecarDelta =
   | { kind: 'tasks'; value: ClaudeTasksEvent }
   | { kind: 'sync' }
   | { kind: 'checkpoint' }
+  /** What the session's running turn is doing right now, or `undefined` when it
+   *  is doing nothing any more. Never written: it is a state a reader watches,
+   *  not evidence, and the next snapshot is authoritative about everything
+   *  else. */
+  | { kind: 'live'; value: ClaudeLiveProgress | undefined }
 
 /** One delta as subscribers see it: numbered, so a reader that applies them in
  *  order can tell a missing one from a slow one.
@@ -186,6 +192,23 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   }
   const activities = input.activities.map(activity)
   if (activities.some(item => item === undefined)) throw new Error('dsh-claude: invalid sidecar activity')
+  // Pruned on the way in: progress telemetry is not evidence, and an unknown-type
+  // notice is evidence worth one row per type rather than the batch the CLI sends.
+  // A projection written before either rule existed still carries those rows, so
+  // this is where they stop costing anything. Sorting keeps the canonical order
+  // every later write assumes. All of it runs once per document read, not once per
+  // write: `#update` no longer re-parses the projection it already holds.
+  const retained: ClaudeActivityEvent[] = []
+  const reportedUnknownTypes = new Set<string>()
+  for (const item of activities as ClaudeActivityEvent[]) {
+    if (isProgressActivity(item)) continue
+    if (item.kind === 'warning' && item.title?.startsWith(CLAUDE_UNKNOWN_MESSAGE_PREFIX) === true) {
+      if (reportedUnknownTypes.has(item.title)) continue
+      reportedUnknownTypes.add(item.title)
+    }
+    retained.push(item)
+  }
+  retained.sort(compareActivity)
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
@@ -202,7 +225,7 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   return {
     schemaVersion: SIDECAR_SCHEMA_VERSION,
     revision: input.revision,
-    activities: activities as ClaudeActivityEvent[],
+    activities: retained,
     ...(parsedBinding === undefined ? {} : { binding: parsedBinding }),
     ...(parsedUsage === undefined ? {} : { contextUsage: parsedUsage }),
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
@@ -219,12 +242,54 @@ function activityKey(value: ClaudeActivityEvent): string {
   return `${value.turn}:${value.step}:${value.ordinal}`
 }
 
+/** Durable titles of the progress frames {@link CLAUDE_PROGRESS_SUBTYPES} names.
+ *
+ *  A projection written before the plugin stopped recording that telemetry still
+ *  carries up to a full window of those rows. Dropping them on the way in is what
+ *  makes them stop costing anything: every later write rebuilds only the real
+ *  activity, so the first write after the upgrade sheds the backlog instead of
+ *  rebuilding ten thousand rows forever. */
+const PROGRESS_STATUS_TITLES: ReadonlySet<string> = new Set(
+  [...CLAUDE_PROGRESS_SUBTYPES].map(subtype => claudeStatusTitle(subtype)),
+)
+
+/** The same telemetry under the title it carried before it was classified as
+ *  progress: the unknown-type fallback named those rows after the message type
+ *  and filed them as warnings. */
+const LEGACY_PROGRESS_TITLES: ReadonlySet<string> = new Set([
+  'Unknown Claude SDK message: tool_progress',
+])
+
+function isProgressActivity(activity: ClaudeActivityEvent): boolean {
+  if (activity.title === undefined) return false
+  if (LEGACY_PROGRESS_TITLES.has(activity.title)) return true
+  return activity.kind === 'status' && PROGRESS_STATUS_TITLES.has(activity.title)
+}
+
 function mergeActivities(
   existing: readonly ClaudeActivityEvent[],
   additions: readonly ClaudeActivityEvent[],
 ): ClaudeActivityEvent[] {
+  // Progress telemetry never enters the projection, whoever offers it: a document
+  // read off disk is pruned in `parseClaudeSidecar`, and this is the one door
+  // every later activity comes through.
+  const appended = additions.length === 1 ? additions[0] : undefined
+  if (appended !== undefined && isProgressActivity(appended)) return existing as ClaudeActivityEvent[]
+  // Appending one activity is the hot path: it runs once per SDK message inside
+  // the streaming pump. `existing` is kept in canonical order (parse sorts, and
+  // every branch below sorts), so an addition whose key sorts after the last
+  // retained one is appended directly instead of rebuilding a Map and sorting
+  // the whole window.
+  const last = existing[existing.length - 1]
+  if (appended !== undefined && (last === undefined || compareActivity(last, appended) < 0)) {
+    return existing.length < MAX_ACTIVITIES
+      ? [...existing, appended]
+      : [...existing.slice(1), appended]
+  }
   const merged = new Map(existing.map(item => [activityKey(item), item]))
-  for (const item of additions) merged.set(activityKey(item), item)
+  for (const item of additions) {
+    if (!isProgressActivity(item)) merged.set(activityKey(item), item)
+  }
   return [...merged.values()].sort(compareActivity).slice(-MAX_ACTIVITIES)
 }
 
@@ -319,6 +384,16 @@ export class ClaudeSidecarRepository {
       this.#flushTimers.delete(sessionId)
     }
     return this.#flushLive(sessionId)
+  }
+
+  /** Publish what the session's running turn is doing, without writing
+   *  anything: the state changes many times a second and none of it is worth a
+   *  disk write. With nobody subscribed there is nothing to publish to, and
+   *  skipping keeps the notification count meaningful — the next snapshot
+   *  states where the stream stands either way. */
+  notifyLive(sessionId: string, value: ClaudeLiveProgress | undefined): void {
+    if (this.#listeners.get(sessionId) === undefined) return
+    this.#notify(sessionId, { kind: 'live', value })
   }
 
   /** How many notifications this session has published. */
@@ -505,6 +580,16 @@ export class ClaudeSidecarRepository {
     return join(root, `${Buffer.from(sessionId).toString('base64url')}.json`)
   }
 
+  /** Apply one change to the in-memory projection and persist it.
+   *
+   *  Every change below is built from values the matching normalizer already
+   *  produced — the very ones `parseClaudeSidecar` would run again — so
+   *  re-parsing the document here re-redacted and re-bounded every retained
+   *  activity on every write. On a session holding a full activity window that
+   *  was tens of milliseconds per SDK message, inside the streaming pump.
+   *  Untrusted data still enters through exactly one door: `#readNow` parses the
+   *  document that comes off disk. What is left to check here are the invariants
+   *  a change itself could break. */
   #update(
     sessionId: string,
     change: (current: ClaudeSidecarProjection) => Omit<ClaudeSidecarProjection, 'revision' | 'schemaVersion'> & Partial<Pick<ClaudeSidecarProjection, 'revision' | 'schemaVersion'>>,
@@ -514,13 +599,16 @@ export class ClaudeSidecarRepository {
     const previous = this.#pending.get(sessionId) ?? Promise.resolve()
     const operation = previous.catch(() => undefined).then(async () => {
       const current = await this.#base(sessionId)
-      const changed = parseClaudeSidecar({
-        ...change(current),
-        schemaVersion: SIDECAR_SCHEMA_VERSION,
-        revision: current.revision,
-      })
+      const changed = change(current)
+      if (changed.activities.length > MAX_ACTIVITIES) {
+        throw new Error('dsh-claude: activity window overflow')
+      }
       if (skipUnchanged && JSON.stringify(changed) === JSON.stringify(current)) return current
-      const next = { ...changed, revision: current.revision + 1 }
+      const next: ClaudeSidecarProjection = {
+        ...changed,
+        schemaVersion: SIDECAR_SCHEMA_VERSION,
+        revision: current.revision + 1,
+      }
       await this.#writeNow(sessionId, next)
       this.#latest.set(sessionId, next)
       if (delta !== undefined) this.#notify(sessionId, delta)

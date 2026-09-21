@@ -929,6 +929,31 @@ export const tasksBadgeLabel: CSSProperties = {
   fontWeight: 500,
 }
 
+/** The live "what is it doing" pill: quieter than the task badge, because it is
+ *  a state that changes rather than a control to press. */
+export const livePill: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '2px 4px',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 13,
+  lineHeight: '20px',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+export const livePillDot: CSSProperties = {
+  width: 6,
+  height: 6,
+  flex: 'none',
+  borderRadius: 999,
+  background: 'var(--dsw-static-blue-450)',
+}
+
+export const livePillElapsed: CSSProperties = {
+  color: 'var(--dsw-alias-label-caption)',
+}
+
 export const tasksHoverCard: CSSProperties = {
   position: 'absolute',
   left: 0,
