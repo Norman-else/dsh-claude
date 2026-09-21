@@ -240,7 +240,7 @@ The plugin may provide a plugin-owned context refresh command, but must not shad
 
 ### 3.7 Additional implemented workflows
 
-- `repository-setup.ts`: branch selection, generated branch names, worktree/workspace leases and cleanup. Deleted-workspace reconciliation can force-remove dirty managed worktrees; explicit merged-branch cleanup requires a clean tree and guards unpushed commits.
+- `repository-setup.ts`: branch selection, generated branch names, worktree/workspace leases and cleanup. Deleted-workspace reconciliation can force-remove dirty managed worktrees; explicit merged-branch cleanup requires a clean tree and guards unpushed commits. A live checkout under the worktree root that no lease claims is never swept.
 - Repository status, action and review routes: Git/PR state, commit/push/merge, base updates, review comments, and auto-fix handoff. These use the managed subprocess runtime and trusted bounded routes.
 - Jira routes: ticket lookup, assignment, and ticket-based worktree/session preparation.
 - Prompt routes: Markdown snippets under `~/.claude/prompts`, naming and draft refinement. Selection questions use a separate read-only query. These are auxiliary helpers, not another main conversation loop.

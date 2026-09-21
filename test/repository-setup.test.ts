@@ -545,6 +545,21 @@ describe('repository setup service', () => {
     expect(root.length).toBeGreaterThan(0)
   })
 
+  it('keeps a live checkout under the worktree root that no lease claims', async () => {
+    const { leasePath, worktreeRoot } = await roots()
+    // Claude's own `git worktree add`, next to the session's worktree.
+    const checkout = join(worktreeRoot, 'premier-store-os-receivable-collector-role')
+    await mkdir(checkout, { recursive: true })
+    await writeFile(join(checkout, '.git'), 'gitdir: /repo/.git/worktrees/receivable-collector-role\n')
+    const archive = vi.fn(async () => {})
+
+    await new RepositorySetupService(runtime([]), { leasePath, worktreeRoot, cleanupGraceMs: 0 })
+      .cleanupOrphans([], archive)
+
+    expect(existsSync(checkout)).toBe(true)
+    expect(archive).not.toHaveBeenCalled()
+  })
+
   it('archives the sessions of a swept directory whose lease is gone', async () => {
     const { leasePath, worktreeRoot } = await roots()
     const stranded = join(worktreeRoot, 'premier-store-os-20260828T063549Z-288afc2b')

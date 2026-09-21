@@ -411,9 +411,9 @@ export class RepositorySetupService {
     })
   }
 
-  /** Remove directories under the plugin's own worktree root that no lease and
-   *  no workspace claims. A lease file lost to a crash, or a worktree whose
-   *  lease write failed, otherwise leaves a directory nothing will ever sweep.
+  /** Remove leftover directories under the plugin's own worktree root that no
+   *  lease and no workspace claims and that are no longer checkouts (an IDE
+   *  folder outliving its worktree); otherwise nothing would ever sweep them.
    *  The grace period covers the gap between `worktree add` and the lease
    *  write, so a worktree being created right now is never taken. */
   async #removeUnleasedDirectories(
@@ -441,6 +441,10 @@ export class RepositorySetupService {
         // fraction, so a directory created moments ago can read as newer than
         // the clock; clamp rather than let that skip a sweep.
         if (Math.max(0, now - created) < this.#cleanupGraceMs) continue
+        // A live checkout no lease claims is Claude's own `git worktree add`
+        // next to the session's, with its pull request and maybe unpushed work.
+        // ponytail: a lease lost to a crash now leaks its worktree; `git worktree list` still names it.
+        if (await pathExists(join(path, '.git'))) continue
         // A lost lease is still the user's deleted workspace: its sessions
         // have to be archived here too, or the Host rebuilds the workspace
         // from their headers on the next boot.
