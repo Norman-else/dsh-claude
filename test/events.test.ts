@@ -7,6 +7,7 @@ import {
   normalizeActivity,
   normalizeContextUsage,
   normalizeTasksEvent,
+  redactText,
   redactValue,
   safeDetail,
 } from '../src/events.ts'
@@ -51,6 +52,13 @@ describe('event normalization', () => {
     expect(detail).not.toContain('query-value')
     expect(detail).not.toContain('sk-ant-abcdefghijklmno')
     expect(detail?.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('redacts a long unbroken non-URL run without scanning it quadratically', () => {
+    const started = performance.now()
+    redactText('a'.repeat(70_000))
+    expect(performance.now() - started).toBeLessThan(1_000)
+    expect(redactText('postgres://u:hunter2@h/db')).toBe('postgres://u:[REDACTED]@h/db')
   })
 
   it('redacts embedded credentials from summaries and errors', () => {

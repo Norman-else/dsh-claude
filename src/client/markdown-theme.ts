@@ -35,12 +35,12 @@ export const CLAUDE_MARKDOWN_SCOPE = 'dsh-claude-markdown'
  *  scope the value was taken from, because the mapping — not the colour — is
  *  the part a reader has to check. */
 const PIERRE_DARK: readonly (readonly [string, string, string])[] = [
-  // NOT Pierre's `editor.background`: Claude paints the chat code block from a
-  // UI surface token, deliberately decoupled from the syntax theme. Its
-  // `--code-theme-*-bg` hook is only ever read with a fallback (it stays unset
-  // until a custom code theme is picked), so the default is
-  // `--pane-surface-bg` -> `--cds-surface-2`, one step LIGHTER than the page.
-  ['--shiki-background', '#1a1a19', 'UI surface (--cds-surface-2)'],
+  // NOT Pierre's `editor.background`, and not Claude's flat UI surface either:
+  // the Host paints `<pre>` from this token inline, so it has to name the same
+  // DSH surface the block around it uses or the code area reads as a patch.
+  // Resolved here rather than left to the Host's `:root` default so it picks up
+  // the alias of whichever theme the wrapper sits in.
+  ['--shiki-background', 'var(--dsw-alias-markdown-code-block)', 'DSH code-block surface'],
   ['--shiki-foreground', '#fafafa', 'editor.foreground'],
   ['--shiki-token-comment', '#737373', 'comment'],
   ['--shiki-token-keyword', '#ff678d', 'keyword, storage.type'],
@@ -58,7 +58,7 @@ const PIERRE_DARK: readonly (readonly [string, string, string])[] = [
 ]
 
 const PIERRE_LIGHT: readonly (readonly [string, string, string])[] = [
-  ['--shiki-background', '#ffffff', 'UI surface (--cds-surface-2)'],
+  ['--shiki-background', 'var(--dsw-alias-markdown-code-block)', 'DSH code-block surface'],
   ['--shiki-foreground', '#525252', 'editor.foreground'],
   ['--shiki-token-comment', '#8a8a8a', 'comment'],
   ['--shiki-token-keyword', '#ff678d', 'keyword, storage.type'],
@@ -111,33 +111,19 @@ const INLINE_FILL_LIGHT = 'hsl(0 0% 4.3% / .04)'
 /** Block corner radius (Claude's `--r6`), against the Host's own 12px. */
 const BLOCK_RADIUS = '8px'
 
-/** @param banner - equal to `surface` on purpose: the bar is floated out of
- *  the way below, so this colour is only reached if those chrome selectors
- *  miss, and a bar that matches the block is the neutral fallback. */
-function palette(entries: readonly (readonly [string, string, string])[], surface: string, banner: string, inlineFill: string): string {
+// The block's surface is deliberately NOT part of the palette: the Host paints
+// it from `--dsw-alias-markdown-code-block` and `-banner`, which DSH resolves to
+// adjacent steps of its neutral ramp per theme. Claude's desktop build replaces
+// both with one flat colour, and restating that here made a dsh-claude block
+// whiter than the page in light and lost the banner separation in dark. Leaving
+// the aliases alone keeps the block native and tracks the Host's ramp. The
+// syntax colours stay Claude's Pierre mapping.
+function palette(entries: readonly (readonly [string, string, string])[], inlineFill: string): string {
   return [
     ...entries.map(([name, value]) => `${name}:${value};`),
-    `--dsw-alias-markdown-code-block:${surface};`,
-    `--dsw-alias-markdown-code-block-banner:${banner};`,
     `--dsw-alias-markdown-inline-code:${inlineFill}`,
   ].join('')
 }
-
-// The code block's own surface, deliberately set to DSH's values rather than
-// Claude's. The Host paints the block from these two tokens, and DSH resolves
-// them to adjacent steps of its neutral ramp — light uses bluish-50 for both,
-// dark uses bluish-900 with bluish-850 on the banner bar. Claude's desktop
-// build replaces both with one flat colour, which is what makes a dsh-claude
-// block read as flatter than a native DSH one (whiter than the page in light,
-// and with no banner separation in dark). This fork keeps the block DSH
-// native: 浅色 #f9fafb（两处相同），深色 block #1b1b1c / banner #2c2c2e.
-//
-// The syntax colours themselves stay Claude's Pierre mapping — only the
-// surface these two tokens describe goes native.
-const DSH_CODE_SURFACE_LIGHT = '#f9fafb'
-const DSH_CODE_BANNER_LIGHT = '#f9fafb'
-const DSH_CODE_SURFACE_DARK = '#1b1b1c'
-const DSH_CODE_BANNER_DARK = '#2c2c2e'
 
 /** The hairline drawn around a corrected block, on the ramp it sits in. */
 const DSH_CODE_RING_LIGHT = '#e1e5ee'
@@ -145,10 +131,10 @@ const DSH_CODE_RING_DARK = '#353638'
 
 export const CLAUDE_MARKDOWN_THEME_CSS = [
   `.${CLAUDE_MARKDOWN_SCOPE}{display:contents;`,
-    palette(PIERRE_LIGHT, DSH_CODE_SURFACE_LIGHT, DSH_CODE_BANNER_LIGHT, INLINE_FILL_LIGHT),
+    palette(PIERRE_LIGHT, INLINE_FILL_LIGHT),
   '}',
   `body[data-ds-dark-theme] .${CLAUDE_MARKDOWN_SCOPE}{`,
-    palette(PIERRE_DARK, DSH_CODE_SURFACE_DARK, DSH_CODE_BANNER_DARK, INLINE_FILL_DARK),
+    palette(PIERRE_DARK, INLINE_FILL_DARK),
   '}',
   // The Host's inline-code rule sets a background but no colour, so the chip
   // inherits body text. Claude's build tints it with the brand clay.
