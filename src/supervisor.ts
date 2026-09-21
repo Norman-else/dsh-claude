@@ -6,6 +6,7 @@ import {
   type PermissionMode,
   type Query,
   type SDKControlGetContextUsageResponse,
+  type SDKControlInterruptResponse,
   type SDKMessage,
   type SDKUserMessage,
   type Settings as ClaudeSettings,
@@ -43,6 +44,25 @@ export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
 /** Control requests must settle; a wedged one must not clog the metadata chain. */
 export const CLAUDE_METADATA_TIMEOUT_MS = 15_000
+/** Bound on steered messages one turn may own, so a misbehaving caller cannot
+ *  grow the ownership set without limit. */
+export const MAX_STEERED_PROMPTS_PER_TURN = 16
+
+/** What {@link ClaudeSupervisor.deliverSteering} did with one steered message. */
+export type ClaudeSteeringOutcome = 'delivered' | 'unavailable'
+
+/** The steering entry point this package publishes on the Cordis service named
+ *  by `CLAUDE_STEERING_SERVICE`. */
+export interface ClaudeSteeringService {
+  /**
+   * Hand one user message to the turn `sessionId` is running.
+   * @param sessionId - DSH session id whose Claude preset is running.
+   * @param prompt - the message text, already the user's own.
+   * @returns `delivered` once the running turn owns it, `unavailable` when there
+   *   is no running turn to steer — keep the message for a later turn.
+   */
+  deliver(sessionId: string, prompt: string): ClaudeSteeringOutcome
+}
 
 export type ClaudeSupervisorState =
   | 'starting'
@@ -159,6 +179,10 @@ interface ActiveTurn {
   native: boolean
   output: AsyncQueue<ClaudeTurnStreamEvent>
   promptUuid: ReturnType<typeof randomUUID>
+  /** Every prompt this turn owns: the one that opened it, plus any steered
+   *  message delivered into it while it ran. A result naming one of these is
+   *  this turn's own; anything else is stale or a protocol violation. */
+  ownedPromptUuids: Set<string>
   phase: 'primary' | 'waiting-tasks' | 'follow-up'
   sawActivity: boolean
   sawTextDelta: boolean
@@ -210,6 +234,13 @@ interface SupervisorEntry {
   lastChainUuid: string | undefined
   /** Whether this process consumed an armed rewind fork target at spawn. */
   consumedRewind: boolean
+  /** Prompt uuid of the turn a cancelled interrupt settled, whose own `result`
+   *  can still arrive after the next turn on this process has started. */
+  interruptedPromptUuid: string | undefined
+  /** SDK message types this process has already reported as unknown, so a type
+   *  that arrives in a batch leaves one row of evidence instead of one per
+   *  frame. A later process records its own first sighting. */
+  reportedUnknownTypes: Set<string>
   /** Live Claude task board (subagents and background tasks), keyed by task id. */
   tasks: Map<string, ClaudeTaskInfo>
   /** Last time a task snapshot was persisted (progress throttling). */
@@ -458,6 +489,29 @@ export class ClaudeSupervisor {
     return this.#runMetadata(agent, model, query => readPlanUsageFrom(query))
   }
 
+  /** Deliver one more user message into the turn a session is already running.
+   *
+   *  Claude Code reads a message pushed into its input stream at the next model
+   *  step of the running turn, so this is the steering entry point: whoever
+   *  takes a steered message out of the agent inbox hands it here. The turn then
+   *  owns one more prompt uuid, and its result no longer ends the turn while the
+   *  CLI still reports a queued send.
+   *
+   *  `unavailable` means there is no live turn to steer — the caller must keep
+   *  its message for a later turn rather than drop it. */
+  deliverSteering(sessionId: string, prompt: string): ClaudeSteeringOutcome {
+    const entry = this.#entries.get(sessionId)
+    const active = entry?.active
+    if (entry === undefined || active === undefined || entry.state !== 'running' || active.aborted) {
+      return 'unavailable'
+    }
+    if (active.ownedPromptUuids.size >= MAX_STEERED_PROMPTS_PER_TURN) return 'unavailable'
+    const uuid = randomUUID()
+    active.ownedPromptUuids.add(uuid)
+    entry.input.push(sdkUserMessage(prompt, uuid))
+    return 'delivered'
+  }
+
   runTurn(request: ClaudeTurnRequest): Promise<AsyncIterable<ClaudeTurnStreamEvent>> {
     const interruption = this.#interruptions.get(request.agent.id as string)
     if (interruption !== undefined) return interruption.then(() => this.runTurn(request))
@@ -689,6 +743,7 @@ export class ClaudeSupervisor {
       native: (request.renderMode ?? this.#config.renderMode ?? DEFAULT_CLAUDE_RENDER_MODE) === 'native',
       output: new AsyncQueue<ClaudeTurnStreamEvent>(),
       promptUuid,
+      ownedPromptUuids: new Set([promptUuid]),
       phase: 'primary',
       sawActivity: false,
       sawTextDelta: false,
@@ -1024,6 +1079,8 @@ export class ClaudeSupervisor {
       expectedResume: startFresh || forkAt !== undefined ? undefined : binding?.claudeSessionId,
       lastChainUuid: undefined,
       consumedRewind: pendingRewind !== undefined,
+      interruptedPromptUuid: undefined,
+      reportedUnknownTypes: new Set<string>(),
       initialized: false,
       idleTimer: undefined,
       tasks: new Map<string, ClaudeTaskInfo>(),
@@ -1054,6 +1111,10 @@ export class ClaudeSupervisor {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: PLAN_MODE_HANDOFF_PROMPT },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
+      // Opt-in: the CLI emits hook lifecycle frames only when asked. Without
+      // them a hook that holds a turn is indistinguishable from a slow model,
+      // and the frames cost nothing when no hook is configured.
+      includeHookEvents: true,
       permissionMode,
       allowDangerouslySkipPermissions: true,
       canUseTool,
@@ -1119,10 +1180,7 @@ export class ClaudeSupervisor {
       if (entry.expectedResume !== undefined && message.sessionId !== entry.expectedResume) {
         throw new ClaudeProtocolError(`Claude Code resumed unexpected session ${message.sessionId}; expected ${entry.expectedResume}`)
       }
-      // A resumed process reports the shell cwd Claude Code restored with the
-      // session -- wherever the last Bash `cd` left it -- not its launch
-      // directory; the session id check above already proves identity.
-      if (entry.expectedResume === undefined && message.cwd !== entry.cwd) {
+      if (message.cwd !== entry.cwd) {
         throw new ClaudeProtocolError(`Claude Code initialized in unexpected cwd ${message.cwd}; expected ${entry.cwd}`)
       }
       entry.initialized = true
@@ -1177,11 +1235,22 @@ export class ClaudeSupervisor {
         await this.#completeProgressSegment(active, message)
         return
       }
-      if (message.userMessageUuid !== undefined && message.userMessageUuid !== active.promptUuid) {
+      if (message.userMessageUuid !== undefined && !active.ownedPromptUuids.has(message.userMessageUuid)) {
+        // The cancelled turn's own result, settling after this process picked up
+        // the next one: it named the prompt an interrupt already failed, so it
+        // must not be read as a protocol violation against the live request.
+        if (message.userMessageUuid === entry.interruptedPromptUuid) return
         // A stale internal continuation must not settle the explicit final
         // report request. Primary-turn mismatches remain protocol failures.
         if (active.phase === 'follow-up') return
         throw new ClaudeProtocolError(`Claude Code result for user message ${message.userMessageUuid} does not match active request ${active.promptUuid}`)
+      }
+      // A steered send the CLI had not reached when it produced this result still
+      // runs. Publish what this result said and keep the turn open: the queued
+      // send's own result ends it.
+      if ((message.queuedTurnCount ?? 0) > 0) {
+        await this.#completeProgressSegment(active, message)
+        return
       }
       await this.#completeTurn(entry, active, message)
       return
@@ -1282,11 +1351,20 @@ export class ClaudeSupervisor {
           isError: message.phase === 'failed',
         })
         return
-      case 'request-usage':
+      case 'request-usage': {
         // A subagent call bills against its own context, so it never stands in
         // for the main conversation's size.
-        if (message.parentToolUseId === undefined) active.requestUsage = message.usage
+        if (message.parentToolUseId !== undefined) return
+        // A sample with no prompt is not a measurement: the CLI forwards
+        // placeholder usage on assistant messages, and letting one land here
+        // would replace the last real request with a zero. The newest real
+        // sample is the prompt the Host divides by the window.
+        const prompt = (message.usage.inputTokens ?? 0)
+          + (message.usage.cacheReadTokens ?? 0)
+          + (message.usage.cacheCreationTokens ?? 0)
+        if (prompt > 0) active.requestUsage = message.usage
         return
+      }
       case 'compaction':
         // Close the open prose span first: compaction sits *between* what was
         // said before and after it, never inside one text segment.
@@ -1303,9 +1381,82 @@ export class ClaudeSupervisor {
           },
         })
         return
+      case 'progress':
+        // A progress frame has already done its one job above: `sawActivity`
+        // separates an unknown outcome from a clean disconnect when the CLI dies
+        // mid-turn. Nothing durable follows from it — the SDK emits these per
+        // estimated thinking-token chunk, and every durable row would cost a
+        // full sidecar rewrite.
+        return
+      case 'unknown': {
+        // The CLI grows message types steadily, and a new one arrives in batches
+        // of identical frames. One row per type is the evidence worth keeping;
+        // the repetitions are noise the transcript never draws anyway.
+        if (entry.reportedUnknownTypes.has(message.type)) return
+        entry.reportedUnknownTypes.add(message.type)
+        await this.#appendActivity(active, {
+          kind: 'warning',
+          phase: 'completed',
+          title: message.title,
+          detail: message.detail,
+        })
+        return
+      }
+      case 'command-lifecycle': {
+        // The prompt that opened this turn IS this turn: its queue → run → done
+        // progress is already drawn as the turn's own rows. A prompt that
+        // arrived while the turn was running has no other evidence anywhere,
+        // and this frame is what tells its sender the CLI heard it. Nothing
+        // else is narrated here: the CLI books its own internal commands the
+        // same way, and those are not the reader's messages.
+        if (message.commandUuid === active.promptUuid) return
+        if (!active.ownedPromptUuids.has(message.commandUuid)) return
+        const cancelled = message.state === 'cancelled'
+        const settled = message.state === 'completed' || cancelled
+        await this.#appendActivity(active, {
+          kind: 'status',
+          // 'updated' while it is still waiting: a queued send has not run yet,
+          // which is exactly what an open row means. The response settles it.
+          phase: settled ? (cancelled ? 'failed' : 'completed') : 'updated',
+          commandUuid: message.commandUuid,
+          title: cancelled
+            ? 'Claude Code dropped your queued message'
+            : message.state === 'completed'
+              ? 'Claude Code ran your queued message'
+              : message.state === 'started'
+                ? 'Claude Code picked up your queued message'
+                : 'Claude Code queued your message',
+          ...(cancelled
+            ? { summary: 'it was cancelled before Claude read it' }
+            : message.state === 'queued'
+              ? { summary: 'Claude reads it at the next step of this turn' }
+              : {}),
+          ...(cancelled ? { isError: true } : {}),
+        })
+        return
+      }
+      case 'hook': {
+        // One row per invocation, closed by its response: without the fold a
+        // slow hook would look like two hooks.
+        await this.#appendActivity(active, {
+          kind: 'status',
+          phase: message.state === 'started' ? 'updated' : message.state === 'failed' ? 'failed' : 'completed',
+          hookId: message.hookId,
+          ...(message.hookName === undefined ? {} : { hookName: message.hookName }),
+          ...(message.hookEvent === undefined ? {} : { hookEvent: message.hookEvent }),
+          title: `Claude Code hook ${message.hookName ?? message.hookEvent ?? message.hookId}`,
+          summary: message.state === 'started'
+            ? `${message.hookEvent ?? 'hook'} running`
+            : message.state === 'failed'
+              ? `${message.hookEvent ?? 'hook'} exited ${String(message.exitCode ?? 1)}`
+              : `${message.hookEvent ?? 'hook'} finished`,
+          ...(message.state === 'failed' ? { isError: true } : {}),
+          ...(message.output === undefined ? {} : { detail: message.output }),
+        })
+        return
+      }
       case 'status':
       case 'warning':
-      case 'unknown':
         // One-shot notices (an API retry, a hook echo) have no later event to
         // close them, so they must land settled: an 'updated' phase reads as
         // still running in the transcript forever.
@@ -1592,14 +1743,38 @@ export class ClaudeSupervisor {
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
   ): Promise<void> {
     if (result.usage.inputTokens === undefined && result.usage.outputTokens === undefined && result.usage.cumulativeCostUsd === undefined) return
+    // `cumulativeCostUsd` is per query() call, and a respawned Claude process
+    // starts a new one -- so a session that respawned mid-conversation would
+    // show a total that goes DOWN. What the session has spent is the sum of its
+    // processes' epochs.
+    const cumulative = this.#sessionCost(active.agent.id as string, result.usage.cumulativeCostUsd)
+    const usage = cumulative === undefined ? result.usage : { ...result.usage, cumulativeCostUsd: cumulative }
     await this.#appendSafely(active, {
       kind: 'usage',
       phase: 'completed',
       title: 'Claude usage',
-      summary: usageSummary(result.usage),
-      usage: this.#timedUsage(active, result.usage),
+      summary: usageSummary(usage),
+      usage: this.#timedUsage(active, usage),
     })
     active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
+  }
+
+  /** Cost spent by previous processes of this session, and the newest counter
+   *  reading of the epoch that is running now. */
+  readonly #costSpentBefore = new Map<string, number>()
+  readonly #costEpoch = new Map<string, number>()
+
+  #sessionCost(sessionId: string, reported: number | undefined): number | undefined {
+    if (reported === undefined) return undefined
+    const previous = this.#costEpoch.get(sessionId)
+    let spentBefore = this.#costSpentBefore.get(sessionId) ?? 0
+    if (previous !== undefined && reported < previous) {
+      // A new process: the counter it reports belongs to it alone.
+      spentBefore += previous
+      this.#costSpentBefore.set(sessionId, spentBefore)
+    }
+    this.#costEpoch.set(sessionId, reported)
+    return spentBefore + reported
   }
 
   async #completeTurn(
@@ -1833,6 +2008,16 @@ export class ClaudeSupervisor {
     }
   }
 
+  /** Stop the turn a cancelled DSH request owns.
+   *
+   *  `interrupt()` only stops the current turn: the process itself stays usable,
+   *  which is what makes "stop, then ask something else" cheap. So a clean
+   *  interrupt — one the CLI answers with a receipt that does not list the
+   *  submitted prompt as still queued — leaves the process idle and owned, and
+   *  the next turn reuses it instead of respawning Claude and resuming the
+   *  session from disk. Every other outcome (a CLI too old to answer, a prompt
+   *  the CLI kept queued, a timed-out interrupt) leaves the process in a state
+   *  this plugin cannot vouch for, and it is torn down exactly as before. */
   async #interrupt(entry: SupervisorEntry): Promise<void> {
     const active = entry.active
     if (active === undefined || entry.state === 'interrupting') return
@@ -1841,8 +2026,9 @@ export class ClaudeSupervisor {
     active.output.fail(abortFailure())
     await this.#upsertTranscriptText(active)
     let interruptError: unknown
+    let receipt: SDKControlInterruptResponse | undefined
     try {
-      const receipt = await withTimeout(entry.query.interrupt(), CLAUDE_INTERRUPT_TIMEOUT_MS, 'Claude Code interrupt')
+      receipt = await withTimeout(entry.query.interrupt(), CLAUDE_INTERRUPT_TIMEOUT_MS, 'Claude Code interrupt')
       const queued = receipt?.still_queued ?? []
       if (queued.includes(active.promptUuid)) {
         throw new Error(`Claude Code interrupt left submitted prompt ${active.promptUuid} queued`)
@@ -1851,15 +2037,31 @@ export class ClaudeSupervisor {
       interruptError = error
     }
     await this.#settleOpenCalls(active, 'Cancelled with the turn').catch(() => undefined)
+    // The CLI settles the cancelled turn with a result of its own, which can land
+    // after the next turn on this process has started; remember whose it is. The
+    // chain anchor goes with it: it described the turn that no longer counts.
+    entry.interruptedPromptUuid = active.promptUuid
+    entry.lastChainUuid = undefined
+    if (active.signal !== undefined && active.abortListener !== undefined) {
+      active.signal.removeEventListener('abort', active.abortListener)
+    }
+    const reusable = interruptError === undefined && receipt !== undefined
     try {
       await this.#appendActivity(active, {
         kind: 'status',
         phase: 'failed',
-        title: interruptError === undefined ? 'Claude Code turn cancelled' : 'Claude Code cancelled; process entry reset',
+        title: reusable ? 'Claude Code turn cancelled' : 'Claude Code cancelled; process entry reset',
         ...(interruptError === undefined ? {} : { summary: errorSummary(interruptError) }),
       })
     } catch {
       // The active output is already aborted; process cleanup cannot wait for audit availability.
+    }
+    entry.active = undefined
+    if (reusable && this.#entries.get(entry.sessionId) === entry) {
+      entry.state = 'idle'
+      entry.lastUsedAt = Date.now()
+      this.#armIdleTimer(entry)
+      return
     }
     if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
     await this.#disposeEntry(entry)

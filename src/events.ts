@@ -59,6 +59,13 @@ export interface ClaudeActivityEvent {
   /** Claude task-board identity for lifecycle activity; never a transcript path. */
   taskId?: string
   toolUseId?: string
+  /** Prompt identity a command-lifecycle row belongs to: the uuid this host put
+   *  on the message the CLI accepted. One row per prompt, updated in place. */
+  commandUuid?: string
+  /** One hook invocation, folded across its start and its response. */
+  hookId?: string
+  hookName?: string
+  hookEvent?: string
   /** Enclosing Claude tool call for subagent-nested activity. */
   parentToolUseId?: string
   toolName?: string
@@ -127,7 +134,15 @@ const SECRET_ASSIGNMENT = /((?:password|passwd|secret|token|api[_-]?key|authoriz
 const BEARER_TOKEN = /(\bbearer\s+)[A-Za-z0-9._~+/=-]+/giu
 const PREFIXED_TOKEN = /\b(?:sk-(?:ant-|proj-)?|xox[baprs]-|ghp_|github_pat_)[A-Za-z0-9_-]{8,}/giu
 const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu
-const URL_USERINFO = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/giu
+/**
+ * The scheme is bounded on purpose. Unbounded, this pattern is quadratic on any
+ * long unbroken run that is not a URL: at every offset the greedy scheme run
+ * scans to the end of the string before failing to find `://`, so redacting a
+ * 70 kB token took 8 seconds and stalled whatever was normalizing it. No real
+ * scheme comes close to 32 characters, and the bounded run matches every
+ * userinfo URL the unbounded one did.
+ */
+const URL_USERINFO = /([a-z][a-z0-9+.-]{0,31}:\/\/[^:\s/@]+:)[^@\s/]+@/giu
 const URL_SECRET_PARAM = /([?&](?:password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)=)[^&#\s]+/giu
 
 export function boundText(value: string, maxChars: number): string {
@@ -201,6 +216,10 @@ export function normalizeActivity(
   if (activity.phase !== undefined) normalized.phase = activity.phase
   if (activity.taskId !== undefined) normalized.taskId = redactText(activity.taskId, 128)
   if (activity.toolUseId !== undefined) normalized.toolUseId = redactText(activity.toolUseId, 256)
+  if (activity.commandUuid !== undefined) normalized.commandUuid = redactText(activity.commandUuid, 128)
+  if (activity.hookId !== undefined) normalized.hookId = redactText(activity.hookId, 128)
+  if (activity.hookName !== undefined) normalized.hookName = redactText(activity.hookName, 256)
+  if (activity.hookEvent !== undefined) normalized.hookEvent = redactText(activity.hookEvent, 128)
   if (activity.parentToolUseId !== undefined) normalized.parentToolUseId = redactText(activity.parentToolUseId, 256)
   if (activity.toolName !== undefined) normalized.toolName = redactText(activity.toolName, 256)
   if (activity.title !== undefined) normalized.title = redactText(activity.title, MAX_SUMMARY_CHARS)

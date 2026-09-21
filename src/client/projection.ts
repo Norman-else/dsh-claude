@@ -544,8 +544,10 @@ export function createClaudeProjectionSource(
           revision += 1
           break
         default:
-          // ping and unknown line types are ignored
-          return
+          // A kind this bundle predates is still a line in the sequence. Ignoring
+          // its payload is right; leaving the count where it was would make the
+          // NEXT line read as a hole and drop a healthy stream into a resync.
+          break
       }
     } catch {
       // Keeping the last verified state visible is right -- mounted UI must not
