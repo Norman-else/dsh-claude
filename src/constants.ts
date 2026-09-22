@@ -32,6 +32,11 @@ export function claudeStatusTitle(subtype: string): string {
  *  by the writer and by the projection prune, so a notice row can be recognized
  *  without re-deriving the template. */
 export const CLAUDE_UNKNOWN_MESSAGE_PREFIX = 'Unknown Claude SDK message: '
+/** Cordis service this package publishes so a steered message can reach the
+ *  turn a Claude session is running. That turn owns the only process that can
+ *  read it into Claude at the next model step. */
+export const CLAUDE_STEERING_SERVICE = 'claudeSteering'
+
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
 export const CLAUDE_CLIENT_DIAGNOSTICS_PATH = '/plugins/dsh-claude/client-diagnostics'
 export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'

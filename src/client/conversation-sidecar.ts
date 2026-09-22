@@ -115,6 +115,9 @@ export function presentable(activity: ClaudeActivityEvent): boolean {
     case 'warning':
     case 'error':
       return true
+    case 'steering':
+      // The reader's own message, drawn where it reached the turn.
+      return activity.summary !== undefined && activity.summary.length > 0
     case 'thinking':
       return activity.summary !== undefined && activity.summary.length > 0
     default:

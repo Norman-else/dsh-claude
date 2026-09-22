@@ -9,11 +9,12 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
-import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
+import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS, CLAUDE_STEERING_SERVICE } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
-import { ClaudeProcessLimitError, ClaudeSupervisor, ClaudeTurnBusyError } from './supervisor.ts'
+import { ClaudeProcessLimitError, ClaudeSupervisor, ClaudeTurnBusyError, type ClaudeSteeringOutcome, type ClaudeSteeringService } from './supervisor.ts'
+import { mountClaudeSteering } from './steering.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
@@ -52,6 +53,11 @@ import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readDefaultPermissionMode, readPermissionSelector, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
+
+// The steering contract is published for a plugin that wants to reach a running
+// Claude turn itself: the service name to look up, and the shape it can rely on.
+export { CLAUDE_STEERING_SERVICE } from './constants.ts'
+export type { ClaudeSteeringOutcome, ClaudeSteeringService } from './supervisor.ts'
 
 export const name = 'llm-claude'
 export const inject = ['llm', 'agents', 'agentPresets', 'commands', 'subprocess', 'approval', 'userQuestions', 'attachments']
@@ -311,6 +317,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       [...CLAUDE_CODE_PROVIDER_IDS],
       createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath)),
     )
+    // Steering entry point. A message steered into a running Claude turn has to
+    // pass through the supervisor that owns that turn's process; whoever takes
+    // it out of the agent inbox calls this first, and `unavailable` tells them
+    // to keep the message for a later turn instead of losing it.
+    ctx.provide(CLAUDE_STEERING_SERVICE, {
+      deliver: (sessionId, prompt): ClaudeSteeringOutcome => supervisor.deliverSteering(sessionId, prompt),
+    } satisfies ClaudeSteeringService)
+    // And the one caller that always exists: DSH's own Steer action, which puts
+    // the message in the agent's next-step inbox. Nothing else would claim it
+    // until this turn ended.
+    ctx.effect(() => mountClaudeSteering(
+      ctx,
+      supervisor,
+      ctx.attachments,
+      async () => (await readRenderMode()) === 'native',
+      message => { ctx.logger.warn(message) },
+    ), 'dsh-claude: steering bridge')
     ctx.effect(() => {
       const mounted = new Map<Agent, () => Promise<void>>()
       const pending = new Set<Agent>()

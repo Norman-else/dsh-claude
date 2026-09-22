@@ -59,7 +59,7 @@ export type NormalizedSdkMessage =
     subtype: string
   }
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
-  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
+  | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; queuedTurnCount?: number; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
   | { kind: 'protocol-error'; title: string; detail: unknown }
   | {
     /** A message type this package does not handle yet. `type` is what the
@@ -430,6 +430,10 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       : undefined
     const terminalReason = string(value.terminal_reason)
     const userMessageUuid = string(value.user_message_uuid)
+    // User sends the CLI had not reached when it produced this result: non-zero
+    // means at least one more turn follows without further input, so this result
+    // is not the end of the turn.
+    const queuedTurnCount = finiteNumber(value.queued_turn_count)
     const permissionDenials = Array.isArray(value.permission_denials)
       ? value.permission_denials
           .map(item => record(item))
@@ -452,6 +456,7 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       usage: resultUsage(value),
       sessionId,
       ...(userMessageUuid === undefined ? {} : { userMessageUuid }),
+      ...(queuedTurnCount === undefined ? {} : { queuedTurnCount }),
     }]
   }
   if (value.type === 'auth_status') {

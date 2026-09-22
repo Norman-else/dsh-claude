@@ -113,9 +113,9 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
   const [open, setOpen] = useState(false)
   const state = activityState(activity, running)
   const detail = activity.detail
-  const expandable = detail !== undefined || subcalls.length > 0 || activity.kind === 'thinking'
+  const expandable = detail !== undefined || subcalls.length > 0 || activity.kind === 'thinking' || activity.kind === 'steering'
   const summary = activity.summary ?? (running ? t('running') : state === 'error' ? t('failed') : t('done'))
-  const body = activity.kind === 'thinking' ? activity.summary : detail
+  const body = activity.kind === 'thinking' || activity.kind === 'steering' ? activity.summary : detail
   const icon = activity.kind === 'thinking'
     ? <IconThinkOutline14 size={14} />
     : state === 'done'
@@ -128,7 +128,7 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
       titleClassName="dsh-claude-flow-title"
       chevronClassName="dsh-claude-flow-chevron"
       icon={icon}
-      title={activity.kind === 'thinking' ? t('thinking') : title(activity)}
+      title={activity.kind === 'thinking' ? t('thinking') : activity.kind === 'steering' ? t('steeredMessage') : title(activity)}
       open={open}
       expandable={expandable}
       expandOnRowClick

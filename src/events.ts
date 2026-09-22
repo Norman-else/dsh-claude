@@ -10,6 +10,9 @@ import {
 
 export type ClaudeActivityKind =
   | 'text'
+  /** A message the reader steered into this turn while it ran. It is drawn
+   *  where it arrived, between the work before it and the work after it. */
+  | 'steering'
   | 'status'
   /** Context compaction boundary; the transcript draws it as a divider. */
   | 'compaction'

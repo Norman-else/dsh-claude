@@ -1954,6 +1954,66 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('delivers a steered message into the turn that is already running', async () => {
+    // Claude reads a message pushed into its input stream at the next model step
+    // of the running turn, so steering is exactly that push. The turn owns one
+    // more prompt uuid, and its result no longer ends the turn while the CLI
+    // still reports the steered send as queued.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task' })
+    const query = transport.queries[0]!
+    query.push(init())
+    const input = query.input[Symbol.asyncIterator]()
+    const opened = await input.next()
+    expect(runtime.deliverSteering('dsh-session-1', 'change of plan')).toBe('delivered')
+    const steered = await input.next()
+    expect(steered.value?.message.content).toBe('change of plan')
+    expect(steered.value?.uuid).not.toBe(opened.value?.uuid)
+
+    const events = output[Symbol.asyncIterator]()
+    query.push({ ...result('first') as object, user_message_uuid: opened.value?.uuid, queued_turn_count: 1 } as SDKMessage)
+    // The first result publishes its prose and leaves the turn open.
+    expect((await events.next()).value).toMatchObject({ type: 'text-delta', text: 'first' })
+    expect((await events.next()).value).toMatchObject({ type: 'segment-complete' })
+    query.push({ ...result('second') as object, user_message_uuid: steered.value?.uuid, queued_turn_count: 0 } as SDKMessage)
+    const tail: ClaudeTurnStreamEvent[] = []
+    for (;;) {
+      const next = await events.next()
+      if (next.done === true) break
+      tail.push(next.value)
+    }
+    expect(tail.some(event => event.type === 'complete')).toBe(true)
+    // Drawn where it arrived: the turn's prose settles as one node at the end,
+    // so a row is the only place the reader's words land in their own position.
+    const rows = (await projection(runtime)).activities.filter(activity => activity.kind === 'steering')
+    expect(rows.map(row => row.summary)).toEqual(['change of plan'])
+    await runtime.dispose()
+  })
+
+  it('reports steering unavailable when there is no running turn to steer', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    expect(runtime.canSteer('dsh-session-1')).toBe(false)
+    expect(runtime.deliverSteering('dsh-session-1', 'anyone there')).toBe('unavailable')
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task' })
+    const query = transport.queries[0]!
+    query.push(init())
+    expect(runtime.canSteer('dsh-session-1')).toBe(true)
+    for (let index = 0; index < 15; index += 1) {
+      expect(runtime.deliverSteering('dsh-session-1', `steer ${index}`)).toBe('delivered')
+    }
+    // The ownership set is bounded: past the cap the caller keeps its message.
+    expect(runtime.canSteer('dsh-session-1')).toBe(false)
+    expect(runtime.deliverSteering('dsh-session-1', 'one too many')).toBe('unavailable')
+    query.push(result('done'))
+    await collect(output)
+    expect(runtime.deliverSteering('dsh-session-1', 'turn is over')).toBe('unavailable')
+    await runtime.dispose()
+  })
+
   it('records an unknown message type once per process, not once per frame', async () => {
     // A type this package does not handle arrives in batches of identical frames
     // (command_lifecycle did, five per turn). One row is evidence; the rest are
