@@ -13,7 +13,7 @@ import { CLAUDE_CODE_PRESET_ID, CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE, projectClaudeCommands, type ClaudeAgentCommandService, type ClaudeCommandView } from './command-bridge.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { resolveClaudeExecutable } from './executable.ts'
-import { ClaudeSupervisor } from './supervisor.ts'
+import { ClaudeProcessLimitError, ClaudeSupervisor, ClaudeTurnBusyError } from './supervisor.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
 import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
@@ -116,6 +116,15 @@ export function mountClaudeMetadata(
     ctx.logger.warn(`dsh-claude: ${area} refresh failed for ${String(agent.id)}: ${error instanceof Error ? error.message : String(error)}`)
   }
 
+  /** A session that is mid-turn, or a process pool with no free slot, is not a
+   *  failed refresh: it is one that has to wait. The metadata lane refuses to
+   *  disturb a running turn by design, so warning about it filled the log for
+   *  the whole length of every long turn. A busy session refreshes again on its
+   *  own idle transition; a full pool is another session's turn, so the catalog
+   *  keeps its bounded retry, just without the warning. */
+  const deferrable = (error: unknown): boolean =>
+    error instanceof ClaudeTurnBusyError || error instanceof ClaudeProcessLimitError
+
   const isScopeUnavailable = (error: unknown): boolean => {
     if (error instanceof Error) return error.message === CLAUDE_SCOPE_UNAVAILABLE_MESSAGE
     return String(error) === CLAUDE_SCOPE_UNAVAILABLE_MESSAGE
@@ -156,8 +165,8 @@ export function mountClaudeMetadata(
         delete diagnostic.lastError
       } catch (error) {
         diagnostic.lastError = error instanceof Error ? error.message : String(error)
-        warn('command catalog', error)
-        if (!stopped && catalogRetries < MAX_CATALOG_RETRIES) {
+        if (!deferrable(error)) warn('command catalog', error)
+        if (!stopped && !(error instanceof ClaudeTurnBusyError) && catalogRetries < MAX_CATALOG_RETRIES) {
           catalogRetries += 1
           scheduleRetry('command catalog', catalogRetries)
         }
@@ -184,7 +193,7 @@ export function mountClaudeMetadata(
         const usage = await supervisor.contextUsage(agent, model)
         if (!stopped) await sidecar.writeContextUsage(agent.id as string, usage)
       } catch (error) {
-        warn('context usage', error)
+        if (!deferrable(error)) warn('context usage', error)
       }
 
       if (stopped) return
@@ -194,7 +203,7 @@ export function mountClaudeMetadata(
         const plan = await supervisor.planUsage(agent, model)
         if (!stopped) recordPlanUsage(normalizePlanUsage(plan, Date.now()))
       } catch (error) {
-        warn('plan usage', error)
+        if (!deferrable(error)) warn('plan usage', error)
       }
     })
   }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CLAUDE_CODE_PRESET_ID } from '../src/constants.ts'
 import { mountClaudeMetadata } from '../src/index.ts'
+import { ClaudeProcessLimitError, ClaudeTurnBusyError } from '../src/supervisor.ts'
 import type { ClaudeAgentCommandService } from '../src/command-bridge.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import { latestPlanUsage, resetPlanUsage } from '../src/plan-usage.ts'
@@ -89,6 +90,82 @@ describe('metadata bridge', () => {
       prefixed: false,
     }]))
     expect(catalogAgent.followup).not.toHaveBeenCalled()
+    await dispose?.()
+  })
+
+  it('waits quietly for a session that is mid-turn instead of warning and retrying', async () => {
+    // The metadata lane refuses to disturb a running turn, and the idle
+    // transition afterwards runs this again. Warning and retrying on the
+    // schedule meant a busy session filled the log for as long as its turn ran.
+    vi.useFakeTimers()
+    try {
+      const host = createHostContext()
+      const { agent } = createAgent()
+      const supervisor = {
+        supportedCommands: vi.fn(async () => { throw new ClaudeTurnBusyError('agent-1') }),
+        contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
+        planUsage: vi.fn(async () => ({})),
+      } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+      const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
+      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
+      // Well past every retry the catalog schedule would have made.
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
+      expect(host.logger.warn).not.toHaveBeenCalled()
+      // The refreshes behind the catalog would fail the same way; the next idle
+      // pass does all three.
+      expect(supervisor.contextUsage).not.toHaveBeenCalled()
+      expect(supervisor.planUsage).not.toHaveBeenCalled()
+      await dispose?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps retrying the catalog quietly while the process pool is full', async () => {
+    // A full pool is another session's turn: no idle transition of this one is
+    // coming, so the bounded retry stays, only the warning goes.
+    vi.useFakeTimers()
+    try {
+      const host = createHostContext()
+      const { agent } = createAgent()
+      let calls = 0
+      const supervisor = {
+        supportedCommands: vi.fn(async () => {
+          calls += 1
+          if (calls === 1) throw new ClaudeProcessLimitError(4)
+          return []
+        }),
+        contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
+        planUsage: vi.fn(async () => ({})),
+      } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+      const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
+      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(supervisor.supportedCommands).toHaveBeenCalledTimes(2)
+      expect(host.logger.warn).not.toHaveBeenCalled()
+      await dispose?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still reports a catalog failure that is not a busy session', async () => {
+    const host = createHostContext()
+    const { agent } = createAgent()
+    const supervisor = {
+      supportedCommands: vi.fn(async () => { throw new Error('CLI exploded') }),
+      contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
+      planUsage: vi.fn(async () => ({})),
+    } as unknown as Parameters<typeof mountClaudeMetadata>[1]
+    const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
+    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+    await vi.waitFor(() => expect(host.logger.warn).toHaveBeenCalled())
+    expect(String(host.logger.warn.mock.calls[0]?.[0])).toContain('command catalog refresh failed')
     await dispose?.()
   })
 

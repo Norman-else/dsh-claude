@@ -116,6 +116,15 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 const SECRET_KEY = /(?:^|[_-])(password|passwd|secret|token|api[_-]?key|authorization|credential|private[_-]?key|session[_-]?key|env|environ|environment)(?:$|[_-])/i
 const MAX_SUMMARY_CHARS = 1_000
+/** A reasoning block gets its own, larger bound.
+ *
+ *  The generic budget is a row's summary: a line describing a tool. Thinking is
+ *  the one summary a reader reads as prose, and at 1,000 characters the median
+ *  row was exactly at the cap, so more than half of what Claude reasoned was a
+ *  fragment that stopped mid-sentence. The bound still exists (a step can think
+ *  for tens of thousands of characters, and this is a durable document), just
+ *  wide enough to hold a thought. */
+const MAX_THINKING_CHARS = 4_000
 const MAX_DETAIL_CHARS = 4_000
 const MAX_TRANSCRIPT_TEXT_CHARS = 64_000
 const MAX_DEPTH = 6
@@ -215,7 +224,7 @@ export function normalizeActivity(
   if (activity.summary !== undefined) {
     normalized.summary = redactText(
       typeof activity.summary === 'string' ? activity.summary : safeDetail(activity.summary) ?? '',
-      MAX_SUMMARY_CHARS,
+      activity.kind === 'thinking' ? MAX_THINKING_CHARS : MAX_SUMMARY_CHARS,
     )
   }
   const detail = safeDetail(activity.detail)

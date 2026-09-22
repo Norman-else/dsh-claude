@@ -88,6 +88,25 @@ describe('event normalization', () => {
     expect(normalized.summary).toContain('[truncated]')
   })
 
+  it('keeps a reasoning block whole up to its own, wider bound', () => {
+    // The generic summary budget cut most thinking mid-sentence; a row a reader
+    // reads as prose keeps more of itself, and still stops somewhere.
+    const thinking = normalizeActivity({
+      turn: 1, step: 1, ordinal: 0, kind: 'thinking', summary: 'think '.repeat(2_000),
+    })
+    expect(thinking.summary?.length).toBe(4_000)
+    expect(thinking.summary).toContain('[truncated]')
+    const shorter = normalizeActivity({
+      turn: 1, step: 1, ordinal: 1, kind: 'thinking', summary: 'think '.repeat(300),
+    })
+    expect(shorter.summary).not.toContain('[truncated]')
+    // Every other row keeps the generic summary budget.
+    const tool = normalizeActivity({
+      turn: 1, step: 1, ordinal: 2, kind: 'tool-call', summary: 'x'.repeat(2_000),
+    })
+    expect(tool.summary?.length).toBe(1_000)
+  })
+
   it('redacts and bounds visible transcript text', () => {
     const normalized = normalizeActivity({
       turn: 1,
