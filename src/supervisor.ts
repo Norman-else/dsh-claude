@@ -43,6 +43,10 @@ export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
 /** Control requests must settle; a wedged one must not clog the metadata chain. */
 export const CLAUDE_METADATA_TIMEOUT_MS = 15_000
+/** How long a disconnect waits for the dead process to be reaped, so the
+ *  failure can say how it ended. A process that died for its own reasons
+ *  resolves immediately; this only bounds the case where it has not died. */
+export const DISCONNECT_EXIT_WAIT_MS = 1_000
 
 export type ClaudeSupervisorState =
   | 'starting'
@@ -326,6 +330,25 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** How the CLI process ended, in words a reader can act on.
+ *
+ *  Without this the transcript can only say that a turn's outcome is unknown,
+ *  which is true and useless: an exit code is the CLI saying it finished, a
+ *  signal is something else ending it, and `killedByPlugin` says whether that
+ *  something was this plugin's own teardown. The status is captured by
+ *  {@link ManagedClaudeProcess} either way — it was simply never read. */
+function exitStatus(process: ManagedClaudeProcess | undefined): string {
+  if (process === undefined) return 'no process was running'
+  const signal = process.signalCode
+  const code = process.exitCode
+  const parts: string[] = []
+  if (signal !== null) parts.push(`killed by ${signal}`)
+  if (code !== null) parts.push(`exit code ${code}`)
+  if (parts.length === 0) parts.push(process.killed ? 'terminated by this plugin' : 'no exit status was reported')
+  else if (process.killed) parts.push('requested by this plugin')
+  return parts.join(', ')
+}
+
 /** Root-call activity summary; subagent dispatches lead with Claude's own task description. */
 function rootCallSummary(toolName: string, input: unknown): string {
   if (TASK_TOOL_NAMES.has(toolName)) {
@@ -352,6 +375,9 @@ export class ClaudeSupervisor {
   readonly #sidecar: ClaudeSidecarRepository
   readonly #defaultPermissionMode: () => Promise<ClaudePermissionMode | undefined>
   readonly #permissionSelector: () => Promise<ClaudePermissionSelector>
+  /** Where a process death is reported. The transcript keeps the failure; this
+   *  is what makes it findable afterwards. */
+  readonly #logger: { warn(message: string): void } | undefined
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -380,6 +406,9 @@ export class ClaudeSupervisor {
     /** Which access control the session obeys; `native` ignores both the
      *  session's recorded choice and the default and reads the sandbox alone. */
     permissionSelector?: () => Promise<ClaudePermissionSelector>
+    /** Where a process death is reported. The transcript keeps the failure;
+     *  this is what makes it findable afterwards. */
+    logger?: { warn(message: string): void }
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
@@ -390,6 +419,7 @@ export class ClaudeSupervisor {
     this.#sidecar = dependencies.sidecar ?? new ClaudeSidecarRepository()
     this.#defaultPermissionMode = dependencies.defaultPermissionMode ?? (async () => undefined)
     this.#permissionSelector = dependencies.permissionSelector ?? (async () => 'plugin')
+    this.#logger = dependencies.logger
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -1938,7 +1968,22 @@ export class ClaudeSupervisor {
 
   async #handleDisconnect(entry: SupervisorEntry, error: unknown): Promise<void> {
     const active = entry.active
-    const stderr = entry.process?.stderrTail()
+    // The stream can end a moment before the process is reaped, and the exit
+    // status is the whole point of this message — a stream that ended because
+    // the process died resolves here immediately, and one that ended while the
+    // process lives costs a bounded wait rather than a wrong answer.
+    const process = entry.process
+    if (process !== undefined && process.exitCode === null && process.signalCode === null) {
+      await process.handle.waitForExit(AbortSignal.timeout(DISCONNECT_EXIT_WAIT_MS)).catch(() => undefined)
+    }
+    const status = exitStatus(process)
+    // Read after the wait: a crashing CLI often writes its last words on the way out.
+    const stderr = process?.stderrTail()
+    // The transcript is the record, but a process dying mid-turn is the kind of
+    // thing that is looked for in a log rather than in a conversation.
+    this.#logger?.warn?.(
+      `dsh-claude: Claude Code for ${entry.sessionId} stopped (${status})${active === undefined ? ' with no turn running' : active.sawActivity ? ' mid-turn after activity' : ' before the turn produced anything'}${stderr === undefined || stderr.length === 0 ? '' : `; stderr: ${redactText(stderr.slice(-400))}`}`,
+    )
     if (active !== undefined) {
       await this.#upsertTranscriptText(active)
       await this.#flushTranscript(active)
@@ -1947,9 +1992,14 @@ export class ClaudeSupervisor {
       }
       const unknown = active.sawActivity
       entry.state = unknown ? 'outcome-unknown' : 'disconnected'
+      // What the process was still holding when it went away is part of the
+      // same answer: an unanswered tool call is work that may or may not have
+      // landed, and it is what makes the difference between "unknown" and
+      // "probably finished".
+      const open = active.openCalls.size === 0 ? '' : `; ${active.openCalls.size} tool call(s) were still unanswered`
       const failure = unknown
-        ? new ClaudeOutcomeUnknownError(stderr === undefined || stderr.length === 0 ? undefined : `Claude Code exited after activity; outcome unknown. ${stderr}`)
-        : new Error(stderr === undefined || stderr.length === 0 ? errorSummary(error) : stderr)
+        ? new ClaudeOutcomeUnknownError(`Claude Code exited after activity; side-effect outcome is unknown and the prompt was not replayed (${status}${open})${stderr === undefined || stderr.length === 0 ? '' : `. ${stderr}`}`)
+        : new Error(`${stderr === undefined || stderr.length === 0 ? errorSummary(error) : stderr} (${status}${open})`)
       await this.#settleOpenCalls(active, 'Claude Code stopped before the tool answered').catch(() => undefined)
       await this.#appendSafely(active, {
         kind: 'error',

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { PassThrough } from 'node:stream'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import { AsyncQueue } from '../src/async-queue.ts'
 import { latestClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 import { ClaudeSidecarRepository } from '../src/sidecar.ts'
@@ -131,6 +133,7 @@ function supervisor(
   idleTimeoutMs = 60_000,
   suppliedSidecar?: ClaudeSidecarRepository,
   renderMode: ClaudeRenderMode = 'plugin',
+  warnings?: string[],
 ) {
   const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
   sidecarRoots.push(root)
@@ -149,6 +152,7 @@ function supervisor(
     config,
     queryFactory: create,
     sidecar,
+    ...(warnings === undefined ? {} : { logger: { warn: (message: string) => { warnings.push(message) } } }),
   })
   sidecars.set(runtime, sidecar)
   configs.set(runtime, config)
@@ -1721,6 +1725,88 @@ describe('Claude supervisor', () => {
     query.fail(new Error('process crashed'))
     await expect(collect(output)).rejects.toBeInstanceOf(ClaudeOutcomeUnknownError)
     expect(runtime.snapshots()).toHaveLength(0)
+    await runtime.dispose()
+  })
+
+  it('says how the process ended, and logs it, when a turn dies with it', async () => {
+    // "Outcome unknown" is the truth and tells a reader nothing: whether the
+    // CLI exited on its own or something killed it, and whether a tool call was
+    // still in flight, is what decides whether the work landed.
+    const transport = factory()
+    const owner = fakeAgent()
+    const warnings: string[] = []
+    const runtime = supervisor(transport.create, 4, 60_000, undefined, 'plugin', warnings)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'edit something' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('working'))
+    query.push(toolCallMessage)
+    query.fail(new Error('process crashed'))
+    const failure = await collect(output).then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(ClaudeOutcomeUnknownError)
+    expect((failure as Error).message).toContain('side-effect outcome is unknown')
+    expect((failure as Error).message).toContain('1 tool call(s) were still unanswered')
+    // The fake query has no process to watch, and the message says so rather
+    // than leaving the reader to guess.
+    expect((failure as Error).message).toContain('no process was running')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('mid-turn after activity')
+    // The row keeps the same answer for a reader who was not watching the turn.
+    const row = (await projection(runtime)).activities.find(activity => activity.title === 'Claude Code outcome unknown')
+    expect(row?.summary).toContain('tool call(s) were still unanswered')
+    await runtime.dispose()
+  })
+
+  it('reads the stderr a dying process wrote on its way out, and redacts it in the log', async () => {
+    // The stream can end a moment before the process is reaped, and a crashing
+    // CLI often writes its last words while it goes. The log line must carry
+    // those words, and nothing credential-shaped from them.
+    let stderrText = ''
+    let exit!: (outcome: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+    const done = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>(resolve => { exit = resolve })
+    const handle = {
+      pid: 42,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: undefined,
+      collected: { stderr: { readFrom: () => ({ text: stderrText, nextOffset: stderrText.length, lossy: false }) } },
+      done,
+      terminate: () => {},
+      waitForExit: async () => {
+        stderrText = 'fatal: request failed with Authorization: Bearer sk-ant-abcdefghijklmnop'
+        exit({ exitCode: null, signal: 'SIGKILL' })
+        await done
+        return true
+      },
+    } as unknown as SubprocessHandle
+    const transport = factory()
+    const warnings: string[] = []
+    const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const runtime = new ClaudeSupervisor({
+      runtime: { spawn: () => handle },
+      approval: { request: async () => 'rejected' },
+      userQuestions: { ask: async () => ({ answers: [] }) },
+      config: { executablePath: '/local/claude', idleTimeoutMs: 60_000, maxProcesses: 4, defaultModel: 'default', renderMode: 'plugin' },
+      queryFactory: args => {
+        args.options.spawnClaudeCodeProcess?.({ command: '/local/claude', args: [], cwd: '/workspace', env: {}, signal: new AbortController().signal })
+        return transport.create(args)
+      },
+      sidecar: new ClaudeSidecarRepository({ root }),
+      logger: { warn: message => { warnings.push(message) } },
+    })
+    const owner = fakeAgent()
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'edit something' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push(delta('working'))
+    query.fail(new Error('process crashed'))
+    const failure = await collect(output).then(() => undefined, (error: unknown) => error)
+    expect((failure as Error).message).toContain('killed by SIGKILL')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('killed by SIGKILL')
+    expect(warnings[0]).toContain('fatal: request failed')
+    expect(warnings[0]).not.toContain('sk-ant-abcdefghijklmnop')
     await runtime.dispose()
   })
 

@@ -285,6 +285,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     sidecar,
     defaultPermissionMode: () => readDefaultPermissionMode(),
     permissionSelector: async () => permissionSelector,
+    // A CLI that dies mid-turn is diagnosed from the log, not from the
+    // conversation it was in the middle of.
+    logger: { warn: message => { ctx.logger.warn(message) } },
   })
   let resolutionError: unknown
   try {
