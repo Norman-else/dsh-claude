@@ -1867,6 +1867,32 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('records an unknown message type once per process, not once per frame', async () => {
+    // A type this package does not handle arrives in batches of identical frames
+    // (command_lifecycle did, five per turn). One row is evidence; the rest are
+    // noise the transcript never draws. Tool-progress heartbeats are telemetry,
+    // not an unknown type, and leave no row at all.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'long task' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({ type: 'command_lifecycle', state: 'queued' } as unknown as SDKMessage)
+    query.push({ type: 'command_lifecycle', state: 'running' } as unknown as SDKMessage)
+    query.push({ type: 'tool_progress', tool_use_id: 'tool-1', elapsed_time_seconds: 3 } as unknown as SDKMessage)
+    query.push({ type: 'future_message', value: 1 } as unknown as SDKMessage)
+    query.push(result('done'))
+    await collect(output)
+    const notices = (await projection(runtime)).activities
+      .filter(activity => String(activity.title).startsWith('Unknown Claude SDK message:'))
+    expect(notices.map(activity => activity.title)).toEqual([
+      'Unknown Claude SDK message: command_lifecycle',
+      'Unknown Claude SDK message: future_message',
+    ])
+    await runtime.dispose()
+  })
+
   it('settles the tool calls a cancelled turn left in flight', async () => {
     // Nothing will ever answer them: the turn is gone. Left open they render
     // as a tool that is still running, for the life of the transcript.

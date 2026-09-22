@@ -27,6 +27,11 @@ export const CLAUDE_PROGRESS_SUBTYPES: ReadonlySet<string> = new Set(['thinking_
 export function claudeStatusTitle(subtype: string): string {
   return `Claude Code ${subtype.replaceAll('_', ' ')}`
 }
+
+/** Title prefix this package gives a message type it does not handle yet. Shared
+ *  by the writer and by the projection prune, so a notice row can be recognized
+ *  without re-deriving the template. */
+export const CLAUDE_UNKNOWN_MESSAGE_PREFIX = 'Unknown Claude SDK message: '
 export const CLAUDE_DOCTOR_PATH = '/plugins/dsh-claude/doctor'
 export const CLAUDE_CLIENT_DIAGNOSTICS_PATH = '/plugins/dsh-claude/client-diagnostics'
 export const CLAUDE_UPDATE_CHECK_PATH = '/plugins/dsh-claude/update/check'

@@ -544,7 +544,11 @@ export function createClaudeProjectionSource(
           revision += 1
           break
         default:
-          // ping and unknown line types are ignored
+          // A ping, or a kind this bundle predates. Its payload is ignored, but a
+          // sequenced line still advances the count: leaving it where it was would
+          // make the NEXT line read as a hole and drop a healthy stream into a
+          // resync. Nothing visible changed, so nothing is published.
+          if (nonNegativeInteger(event.seq)) seq = event.seq
           return
       }
     } catch {

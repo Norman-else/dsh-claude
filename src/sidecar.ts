@@ -20,7 +20,7 @@ import {
   type ClaudeTaskInfo,
   type ClaudeTasksEvent,
 } from './events.ts'
-import { CLAUDE_ACTIVITY_EVENT, CLAUDE_PROGRESS_SUBTYPES, SDK_VERSION, claudeStatusTitle, type ClaudeRenderMode } from './constants.ts'
+import { CLAUDE_ACTIVITY_EVENT, CLAUDE_PROGRESS_SUBTYPES, CLAUDE_UNKNOWN_MESSAGE_PREFIX, SDK_VERSION, claudeStatusTitle, type ClaudeRenderMode } from './constants.ts'
 import {
   EMPTY_REWIND_STATE,
   MAX_REWIND_ANCHORS,
@@ -191,9 +191,19 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   // and put in canonical order, which is the invariant the append fast path in
   // mergeActivities relies on. Both happen once per document read, not once per
   // write: `#update` no longer re-parses the projection it already holds.
-  const retained = (activities as ClaudeActivityEvent[])
-    .filter(item => !isProgressActivity(item))
-    .sort(compareActivity)
+  // An unknown-type notice is evidence worth one row per type rather than the
+  // batch the CLI sends, so its repetitions are pruned here as well.
+  const retained: ClaudeActivityEvent[] = []
+  const reportedUnknownTitles = new Set<string>()
+  for (const item of activities as ClaudeActivityEvent[]) {
+    if (isProgressActivity(item)) continue
+    if (item.kind === 'warning' && item.title?.startsWith(CLAUDE_UNKNOWN_MESSAGE_PREFIX) === true) {
+      if (reportedUnknownTitles.has(item.title)) continue
+      reportedUnknownTitles.add(item.title)
+    }
+    retained.push(item)
+  }
+  retained.sort(compareActivity)
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
@@ -238,10 +248,17 @@ const PROGRESS_STATUS_TITLES: ReadonlySet<string> = new Set(
   [...CLAUDE_PROGRESS_SUBTYPES].map(subtype => claudeStatusTitle(subtype)),
 )
 
+/** The same telemetry under the title it carried before it was classified as
+ *  progress: the unknown-type fallback named those rows after the message type
+ *  and filed them as warnings. */
+const LEGACY_PROGRESS_TITLES: ReadonlySet<string> = new Set([
+  `${CLAUDE_UNKNOWN_MESSAGE_PREFIX}tool_progress`,
+])
+
 function isProgressActivity(activity: ClaudeActivityEvent): boolean {
-  return activity.kind === 'status'
-    && activity.title !== undefined
-    && PROGRESS_STATUS_TITLES.has(activity.title)
+  if (activity.title === undefined) return false
+  if (LEGACY_PROGRESS_TITLES.has(activity.title)) return true
+  return activity.kind === 'status' && PROGRESS_STATUS_TITLES.has(activity.title)
 }
 
 function mergeActivities(

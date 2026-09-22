@@ -210,6 +210,10 @@ interface SupervisorEntry {
   lastChainUuid: string | undefined
   /** Whether this process consumed an armed rewind fork target at spawn. */
   consumedRewind: boolean
+  /** SDK message types this process has already reported as unknown, so a type
+   *  that arrives in a batch leaves one row of evidence instead of one per
+   *  frame. A later process records its own first sighting. */
+  reportedUnknownTypes: Set<string>
   /** Live Claude task board (subagents and background tasks), keyed by task id. */
   tasks: Map<string, ClaudeTaskInfo>
   /** Last time a task snapshot was persisted (progress throttling). */
@@ -1027,6 +1031,7 @@ export class ClaudeSupervisor {
       expectedResume: startFresh || forkAt !== undefined ? undefined : binding?.claudeSessionId,
       lastChainUuid: undefined,
       consumedRewind: pendingRewind !== undefined,
+      reportedUnknownTypes: new Set<string>(),
       initialized: false,
       idleTimer: undefined,
       tasks: new Map<string, ClaudeTaskInfo>(),
@@ -1316,9 +1321,21 @@ export class ClaudeSupervisor {
           },
         })
         return
+      case 'unknown':
+        // The CLI grows message types steadily, and a new one arrives in batches
+        // of identical frames. One row per type is the evidence worth keeping;
+        // the repetitions are noise the transcript never draws anyway.
+        if (entry.reportedUnknownTypes.has(message.type)) return
+        entry.reportedUnknownTypes.add(message.type)
+        await this.#appendActivity(active, {
+          kind: 'warning',
+          phase: 'completed',
+          title: message.title,
+          detail: message.detail,
+        })
+        return
       case 'status':
       case 'warning':
-      case 'unknown':
         // One-shot notices (an API retry, a hook echo) have no later event to
         // close them, so they must land settled: an 'updated' phase reads as
         // still running in the transcript forever.
