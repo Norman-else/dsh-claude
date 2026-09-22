@@ -20,7 +20,7 @@ import {
   type ClaudeTaskInfo,
   type ClaudeTasksEvent,
 } from './events.ts'
-import { CLAUDE_ACTIVITY_EVENT, SDK_VERSION, type ClaudeRenderMode } from './constants.ts'
+import { CLAUDE_ACTIVITY_EVENT, CLAUDE_PROGRESS_SUBTYPES, SDK_VERSION, claudeStatusTitle, type ClaudeRenderMode } from './constants.ts'
 import {
   EMPTY_REWIND_STATE,
   MAX_REWIND_ANCHORS,
@@ -186,6 +186,14 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   }
   const activities = input.activities.map(activity)
   if (activities.some(item => item === undefined)) throw new Error('dsh-claude: invalid sidecar activity')
+  // Pruned of progress telemetry on the way in — a projection written before the
+  // plugin stopped recording it still carries up to a full window of those rows —
+  // and put in canonical order, which is the invariant the append fast path in
+  // mergeActivities relies on. Both happen once per document read, not once per
+  // write: `#update` no longer re-parses the projection it already holds.
+  const retained = (activities as ClaudeActivityEvent[])
+    .filter(item => !isProgressActivity(item))
+    .sort(compareActivity)
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
   const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
@@ -202,7 +210,7 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   return {
     schemaVersion: SIDECAR_SCHEMA_VERSION,
     revision: input.revision,
-    activities: activities as ClaudeActivityEvent[],
+    activities: retained,
     ...(parsedBinding === undefined ? {} : { binding: parsedBinding }),
     ...(parsedUsage === undefined ? {} : { contextUsage: parsedUsage }),
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
@@ -219,12 +227,47 @@ function activityKey(value: ClaudeActivityEvent): string {
   return `${value.turn}:${value.step}:${value.ordinal}`
 }
 
+/** Durable titles of the progress frames {@link CLAUDE_PROGRESS_SUBTYPES} names.
+ *
+ *  A projection written before the plugin stopped recording that telemetry still
+ *  carries up to a full window of those rows. Dropping them on the way in is what
+ *  makes them stop costing anything: every later write rebuilds only the real
+ *  activity, so the first write after the upgrade sheds the backlog instead of
+ *  rebuilding ten thousand rows forever. */
+const PROGRESS_STATUS_TITLES: ReadonlySet<string> = new Set(
+  [...CLAUDE_PROGRESS_SUBTYPES].map(subtype => claudeStatusTitle(subtype)),
+)
+
+function isProgressActivity(activity: ClaudeActivityEvent): boolean {
+  return activity.kind === 'status'
+    && activity.title !== undefined
+    && PROGRESS_STATUS_TITLES.has(activity.title)
+}
+
 function mergeActivities(
   existing: readonly ClaudeActivityEvent[],
   additions: readonly ClaudeActivityEvent[],
 ): ClaudeActivityEvent[] {
+  // Progress telemetry never enters the projection, whoever offers it: a document
+  // read off disk is pruned in `parseClaudeSidecar`, and this is the one door
+  // every later activity comes through.
+  const appended = additions.length === 1 ? additions[0] : undefined
+  if (appended !== undefined && isProgressActivity(appended)) return existing as ClaudeActivityEvent[]
+  // Appending one activity is the hot path: it runs once per SDK message inside
+  // the streaming pump. `existing` is kept in canonical order (parse sorts, and
+  // every branch below sorts), so an addition whose key sorts after the last
+  // retained one is appended directly instead of rebuilding a Map and sorting
+  // the whole window.
+  const last = existing[existing.length - 1]
+  if (appended !== undefined && (last === undefined || compareActivity(last, appended) < 0)) {
+    return existing.length < MAX_ACTIVITIES
+      ? [...existing, appended]
+      : [...existing.slice(1), appended]
+  }
   const merged = new Map(existing.map(item => [activityKey(item), item]))
-  for (const item of additions) merged.set(activityKey(item), item)
+  for (const item of additions) {
+    if (!isProgressActivity(item)) merged.set(activityKey(item), item)
+  }
   return [...merged.values()].sort(compareActivity).slice(-MAX_ACTIVITIES)
 }
 
@@ -505,6 +548,16 @@ export class ClaudeSidecarRepository {
     return join(root, `${Buffer.from(sessionId).toString('base64url')}.json`)
   }
 
+  /** Apply one change to the in-memory projection and persist it.
+   *
+   *  Every change below is built from values the matching normalizer already
+   *  produced — the very ones `parseClaudeSidecar` would run again — so
+   *  re-parsing the document here re-redacted and re-bounded every retained
+   *  activity on every write. On a session holding a full activity window that
+   *  was tens of milliseconds per SDK message, inside the streaming pump.
+   *  Untrusted data still enters through exactly one door: `#readNow` parses the
+   *  document that comes off disk. What is left to check here are the invariants
+   *  a change itself could break. */
   #update(
     sessionId: string,
     change: (current: ClaudeSidecarProjection) => Omit<ClaudeSidecarProjection, 'revision' | 'schemaVersion'> & Partial<Pick<ClaudeSidecarProjection, 'revision' | 'schemaVersion'>>,
@@ -514,13 +567,16 @@ export class ClaudeSidecarRepository {
     const previous = this.#pending.get(sessionId) ?? Promise.resolve()
     const operation = previous.catch(() => undefined).then(async () => {
       const current = await this.#base(sessionId)
-      const changed = parseClaudeSidecar({
-        ...change(current),
-        schemaVersion: SIDECAR_SCHEMA_VERSION,
-        revision: current.revision,
-      })
+      const changed = change(current)
+      if (changed.activities.length > MAX_ACTIVITIES) {
+        throw new Error('dsh-claude: activity window overflow')
+      }
       if (skipUnchanged && JSON.stringify(changed) === JSON.stringify(current)) return current
-      const next = { ...changed, revision: current.revision + 1 }
+      const next: ClaudeSidecarProjection = {
+        ...changed,
+        schemaVersion: SIDECAR_SCHEMA_VERSION,
+        revision: current.revision + 1,
+      }
       await this.#writeNow(sessionId, next)
       this.#latest.set(sessionId, next)
       if (delta !== undefined) this.#notify(sessionId, delta)
