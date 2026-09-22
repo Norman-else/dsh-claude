@@ -34,6 +34,7 @@ import {
 class FakeQuery extends AsyncQueue<SDKMessage> {
   readonly interrupt = vi.fn(async () => undefined)
   readonly setModel = vi.fn(async () => undefined)
+  readonly applyFlagSettings = vi.fn(async (_settings: unknown) => undefined)
   readonly setPermissionMode = vi.fn(async () => undefined)
   readonly initializationResult = vi.fn(async () => ({
     commands: [],
@@ -2383,7 +2384,7 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('rebuilds the query when the thinking mode changes and resumes the bound session', async () => {
+  it('moves effort on the running process instead of rebuilding it', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -2398,21 +2399,85 @@ describe('Claude supervisor', () => {
       { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
     )
     const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two', thinkingMode: 'xhigh' })
+    // One process, one context: effort moved through a control request rather
+    // than a respawn and a resume from disk.
+    expect(transport.queries).toHaveLength(1)
+    expect(transport.queries[0]?.applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'xhigh' })
+    expect(runtime.snapshots()[0]).toMatchObject({ thinkingMode: 'xhigh' })
+    transport.queries[0]!.push(result('two'))
+    await expect(collect(second)).resolves.toContainEqual({ type: 'complete', text: 'two' })
+    await runtime.dispose()
+  })
+
+  it('rebuilds when the CLI refuses the live effort switch', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one' })
+    transport.queries[0]!.push(init())
+    transport.queries[0]!.push(result('one'))
+    await collect(first)
+
+    owner.events.push(
+      { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
+      { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
+    )
+    transport.queries[0]!.applyFlagSettings.mockRejectedValueOnce(new Error('unsupported control request'))
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two', thinkingMode: 'low' })
     expect(transport.queries).toHaveLength(2)
-    expect(transport.queries[1]?.options.effort).toBe('xhigh')
+    expect(transport.queries[1]?.options.effort).toBe('low')
     expect(transport.queries[1]?.options.resume).toBe('claude-session-1')
     transport.queries[1]!.push(init())
     transport.queries[1]!.push(result('two'))
     await collect(second)
+    await runtime.dispose()
+  })
+
+  it('spends no control request when the model change will rebuild the process anyway', async () => {
+    // Effort and model changed together: the process is torn down for the
+    // model, so asking it to move effort first would be spent on a corpse.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one', model: 'default', thinkingMode: 'low' })
+    transport.queries[0]!.push(init())
+    transport.queries[0]!.push(result('one'))
+    await collect(first)
 
     owner.events.push(
-      { type: 'turn/start', data: { turn: 3 }, seq: owner.events.length, time: 5 },
-      { type: 'step/start', data: { turn: 3, step: 1 }, seq: owner.events.length + 1, time: 6 },
+      { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
+      { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
     )
-    const third = await runtime.runTurn({ agent: owner.agent, prompt: 'three', thinkingMode: 'xhigh' })
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two', model: 'other', thinkingMode: 'high' })
+    expect(transport.queries[0]?.applyFlagSettings).not.toHaveBeenCalled()
     expect(transport.queries).toHaveLength(2)
-    transport.queries[1]!.push(result('three'))
-    await expect(collect(third)).resolves.toContainEqual({ type: 'complete', text: 'three' })
+    expect(transport.queries[1]?.options.effort).toBe('high')
+    transport.queries[1]!.push(init())
+    transport.queries[1]!.push(result('two'))
+    await collect(second)
+    await runtime.dispose()
+  })
+
+  it('rebuilds for a thinking mode the CLI only takes at start', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const first = await runtime.runTurn({ agent: owner.agent, prompt: 'one', thinkingMode: 'xhigh' })
+    transport.queries[0]!.push(init())
+    transport.queries[0]!.push(result('one'))
+    await collect(first)
+
+    owner.events.push(
+      { type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: 3 },
+      { type: 'step/start', data: { turn: 2, step: 1 }, seq: owner.events.length + 1, time: 4 },
+    )
+    const second = await runtime.runTurn({ agent: owner.agent, prompt: 'two', thinkingMode: 'off' })
+    // `off` is a query option, not a setting: it still costs a respawn.
+    expect(transport.queries).toHaveLength(2)
+    expect(transport.queries[1]?.options.thinking).toEqual({ type: 'disabled' })
+    transport.queries[1]!.push(init())
+    transport.queries[1]!.push(result('two'))
+    await collect(second)
     await runtime.dispose()
   })
 })

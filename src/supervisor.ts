@@ -81,6 +81,11 @@ export type ClaudeThinkingMode = 'off' | 'ultracode' | EffortLevel
 export type { DshSandboxMode } from './permission-mode.ts'
 export { claudePermissionMode } from './permission-mode.ts'
 
+/** What a running process accepts as a live settings change. `effortLevel` here
+ *  is the full {@link EffortLevel}: unlike the settings file, this request takes
+ *  the session-scoped `max` too. */
+type ClaudeFlagSettings = Parameters<Query['applyFlagSettings']>[0]
+
 /** Appended to the Claude Code system prompt on every session.
  *
  *  The plan panel opens on exactly one signal: an `ExitPlanMode` call, whose
@@ -96,6 +101,23 @@ export const PLAN_MODE_HANDOFF_PROMPT =
   'When you are in plan mode and the plan is written, end the turn by calling ExitPlanMode with the plan. '
   + 'Do not end a plan-mode turn by asking the user for confirmation in prose: '
   + 'the user reads and approves the plan through ExitPlanMode, and a turn that stops short of that call shows them nothing.'
+
+/** The live equivalent of a thinking mode, or undefined when the mode is a
+ *  start-time shape the CLI will not take later: `off` disables thinking through
+ *  a query option, `ultracode` is a settings bundle, and "no explicit mode" is
+ *  the CLI's own default. Those still rebuild the process. */
+function liveEffortSettings(mode: ClaudeThinkingMode | undefined): ClaudeFlagSettings | undefined {
+  switch (mode) {
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+    case 'max':
+      return { effortLevel: mode }
+    default:
+      return undefined
+  }
+}
 
 export interface ClaudeTurnRequest {
   agent: Agent
@@ -673,13 +695,22 @@ export class ClaudeSupervisor {
       entry.idleTimer = undefined
     }
     const model = request.model ?? this.#config.defaultModel
-    if (request.thinkingMode !== entry.thinkingMode || model !== entry.model) {
-      // The SDK only accepts effort/thinking at query start, and a live
-      // setModel is not enough for the model either: the CLI freezes its
-      // system prompt (including the "you are powered by" line) at the first
-      // context-usage request, which the metadata refresh issues on every new
-      // process, so a switched session answers as the old model. Rebuild the
-      // query; the persisted Claude session binding keeps the context.
+    const mode = request.thinkingMode
+    const effort = liveEffortSettings(mode)
+    // Moving between effort levels is one control request, so the process — and
+    // the context it holds — survives a change of effort. Everything else is a
+    // start-time shape the SDK will not take later, and a live setModel is not
+    // enough for the model either: the CLI freezes its system prompt (including
+    // the "you are powered by" line) at the first context-usage request, which
+    // the metadata refresh issues on every new process, so a switched session
+    // answers as the old model. Those rebuild the query; the persisted Claude
+    // session binding keeps the context.
+    // A changed model rebuilds the process regardless, so the control request
+    // would be spent on a process that is about to be torn down.
+    const switchedLive = mode !== entry.thinkingMode && mode !== undefined && effort !== undefined && model === entry.model
+      ? await this.#switchEffort(entry, mode, effort)
+      : false
+    if (model !== entry.model || (mode !== entry.thinkingMode && !switchedLive)) {
       this.#entries.delete(sessionId)
       await this.#disposeEntry(entry)
       if (createdForRequest === entry) createdForRequest = undefined
@@ -911,6 +942,21 @@ export class ClaudeSupervisor {
     if (mode === entry.permissionMode) return
     await this.#control(entry, entry.query.setPermissionMode(mode), 'Claude Code permission mode switch')
     entry.permissionMode = mode
+  }
+
+  /** Move a running process to another effort level.
+   *
+   *  Returns false when the CLI would not take the change — the caller then
+   *  rebuilds the process, which is what every mode change did before this.
+   *  A failed control request has already discarded the entry. */
+  async #switchEffort(entry: SupervisorEntry, mode: ClaudeThinkingMode, settings: ClaudeFlagSettings): Promise<boolean> {
+    try {
+      await this.#control(entry, entry.query.applyFlagSettings(settings), 'Claude effort switch')
+      entry.thinkingMode = mode
+      return true
+    } catch {
+      return false
+    }
   }
 
   #finishMetadataAdmission(admission: MetadataAdmission): void {
