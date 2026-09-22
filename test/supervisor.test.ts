@@ -270,6 +270,80 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it("counts a new process's first turn in full even when it outspends the previous process", async () => {
+    // A drop in the counter is not the respawn signal: here the new process's
+    // first reading is higher than the old process's whole run.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const turn = async (cost: number) => {
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'work' })
+      const query = transport.queries.at(-1)!
+      query.push(init())
+      query.push({ ...result('done') as object, total_cost_usd: cost } as SDKMessage)
+      await collect(output)
+    }
+    await turn(0.1)
+    await runtime.disposeSession(owner.agent.id as string)
+    await turn(0.3)
+    const rows = (await projection(runtime)).activities.filter(activity => activity.kind === 'usage')
+    expect(rows.map(row => row.usage?.cumulativeCostUsd)).toEqual([0.1, 0.4])
+    await runtime.dispose()
+  })
+
+  it("continues a session's cost from the sidecar after the supervisor restarts", async () => {
+    const root = join(tmpdir(), `dsh-claude-supervisor-${randomUUID()}`)
+    sidecarRoots.push(root)
+    const owner = fakeAgent()
+    const turn = async (runtime: ClaudeSupervisor, transport: ReturnType<typeof factory>, cost: number) => {
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'work' })
+      const query = transport.queries.at(-1)!
+      query.push(init())
+      query.push({ ...result('done') as object, total_cost_usd: cost } as SDKMessage)
+      await collect(output)
+    }
+    const firstTransport = factory()
+    const first = supervisor(firstTransport.create, 4, 60_000, new ClaudeSidecarRepository({ root }))
+    await turn(first, firstTransport, 0.25)
+    await first.dispose()
+
+    const secondTransport = factory()
+    const second = supervisor(secondTransport.create, 4, 60_000, new ClaudeSidecarRepository({ root }))
+    await turn(second, secondTransport, 0.1)
+    const rows = (await projection(second)).activities.filter(activity => activity.kind === 'usage')
+    expect(rows.map(row => row.usage?.cumulativeCostUsd)).toEqual([0.25, 0.35])
+    await second.dispose()
+  })
+
+  it('keeps a session\'s cost whole across a respawn', async () => {
+    // The CLI's cumulative cost is per query() call, so a respawned process
+    // starts counting again from zero. The transcript is one session, and the
+    // money it spent is the sum of what its processes spent.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const turn = async (cost: number) => {
+      const output = await runtime.runTurn({ agent: owner.agent, prompt: 'work' })
+      const query = transport.queries.at(-1)!
+      query.push(init())
+      query.push({ ...result('done') as object, total_cost_usd: cost } as SDKMessage)
+      await collect(output)
+    }
+    await turn(0.25)
+    await turn(0.5)
+    // The process was evicted and respawned: this counter is the new epoch's.
+    await runtime.disposeSession(owner.agent.id as string)
+    await turn(0.1)
+    const rows = (await projection(runtime)).activities.filter(activity => activity.kind === 'usage')
+    expect(rows.map(row => row.usage?.cumulativeCostUsd)).toEqual([0.25, 0.5, 0.6])
+    expect(rows.map(row => row.summary)).toEqual([
+      '4 input / 2 output tokens · $0.2500 cumulative',
+      '4 input / 2 output tokens · $0.5000 cumulative',
+      '4 input / 2 output tokens · $0.6000 cumulative',
+    ])
+    await runtime.dispose()
+  })
+
   it('starts the Query in the Claude mode mapped from DSH access', async () => {
     const transport = factory()
     const owner = fakeAgent()

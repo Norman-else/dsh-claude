@@ -216,6 +216,9 @@ interface SupervisorEntry {
   taskSnapshotAt: number
   /** Pending throttled snapshot flush timer. */
   taskSnapshotTimer: ReturnType<typeof setTimeout> | undefined
+  /** Newest `cumulativeCostUsd` this process reported. The counter belongs to
+   *  one `query()` call, so each process starts its own from zero. */
+  costReading: number
   pump: Promise<void>
 }
 
@@ -1029,6 +1032,7 @@ export class ClaudeSupervisor {
       tasks: new Map<string, ClaudeTaskInfo>(),
       taskSnapshotAt: 0,
       taskSnapshotTimer: undefined,
+      costReading: 0,
     } as SupervisorEntry
 
     const activeInteraction = () => {
@@ -1597,18 +1601,59 @@ export class ClaudeSupervisor {
    *  handling on its way to `waiting-tasks`, and recording there drew a closing
    *  total under a turn that was still running. */
   async #recordTurnUsage(
+    entry: SupervisorEntry,
     active: ActiveTurn,
     result: Extract<NormalizedSdkMessage, { kind: 'result' }>,
   ): Promise<void> {
     if (result.usage.inputTokens === undefined && result.usage.outputTokens === undefined && result.usage.cumulativeCostUsd === undefined) return
+    // `cumulativeCostUsd` is per query() call, and a respawned Claude process
+    // starts a new one, so a session that respawned mid-conversation would
+    // show a total that goes DOWN. What the session has spent is the sum of
+    // what each of its processes spent.
+    const cumulative = await this.#sessionCost(entry, result.usage.cumulativeCostUsd)
+    const usage = cumulative === undefined ? result.usage : { ...result.usage, cumulativeCostUsd: cumulative }
     await this.#appendSafely(active, {
       kind: 'usage',
       phase: 'completed',
       title: 'Claude usage',
-      summary: usageSummary(result.usage),
-      usage: this.#timedUsage(active, result.usage),
+      summary: usageSummary(usage),
+      usage: this.#timedUsage(active, usage),
     })
     active.output.push({ type: 'usage', usage: this.#reportedUsage(active, result) })
+  }
+
+  /** What each session has spent across every process it has used. */
+  readonly #sessionCostTotals = new Map<string, number>()
+
+  /** Add what this process spent since its last reading to the session total.
+   *
+   *  The reading is tracked per process rather than inferred from a drop in the
+   *  counter, so a new process whose first turn costs more than the previous
+   *  process's whole run is still counted in full. The first reading after this
+   *  supervisor starts continues from the last total the sidecar recorded, so a
+   *  Host restart does not reset the session either. */
+  async #sessionCost(entry: SupervisorEntry, reported: number | undefined): Promise<number | undefined> {
+    if (reported === undefined) return undefined
+    const sessionId = entry.sessionId
+    let total = this.#sessionCostTotals.get(sessionId)
+    if (total === undefined) total = await this.#persistedSessionCost(sessionId)
+    total += Math.max(0, reported - entry.costReading)
+    entry.costReading = reported
+    this.#sessionCostTotals.set(sessionId, total)
+    return total
+  }
+
+  async #persistedSessionCost(sessionId: string): Promise<number> {
+    try {
+      const { activities } = await this.#sidecar.read(sessionId)
+      for (let index = activities.length - 1; index >= 0; index -= 1) {
+        const cost = activities[index]!.usage?.cumulativeCostUsd
+        if (activities[index]!.kind === 'usage' && typeof cost === 'number' && Number.isFinite(cost)) return cost
+      }
+    } catch {
+      // An unreadable projection starts the count at this process.
+    }
+    return 0
   }
 
   async #completeTurn(
@@ -1647,7 +1692,7 @@ export class ClaudeSupervisor {
       })
     }
     if (!result.success) {
-      await this.#recordTurnUsage(active, result)
+      await this.#recordTurnUsage(entry, active, result)
       if (!active.sawTextDelta && active.text.length === 0 && result.text !== undefined) {
         active.text = result.text
         active.transcriptText = result.text
@@ -1684,7 +1729,7 @@ export class ClaudeSupervisor {
         await this.#completeProgressSegment(active, result)
         return
       }
-      await this.#recordTurnUsage(active, result)
+      await this.#recordTurnUsage(entry, active, result)
       await this.#appendSafely(active, {
         kind: 'status',
         phase: 'completed',
