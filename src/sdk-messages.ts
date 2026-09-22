@@ -394,6 +394,15 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
         return text === undefined ? [] : [{ kind: 'thinking', text, phase: 'updated', ...(parentToolUseId === undefined ? {} : { parentToolUseId }) }]
       }
     }
+    if (event?.type === 'message_delta') {
+      // The one place a single request's own usage survives. The assistant
+      // message the CLI also emits for the same request carries zeros -- it is
+      // the placeholder Claude Code forwards -- and the result reports the
+      // turn's SUM over every request, which is not a size the Host can divide
+      // by a context window. This frame is that request's prompt exactly.
+      const usage = usageOf(record(event.usage))
+      return hasUsageCounts(usage) ? [{ kind: 'request-usage', usage, ...(parentToolUseId === undefined ? {} : { parentToolUseId }) }] : []
+    }
     return []
   }
   if (value.type === 'assistant') return normalizeAssistant(value)

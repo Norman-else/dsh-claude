@@ -101,6 +101,35 @@ describe('Claude SDK message normalization', () => {
     }])
   })
 
+  it("reads a request's own prompt size from the partial stream's message_delta", () => {
+    // The assistant message on this CLI carries placeholder zeros; the
+    // message_delta frame is where one request's real usage survives.
+    expect(normalizeSdkMessage(sdk({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { input_tokens: 5, output_tokens: 40, cache_read_input_tokens: 180_000, cache_creation_input_tokens: 1_200 },
+      },
+    }))).toEqual([{
+      kind: 'request-usage',
+      usage: { inputTokens: 5, outputTokens: 40, cacheReadTokens: 180_000, cacheCreationTokens: 1_200 },
+    }])
+  })
+
+  it('tags a subagent message_delta and ignores one without usage', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'stream_event',
+      parent_tool_use_id: 'task-1',
+      event: { type: 'message_delta', usage: { input_tokens: 3, output_tokens: 1 } },
+    }))).toEqual([{ kind: 'request-usage', usage: { inputTokens: 3, outputTokens: 1 }, parentToolUseId: 'task-1' }])
+    expect(normalizeSdkMessage(sdk({
+      type: 'stream_event',
+      event: { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    }))).toEqual([])
+  })
+
   it('reports no prompt sample when an assistant message carries no usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'assistant',

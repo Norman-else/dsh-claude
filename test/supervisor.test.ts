@@ -541,6 +541,43 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('keeps the real message_delta sample when a placeholder zero follows it', async () => {
+    // Claude Code forwards zero usage on the assistant message and the real
+    // per-request numbers on the partial stream's message_delta. Whichever
+    // arrives last, a zero must never replace the real prompt sample.
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'message_delta', usage: { input_tokens: 4, output_tokens: 12, cache_read_input_tokens: 250_000, cache_creation_input_tokens: 300 } },
+    } as unknown as SDKMessage)
+    query.push({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [], usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    } as SDKMessage)
+    query.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'claude-session-1',
+      result: 'hello',
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 4, output_tokens: 12, cache_read_input_tokens: 250_000, cache_creation_input_tokens: 300 },
+    } as SDKMessage)
+
+    const events = await collect(output)
+    expect(events).toContainEqual({
+      type: 'usage',
+      usage: { inputTokens: 4, outputTokens: 12, cacheReadTokens: 250_000, cacheCreationTokens: 300 },
+    })
+    await runtime.dispose()
+  })
+
   it('reports the newest call prompt-side and the whole turn output', async () => {
     // DSH divides the PROMPT side by the context window. The result usage sums
     // every call in the turn — here two calls that each re-read the same

@@ -1282,11 +1282,20 @@ export class ClaudeSupervisor {
           isError: message.phase === 'failed',
         })
         return
-      case 'request-usage':
+      case 'request-usage': {
         // A subagent call bills against its own context, so it never stands in
         // for the main conversation's size.
-        if (message.parentToolUseId === undefined) active.requestUsage = message.usage
+        if (message.parentToolUseId !== undefined) return
+        // A sample with no prompt is not a measurement: the CLI forwards
+        // placeholder usage on assistant messages, and letting one land here
+        // would replace the last real request with a zero. The newest real
+        // sample is the prompt the Host divides by the window.
+        const prompt = (message.usage.inputTokens ?? 0)
+          + (message.usage.cacheReadTokens ?? 0)
+          + (message.usage.cacheCreationTokens ?? 0)
+        if (prompt > 0) active.requestUsage = message.usage
         return
+      }
       case 'compaction':
         // Close the open prose span first: compaction sits *between* what was
         // said before and after it, never inside one text segment.
