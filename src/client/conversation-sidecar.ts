@@ -27,11 +27,19 @@ export interface ClaudeTranscriptDiff {
   newText: string
 }
 
+/** One question Claude asked through AskUserQuestion, with what was chosen. */
+export interface ClaudeQuestionAnswer {
+  readonly question: string
+  readonly answer: string
+}
+
 export interface ClaudeTranscriptTool {
   toolUseId: string
   toolName: string
   description: string
   summary?: string
+  /** For AskUserQuestion: the answers given, in the order Claude asked. */
+  answers?: readonly ClaudeQuestionAnswer[]
   input?: string
   output?: string
   phase?: ClaudeActivityPhase
@@ -235,6 +243,49 @@ function inputRecord(detail: string | undefined): Record<string, unknown> | unde
   }
 }
 
+const ASK_USER_QUESTION = 'AskUserQuestion'
+
+/** Question and answer pairs from a record's `answers` map.
+ *
+ *  Both sources share the shape: the bridge's completed question row stores
+ *  `{ answers }`, and Claude's own AskUserQuestion result echoes its input
+ *  with `answers` filled in. The map is keyed by the question text. */
+function questionAnswers(detail: string | undefined): readonly ClaudeQuestionAnswer[] | undefined {
+  const answers = inputRecord(detail)?.answers
+  if (answers === null || typeof answers !== 'object' || Array.isArray(answers)) return undefined
+  const pairs = Object.entries(answers as Record<string, unknown>)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+    .map(([question, answer]) => ({ question, answer }))
+  return pairs.length === 0 ? undefined : pairs
+}
+
+/** Answers the question bridge recorded, by the tool call they belong to.
+ *
+ *  The bridge's row is the reliable copy: Claude's tool result carries the
+ *  same answers only at the end of a bounded blob, which a long question can
+ *  push past the cut. */
+function answeredQuestions(activities: readonly ClaudeActivityEvent[]): ReadonlyMap<string, readonly ClaudeQuestionAnswer[]> {
+  const answered = new Map<string, readonly ClaudeQuestionAnswer[]>()
+  for (const activity of activities) {
+    if (activity.kind !== 'question' || activity.phase !== 'completed' || activity.toolUseId === undefined) continue
+    const pairs = questionAnswers(activity.detail)
+    if (pairs !== undefined) answered.set(activity.toolUseId, pairs)
+  }
+  return answered
+}
+
+/** The answers a finished AskUserQuestion card shows: the bridge's copy first,
+ *  then the one inside Claude's own result, for sessions recorded before the
+ *  bridge kept it. A failed or cancelled call shows none. */
+function cardAnswers(
+  previous: ClaudeTranscriptTool,
+  resultDetail: string | undefined,
+  failed: boolean,
+): readonly ClaudeQuestionAnswer[] | undefined {
+  if (previous.toolName !== ASK_USER_QUESTION || failed) return undefined
+  return previous.answers ?? questionAnswers(resultDetail)
+}
+
 function inputString(input: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = input?.[key]
   return typeof value === 'string' && value.length > 0 ? value : undefined
@@ -283,7 +334,20 @@ function editDiffs(toolName: string, input: Record<string, unknown> | undefined)
   return undefined
 }
 
-function toolDescription(toolName: string, input: Record<string, unknown> | undefined, failed = false): string {
+function askedQuestions(input: Record<string, unknown> | undefined): readonly string[] {
+  const questions = input?.questions
+  if (!Array.isArray(questions)) return []
+  return questions
+    .map(item => (item !== null && typeof item === 'object' ? (item as Record<string, unknown>).question : undefined))
+    .filter((question): question is string => typeof question === 'string' && question.length > 0)
+}
+
+function toolDescription(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  failed = false,
+  answers?: readonly ClaudeQuestionAnswer[],
+): string {
   const path = inputString(input, 'file_path') ?? inputString(input, 'path')
   const pattern = inputString(input, 'pattern') ?? inputString(input, 'query')
   const description = inputString(input, 'description')
@@ -333,6 +397,18 @@ function toolDescription(toolName: string, input: Record<string, unknown> | unde
       completed = 'Proposed a plan'
       failedAction = 'propose a plan'
       break
+    case ASK_USER_QUESTION: {
+      // The row a reader scans should say what was decided, not the tool name
+      // twice: one answered question reads as the question and its answer.
+      const asked = askedQuestions(input)
+      const single = answers?.length === 1 ? answers[0] : undefined
+      if (single !== undefined) completed = `${single.question} · ${single.answer}`
+      else if (answers !== undefined) completed = `Answered ${answers.length} questions`
+      else if (asked.length === 1) completed = asked[0]!
+      else completed = asked.length > 1 ? `Asked ${asked.length} questions` : 'Asked a question'
+      failedAction = 'ask a question'
+      break
+    }
     default:
       completed = description ?? `${toolName}${target === undefined ? '' : ` ${target}`}`
       failedAction = completed.charAt(0).toLowerCase() + completed.slice(1)
@@ -369,6 +445,7 @@ export function taskTools(
   const parent = taskParentToolUseId(activities, taskId)
   if (parent === undefined) return []
   const tools = new Map<string, ClaudeTranscriptTool>()
+  const answered = answeredQuestions(activities)
   const ordered = [...activities].sort((left, right) => left.ordinal - right.ordinal)
   for (const activity of ordered) {
     const own = activity.parentToolUseId === parent
@@ -382,10 +459,12 @@ export function taskTools(
     if (previous === undefined) {
       if (activity.toolName === undefined) continue
       const input = inputRecord(activity.detail)
+      const recorded = activity.toolName === ASK_USER_QUESTION ? answered.get(toolUseId) : undefined
       tools.set(toolUseId, {
         toolUseId,
         toolName: activity.toolName,
-        description: toolDescription(activity.toolName, input),
+        description: toolDescription(activity.toolName, input, false, recorded),
+        ...(recorded === undefined ? {} : { answers: recorded }),
         ...(activity.summary === undefined ? {} : { summary: activity.summary }),
         ...(activity.detail === undefined ? {} : { input: activity.detail }),
         ...(activity.phase === undefined ? {} : { phase: activity.phase }),
@@ -395,9 +474,11 @@ export function taskTools(
       continue
     }
     const failed = activity.isError === true || activity.phase === 'failed'
+    const answers = cardAnswers(previous, activity.detail, failed)
     tools.set(toolUseId, {
       ...previous,
-      description: toolDescription(previous.toolName, inputRecord(previous.input), failed),
+      description: toolDescription(previous.toolName, inputRecord(previous.input), failed, answers),
+      ...(answers === undefined ? {} : { answers }),
       ...(activity.detail === undefined ? {} : { output: activity.detail }),
       ...(activity.phase === undefined ? {} : { phase: activity.phase }),
       ...(activity.isError === undefined ? {} : { isError: activity.isError }),
@@ -460,6 +541,7 @@ export function transcriptItemsForStep(
       && isProjectedTaskActivity(activity, tasks))
     .slice()
     .sort((left, right) => left.ordinal - right.ordinal)
+  const answered = answeredQuestions(activities.filter(activity => activity.turn === turn && activity.step === step))
   // Fold the whole step at once. Folding per activity would give every task
   // progress ping its own private row, so a single subagent would paint one
   // permanently-running line per tool it happened to use.
@@ -515,10 +597,12 @@ export function transcriptItemsForStep(
       group ??= { ordinal: activity.ordinal, tools: [], byId: new Map(), trailingActivities: [] }
       group.byId.set(activity.toolUseId, group.tools.length)
       const input = inputRecord(activity.detail)
+      const recorded = activity.toolName === ASK_USER_QUESTION ? answered.get(activity.toolUseId) : undefined
       group.tools.push({
         toolUseId: activity.toolUseId,
         toolName: activity.toolName,
-        description: toolDescription(activity.toolName, input),
+        description: toolDescription(activity.toolName, input, false, recorded),
+        ...(recorded === undefined ? {} : { answers: recorded }),
         ...(activity.summary === undefined ? {} : { summary: activity.summary }),
         ...(activity.detail === undefined ? {} : { input: activity.detail }),
         ...(activity.phase === undefined ? {} : { phase: activity.phase }),
@@ -535,9 +619,11 @@ export function transcriptItemsForStep(
         const diffs = failed ? undefined : editDiffs(previous.toolName, inputRecord(previous.input))
         const additions = diffs?.reduce((total, diff) => total + lineCount(diff.newText), 0)
         const deletions = diffs?.reduce((total, diff) => total + (diff.oldText === null ? 0 : lineCount(diff.oldText)), 0)
+        const answers = activity.kind === 'permission' ? undefined : cardAnswers(previous, activity.detail, failed)
         group.tools[index] = {
           ...previous,
-          description: toolDescription(previous.toolName, inputRecord(previous.input), failed),
+          description: toolDescription(previous.toolName, inputRecord(previous.input), failed, answers),
+          ...(answers === undefined ? {} : { answers }),
           ...(activity.detail === undefined ? {} : { output: activity.detail }),
           ...(activity.phase === undefined ? {} : { phase: activity.phase }),
           ...(activity.isError === undefined ? {} : { isError: activity.isError }),

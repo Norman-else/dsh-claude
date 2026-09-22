@@ -116,10 +116,11 @@ export function createUserQuestionBridge(
         answerText(answersById.get(question.id), question.multiSelect === true),
       ]))
       // The row has to carry the answer, not just the fact that one was given.
-      // Nothing else records it: a question asked through the permission bridge
-      // is not a DSH tool call, so the transcript holds no call/result pair for
-      // it, and the answer would otherwise exist only inside Claude's own tool
-      // result — invisible to the reader who gave it.
+      // Claude's own tool result echoes it too, but inside a bounded JSON blob
+      // whose `answers` sit after every option description, so a long question
+      // can push them past the cut. This row is the reliable copy: the summary
+      // reads on its own, and `detail.answers` is what the transcript's
+      // AskUserQuestion card pairs with its call by tool use id.
       const chosen = questions
         .map(question => answerText(answersById.get(question.id), question.multiSelect === true))
         .filter(text => text.length > 0)
@@ -132,6 +133,7 @@ export function createUserQuestionBridge(
         summary: chosen.length === 0
           ? 'Answered in DeepSeek Harness'
           : `Answered in DeepSeek Harness · ${chosen.join(' / ')}`,
+        detail: { answers },
       })
       return {
         behavior: 'allow',

@@ -281,6 +281,18 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
   const output = record(outputValue)
   const outputTitle = tool.isError === true ? t('toolError') : t('toolOutput')
 
+  if (tool.toolName === 'AskUserQuestion' && tool.answers !== undefined && tool.answers.length > 0) {
+    // Question text is the key as written: no underscore rewriting.
+    return <Section title={t('toolAnswers')}>
+      <div className="dsh-claude-tool-fields">{tool.answers.map((pair, index) => (
+        <div key={`${index}:${pair.question}`} style={{ display: 'contents' }}>
+          <span className="dsh-claude-tool-field-key">{pair.question}</span>
+          <span className="dsh-claude-tool-field-value">{pair.answer}</span>
+        </div>
+      ))}</div>
+    </Section>
+  }
+
   if (tool.diffs !== undefined) {
     return <><DiffBlock diffs={[...tool.diffs]} labels={diffBlockLabels(t)} /><TextDetail title={outputTitle} value={typeof outputValue === 'string' ? outputValue : undefined} /></>
   }

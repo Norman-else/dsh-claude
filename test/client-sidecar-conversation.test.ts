@@ -509,6 +509,84 @@ describe('Claude sidecar conversation projection', () => {
     expect(markup).toContain('Grep')
   })
 
+  describe('AskUserQuestion cards', () => {
+    const askInput = (questions: readonly string[]) => JSON.stringify({
+      questions: questions.map(question => ({ question, header: 'Pick', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] })),
+    })
+    const askCall = (questions: readonly string[]): ClaudeActivityEvent => ({
+      turn: 3, step: 1, ordinal: 1, kind: 'tool-call', phase: 'started',
+      toolUseId: 'ask-1', toolName: 'AskUserQuestion', title: 'AskUserQuestion', detail: askInput(questions),
+    })
+    const askTools = (activities: readonly ClaudeActivityEvent[]) => transcriptItemsForStep(activities, 3, 1, [])
+      .flatMap(item => item.kind === 'tools' ? item.tools : [])
+
+    it('names the answer on the card from the row the question bridge recorded', () => {
+      // The bridge's row is the reliable copy: Claude's own result can be cut
+      // before its answers when the options are long.
+      const [tool] = askTools([
+        askCall(['Which database?']),
+        {
+          turn: 3, step: 1, ordinal: 2, kind: 'question', phase: 'completed', toolUseId: 'ask-1',
+          toolName: 'AskUserQuestion', title: 'Claude asked a question',
+          summary: 'Answered in DeepSeek Harness · PostgreSQL',
+          detail: JSON.stringify({ answers: { 'Which database?': 'PostgreSQL' } }),
+        },
+        {
+          turn: 3, step: 1, ordinal: 3, kind: 'tool-result', phase: 'completed', toolUseId: 'ask-1',
+          detail: '{"questions":[{"question":"Which database?","options":[{"label":"A","description":"a very long… [truncated]',
+        },
+      ])
+      expect(tool?.answers).toEqual([{ question: 'Which database?', answer: 'PostgreSQL' }])
+      expect(tool?.description).toBe('Which database? · PostgreSQL')
+    })
+
+    it('falls back to the answers inside Claude’s own result for older sessions', () => {
+      const [tool] = askTools([
+        askCall(['First?', 'Second?']),
+        {
+          turn: 3, step: 1, ordinal: 3, kind: 'tool-result', phase: 'completed', toolUseId: 'ask-1',
+          detail: JSON.stringify({ questions: [], answers: { 'First?': 'Yes', 'Second?': 'Tests, Docs' } }),
+        },
+      ])
+      expect(tool?.answers).toEqual([
+        { question: 'First?', answer: 'Yes' },
+        { question: 'Second?', answer: 'Tests, Docs' },
+      ])
+      expect(tool?.description).toBe('Answered 2 questions')
+    })
+
+    it('says what was asked while it waits, and shows no answer for a cancelled question', () => {
+      expect(askTools([askCall(['Which database?'])])[0]?.description).toBe('Which database?')
+      expect(askTools([askCall(['One?', 'Two?'])])[0]?.description).toBe('Asked 2 questions')
+      const [cancelled] = askTools([
+        askCall(['Which database?']),
+        {
+          turn: 3, step: 1, ordinal: 3, kind: 'tool-result', phase: 'completed', toolUseId: 'ask-1', isError: true,
+          detail: 'Error: DeepSeek Harness could not collect an answer; the question was cancelled.',
+        },
+      ])
+      expect(cancelled?.answers).toBeUndefined()
+      expect(cancelled?.description).toBe('Failed to ask a question')
+    })
+
+    it('renders the answers as question and answer pairs instead of protocol JSON', () => {
+      const markup = renderToStaticMarkup(createElement(ClaudeTranscriptToolItem, {
+        tool: {
+          toolUseId: 'ask-1', toolName: 'AskUserQuestion', description: 'Answered 2 questions', subcalls: [],
+          input: askInput(['use_snake_case?', 'Second?']),
+          output: JSON.stringify({ answers: { 'use_snake_case?': 'Yes', 'Second?': 'No' } }),
+          answers: [{ question: 'use_snake_case?', answer: 'Yes' }, { question: 'Second?', answer: 'No' }],
+        },
+        t: ((key: string) => key) as never,
+      }))
+      expect(markup).toContain('toolAnswers')
+      // The question is shown as written, underscores included.
+      expect(markup).toContain('use_snake_case?')
+      expect(markup).toContain('>Yes<')
+      expect(markup).not.toContain('&quot;answers&quot;')
+    })
+  })
+
   it('renders semantic Read, search, terminal, diff, and unknown tool details without protocol JSON walls', () => {
     const render = (tool: Parameters<typeof ClaudeTranscriptToolItem>[0]['tool']) => renderToStaticMarkup(createElement(ClaudeTranscriptToolItem, {
       tool,

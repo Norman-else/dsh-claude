@@ -98,13 +98,19 @@ describe('Claude AskUserQuestion bridge', () => {
       phase: 'completed',
       toolUseId: 'tool-1',
     }))
-    // The completed row names what was chosen. Nothing else records it: a
-    // question asked through the permission bridge is not a DSH tool call, so
-    // there is no call/result pair in the transcript to carry the answer.
+    // The completed row names what was chosen, and keeps the answers keyed by
+    // question text so the transcript's AskUserQuestion card can pair them with
+    // its call by tool use id.
     expect(active.appendActivity.mock.calls.at(-1)?.[0]).toMatchObject({
       summary: 'Answered in DeepSeek Harness · PostgreSQL / Tests, Docs, Benchmarks / Use Beijing time',
+      detail: {
+        answers: {
+          'Which database?': 'PostgreSQL',
+          'Which deliverables?': 'Tests, Docs, Benchmarks',
+          'Any constraints?': 'Use Beijing time',
+        },
+      },
     })
-    expect(active.appendActivity.mock.calls.at(-1)?.[0]).not.toHaveProperty('detail')
   })
 
   it('fails closed and exposes only a stable native error code', async () => {
