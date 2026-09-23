@@ -56,8 +56,10 @@ describe('touched file paths', () => {
       "cd /Users/n/infra && git worktree remove /tmp/x\ncd services/a\nsed -i '' s/x/y/ a.ts",
       'cd /Users/n/infra && git worktree remove /tmp/x\ngh api -X POST x -f body="an early `<order> has` is acked; git commit later"',
       "cd /Users/n/infra && git worktree list\ncat >> $F <<'EOF'\n- merge -> tag > bump; rm old\nEOF",
+      // An in-place edit of a relative file does not reach the next line's path.
+      "cd /tmp/m && sed -i '' 's|a → b|c|' f.md && grep -c x f.md\ncd /Users/n/infra && git fetch -q; grep x a.md; cd /Users/n/other",
     ].map(command => call('Bash', { command }))
-    expect(touchedFilePaths(read)).toEqual(['/tmp/w'])
+    expect(touchedFilePaths(read)).toEqual(['/tmp/w', '/tmp/m'])
     expect(touchedFilePaths([
       call('Bash', { command: 'cd /Users/n/infra && git commit -am x' }),
       call('Bash', { command: 'cd /Users/n/b && sed -i "" s/x/y/ a.ts' }),

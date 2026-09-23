@@ -46,9 +46,11 @@ const WRITE_CONTEXTS: readonly RegExp[] = [
   new RegExp(String.raw`\btee\s+(?:-\S+\s+)*(${PATH_TOKEN})`, 'gu'),
   new RegExp(String.raw`\bmkdir\s+(?:-\S+\s+)*(${PATH_TOKEN})`, 'gu'),
   // Lazy over the arguments, so the first absolute path is the file, not
-  // whatever path a later command on the same line happens to end with.
-  new RegExp(String.raw`\bsed\s+-i\S*\s+(?:(?:'[^']*'|"[^"]*"|\S+)\s+)+?(${PATH_TOKEN})`, 'gu'),
-  new RegExp(String.raw`\b(?:cp|mv|install)\s+(?:\S+\s+)+?(${PATH_TOKEN})`, 'gu'),
+  // whatever path a later command on the same line happens to end with; and
+  // not past the command's end, or `sed -i … a.md` would take the next
+  // line's `cd /elsewhere` for its file.
+  new RegExp(String.raw`\bsed[ \t]+-i[^\s;&|]*[ \t]+(?:(?:'[^'\n]*'|"[^"\n]*"|[^\s;&|]+)[ \t]+)+?(${PATH_TOKEN})`, 'gu'),
+  new RegExp(String.raw`\b(?:cp|mv|install)[ \t]+(?:[^\s;&|]+[ \t]+)+?(${PATH_TOKEN})`, 'gu'),
   // A Python heredoc opening a file for writing.
   new RegExp(String.raw`\bopen\(\s*['"](${PATH_TOKEN})['"]\s*,\s*['"][wa]`, 'gu'),
 ]
