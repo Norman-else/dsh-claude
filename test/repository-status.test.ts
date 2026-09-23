@@ -457,6 +457,11 @@ describe('pull request lookup by number', () => {
     expect(fake.spawn).toHaveBeenCalledTimes(2)
     expect(fake.spawn.mock.calls[0]?.[0]).toMatchObject({ cwd: '/session', argv: ['/bin/gh', 'pr', 'view', '2086', '--repo', 'org/repo-b', '--json', expect.stringContaining('changedFiles')] })
     expect(fake.spawn.mock.calls[1]?.[0]).toMatchObject({ cwd: '/session', argv: ['/bin/gh', 'pr', 'diff', '2086', '--repo', 'org/repo-b'] })
+    // A merge through a clone invalidates that clone, and the pull request read
+    // by number has to be asked again rather than wait out its minute.
+    service.invalidate('/clone')
+    await service.inspectPullRequest('/session', 'org/repo-b', 2086)
+    expect(fake.spawn).toHaveBeenCalledTimes(3)
   })
 
   it('keeps the counts and marks the diff truncated when gh cannot produce the patch', async () => {

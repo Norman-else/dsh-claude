@@ -436,6 +436,9 @@ export class RepositoryStatusService {
   invalidate(cwd: string): void {
     this.#cache.delete(cwd)
     this.#lastReady.delete(cwd)
+    // An action through a clone can be on a pull request read by number (a
+    // linked merge); which one is not recorded, and there are only a handful.
+    for (const key of this.#cache.keys()) if (key.startsWith('gh:')) this.#cache.delete(key)
   }
 
   /** The repository holding `directory`, or undefined outside any. A root
