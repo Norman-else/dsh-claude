@@ -28,10 +28,15 @@ const GO_CONTEXTS: readonly RegExp[] = [
   new RegExp(String.raw`(?:^|[;&|(]\s*)(?:cd|pushd)\s+(${PATH_TOKEN})`, 'gmu'),
   new RegExp(String.raw`\bgit\s+-C\s+(${PATH_TOKEN})`, 'gu'),
 ]
-/** Anything in a command that writes, relative paths included: a redirect
- *  not into /dev or another descriptor, an in-place edit, a file operation,
+/** Anything in a command that writes where it stands: a redirect to a
+ *  relative file, an in-place edit, a file operation,
  *  a git command that moves the checkout or its history. */
-const MUTATES = /(?<![\d&=-])>{1,2}(?!&)\s*(?!\/dev\/)|\btee\s|\bsed\s+-i|\bperl\s+-\S*i|\b(?:mkdir|touch|rm|cp|mv|install|patch)\s|\bopen\([^)]*['"][wa]['"]|\bgit\s+(?:-C\s+\S+\s+)?(?:add|am|apply|checkout|cherry-pick|commit|merge|mv|pull|push|rebase|reset|restore|revert|rm|stash|switch|tag)\b|\bgh\s+pr\s+create\b/u
+const MUTATES = /(?<![\d&=-])>{1,2}[ \t]*(?=[\w.])|\btee\s|\bsed\s+-i|\bperl\s+-\S*i|\b(?:mkdir|touch|rm|cp|mv|install|patch)\s|\bopen\([^)]*['"][wa]['"]|\bgit\s+(?:-C\s+\S+\s+)?(?:add|am|apply|checkout|cherry-pick|commit|merge|mv|pull|push|rebase|reset|restore|revert|rm|stash|switch|tag)\b|\bgh\s+pr\s+create\b/u
+/** Where a stretch of the command ends: any change of directory, relative too. */
+const LEAVES = /(?:^|[;&|(]\s*)(?:cd|pushd|popd)\b/gmu
+/** Double-quoted text and heredoc bodies are arguments (a PR body, a note,
+ *  a grep pattern), not shell. */
+const QUOTED = /"(?:[^"\\]|\\.)*"|<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\1(?=\n|$)/gu
 /** Where a command goes to work or writes: the shell forms Claude actually
  *  uses under full access. Reading a path (grep, cat, ls) is not touching it. */
 const WRITE_CONTEXTS: readonly RegExp[] = [
@@ -79,12 +84,17 @@ export function touchedFilePaths(activities: readonly ClaudeActivityEvent[]): re
       const escaped = COMMAND_KEY.exec(activity.detail)?.[1]
       const command = escaped === undefined ? undefined : unescaped(escaped)
       if (command === undefined) continue
+      // Same length, so the offsets below still line up with the command.
+      const shell = command.replace(QUOTED, text => ' '.repeat(text.length))
       const found: { index: number; path: string }[] = []
       const pathOf = (match: RegExpMatchArray) => ({ index: (match.index ?? 0) + match[0].length - (match[1]?.length ?? 0), path: match[1] ?? '' })
       const gone = GO_CONTEXTS.flatMap(context => [...command.matchAll(context)].map(pathOf)).sort((left, right) => left.index - right.index)
-      gone.forEach((go, at) => {
-        if (MUTATES.test(command.slice(go.index + go.path.length, gone[at + 1]?.index))) found.push(go)
-      })
+      const leaves = [...shell.matchAll(LEAVES)].map(match => match.index + match[0].length)
+      for (const go of gone) {
+        const from = go.index + go.path.length
+        const stretch = shell.slice(from, leaves.find(index => index > from))
+        if (MUTATES.test(stretch)) found.push(go)
+      }
       for (const context of WRITE_CONTEXTS) {
         for (const match of command.matchAll(context)) {
           const written = pathOf(match)

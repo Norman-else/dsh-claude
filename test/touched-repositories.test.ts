@@ -52,6 +52,10 @@ describe('touched file paths', () => {
       'git -C /Users/n/other log -1 2>/dev/null >&2',
       // Work done in a worktree of the checkout, not in the checkout itself.
       'cd /Users/n/infra && git fetch -q origin && git worktree add -q /tmp/w T-1 2>&1 | tail -1; cd /tmp/w && git commit -qam x && git push -q; cd /Users/n/infra && git worktree remove /tmp/w',
+      // What follows a relative cd, a quoted argument or a heredoc body is not written there.
+      "cd /Users/n/infra && git worktree remove /tmp/x\ncd services/a\nsed -i '' s/x/y/ a.ts",
+      'cd /Users/n/infra && git worktree remove /tmp/x\ngh api -X POST x -f body="an early `<order> has` is acked; git commit later"',
+      "cd /Users/n/infra && git worktree list\ncat >> $F <<'EOF'\n- merge -> tag > bump; rm old\nEOF",
     ].map(command => call('Bash', { command }))
     expect(touchedFilePaths(read)).toEqual(['/tmp/w'])
     expect(touchedFilePaths([
