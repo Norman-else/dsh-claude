@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClaudeActivityEvent } from '../src/events.ts'
-import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from '../src/touched-repositories.ts'
+import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots, visitedPaths } from '../src/touched-repositories.ts'
 
 function call(toolName: string, input: unknown, kind: ClaudeActivityEvent['kind'] = 'tool-call'): ClaudeActivityEvent {
   return { turn: 1, step: 1, ordinal: 1, kind, toolName, detail: JSON.stringify(input) }
@@ -63,6 +63,13 @@ describe('touched file paths', () => {
       call('Bash', { command: 'cd /Users/n/b && sed -i "" s/x/y/ a.ts' }),
       call('Bash', { command: 'cd /Users/n/c && echo x > a.ts' }),
     ])).toEqual(['/Users/n/infra', '/Users/n/b', '/Users/n/c'])
+  })
+
+  it('still knows where a checkout only read lives, for finding a clone to act through', () => {
+    expect(visitedPaths([
+      call('Bash', { command: 'cd /Users/n/infra && git grep x; git -C /Users/n/other log -1' }),
+      call('Edit', { file_path: '/Users/n/edited.ts', old_string: '', new_string: '' }),
+    ])).toEqual(['/Users/n/infra', '/Users/n/other'])
   })
 
   it('survives a detail cut short by the redaction cap and unescapes JSON', () => {

@@ -109,6 +109,23 @@ export function touchedFilePaths(activities: readonly ClaudeActivityEvent[]): re
   return [...paths]
 }
 
+/** Every absolute path a Bash command changed into, written there or not.
+ *  Not a linked checkout on its own, but where the user's clones live: a
+ *  pull request whose worktree is gone is still mergeable through one. */
+export function visitedPaths(activities: readonly ClaudeActivityEvent[]): readonly string[] {
+  const paths = new Set<string>()
+  for (const activity of activities) {
+    if ((activity.kind !== 'tool-call' && activity.kind !== 'subagent') || activity.toolName !== 'Bash' || activity.detail === undefined) continue
+    const escaped = COMMAND_KEY.exec(activity.detail)?.[1]
+    const command = escaped === undefined ? undefined : unescaped(escaped)
+    if (command === undefined) continue
+    for (const context of GO_CONTEXTS) {
+      for (const match of command.matchAll(context)) if (match[1] !== undefined) paths.add(match[1])
+    }
+  }
+  return [...paths]
+}
+
 export interface TouchedPullRequest {
   /** `owner/name` */
   readonly repository: string

@@ -44,7 +44,7 @@ import { registerClaudePermissionModeRoute } from './permission-mode-routes.ts'
 import { claudePermissionMode, type ClaudePermissionModeView, type ClaudePermissionSelector } from './permission-mode.ts'
 import { alignSessionWithDefault, applyHostPreset, type HostPermissionPresetService, type HostPresetAccess } from './permission-mode-host.ts'
 import { restoreWorktreeTree } from './worktree-snapshot.ts'
-import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots } from './touched-repositories.ts'
+import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRepositoryRoots, visitedPaths } from './touched-repositories.ts'
 import { SessionRootLedger } from './session-root-ledger.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
@@ -546,12 +546,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       // log named but whose clone no command named by its full path is looked
       // for under those parents by its repository name.
       const parents = [...new Set([own ?? cwd, ...probed.flatMap(status => (status.root === undefined ? [] : [status.root]))].map(root => dirname(root)))]
+      const visited = pullRequests.length === 0 ? [] : visitedPaths(activities)
       const cloneFor = async (item: { repository: string }): Promise<string | undefined> => {
         const named = probed.find(status => status.status === 'ready' && status.remote?.toLowerCase() === item.repository && status.root !== undefined)
         if (named?.root !== undefined) return named.root
         const name = item.repository.split('/').at(-1) ?? ''
-        for (const parent of parents) {
-          const root = await repositoryStatus.rootOf(join(parent, name))
+        // A checkout the session went into, even only to read it, first.
+        // ponytail: only paths naming the repository, so a long log costs no probes.
+        const went = visited.filter(path => path.toLowerCase().includes(name.toLowerCase()))
+        for (const candidate of [...went, ...parents.map(parent => join(parent, name))]) {
+          const root = await repositoryStatus.rootOf(candidate)
           if (root === undefined) continue
           const status = await repositoryStatus.inspect(root)
           if (status.status === 'ready' && status.remote?.toLowerCase() === item.repository) return root
