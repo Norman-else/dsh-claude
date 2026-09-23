@@ -45,6 +45,20 @@ describe('touched file paths', () => {
     ])
   })
 
+  it('does not count going into a checkout only to read it', () => {
+    const read = [
+      'cd /Users/n/infra; git log --oneline -1; git status -sb | head -2; ls',
+      'cd /Users/n/infra && git fetch -q origin && B=$(git rev-parse --verify -q origin/master >/dev/null && echo x); git grep -n "a->b" $B 2>&1 | head',
+      'git -C /Users/n/other log -1 2>/dev/null >&2',
+    ].map(command => call('Bash', { command }))
+    expect(touchedFilePaths(read)).toEqual([])
+    expect(touchedFilePaths([
+      call('Bash', { command: 'cd /Users/n/infra && git commit -am x' }),
+      call('Bash', { command: 'cd /Users/n/b && sed -i "" s/x/y/ a.ts' }),
+      call('Bash', { command: 'cd /Users/n/c && echo x > a.ts' }),
+    ])).toEqual(['/Users/n/infra', '/Users/n/b', '/Users/n/c'])
+  })
+
   it('survives a detail cut short by the redaction cap and unescapes JSON', () => {
     const cut = JSON.stringify({ file_path: '/repo/"quoted"/x.ts', content: 'a'.repeat(5_000) }).slice(0, 4_000)
     expect(touchedFilePaths([{ turn: 1, step: 1, ordinal: 1, kind: 'tool-call', toolName: 'Write', detail: cut }])).toEqual(['/repo/"quoted"/x.ts'])

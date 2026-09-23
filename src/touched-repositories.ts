@@ -22,10 +22,18 @@ const COMMAND_KEY = /"command"\s*:\s*"((?:[^"\\]|\\.)*)"/u
 const PATH_TOKEN = String.raw`\/[\w.@+~-]+(?:\/[\w.@+~-]+)*`
 /** Where a command goes to work or writes: the shell forms Claude actually
  *  uses under full access. Reading a path (grep, cat, ls) is not touching it. */
-const WRITE_CONTEXTS: readonly RegExp[] = [
-  // Going there: every relative path that follows is inside.
+/** Going there: every relative path that follows is inside. Counted only when
+ *  the command also changes something (MUTATES) -- `cd repo && git grep` is
+ *  reading, and a checkout merely read must not grow a bar. */
+const GO_CONTEXTS: readonly RegExp[] = [
   new RegExp(String.raw`(?:^|[;&|(]\s*)(?:cd|pushd)\s+(${PATH_TOKEN})`, 'gmu'),
   new RegExp(String.raw`\bgit\s+-C\s+(${PATH_TOKEN})`, 'gu'),
+]
+/** Anything in a command that writes, relative paths included: a redirect
+ *  not into /dev or another descriptor, an in-place edit, a file operation,
+ *  a git command that moves the checkout or its history. */
+const MUTATES = /(?<![\d&=-])>{1,2}(?!&)\s*(?!\/dev\/)|\btee\s|\bsed\s+-i|\bperl\s+-\S*i|\b(?:mkdir|touch|rm|cp|mv|install|patch)\s|\bopen\([^)]*['"][wa]['"]|\bgit\s+(?:-C\s+\S+\s+)?(?:add|am|apply|checkout|cherry-pick|commit|merge|mv|pull|push|rebase|reset|restore|revert|rm|stash|switch|tag|worktree\s+add)\b|\bgh\s+pr\s+create\b/u
+const WRITE_CONTEXTS: readonly RegExp[] = [
   new RegExp(String.raw`\bgit\s+worktree\s+add\s+(?:-\S+\s+)*(${PATH_TOKEN})`, 'gu'),
   // Writing there.
   new RegExp(String.raw`>{1,2}\s*(${PATH_TOKEN})`, 'gu'),
@@ -71,7 +79,7 @@ export function touchedFilePaths(activities: readonly ClaudeActivityEvent[]): re
       const command = escaped === undefined ? undefined : unescaped(escaped)
       if (command === undefined) continue
       const found: { index: number; path: string }[] = []
-      for (const context of WRITE_CONTEXTS) {
+      for (const context of MUTATES.test(command) ? [...GO_CONTEXTS, ...WRITE_CONTEXTS] : WRITE_CONTEXTS) {
         for (const match of command.matchAll(context)) {
           const path = match[1]
           if (path !== undefined && !path.startsWith('/dev/')) found.push({ index: match.index + match[0].length - path.length, path })
