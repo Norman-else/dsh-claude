@@ -557,6 +557,12 @@ ${error.stack ?? ''}`
         console.warn(`dsh-claude: could not bind the worktree lease: ${reason instanceof Error ? reason.message : String(reason)}`)
       })
     }
+    /** The mode picked on the hero was recorded on the hero's session; a
+     *  worktree session is a new one and would otherwise start on the default. */
+    const carryPermissionMode = async (sourceSessionId: SessionId, targetSessionId: SessionId): Promise<void> => {
+      const mode = projections.source(sourceSessionId).getSnapshot().permissionMode?.mode
+      if (mode !== undefined) await setClaudePermissionMode(targetSessionId, mode)
+    }
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
       name: 'conversation.input.dock',
       id: 'claude-hero-repository-controls',
@@ -599,6 +605,7 @@ ${error.stack ?? ''}`
           const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
           if (!presetResponse.ok) throw new Error(presetResponse.error.message)
           sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
+          await carryPermissionMode(sourceSessionId, targetSessionId)
           const targetInput = sessionInput(conversation, targetScope)
           onProgress('transferring-draft')
           if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
@@ -641,6 +648,7 @@ ${error.stack ?? ''}`
               const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
               if (!presetResponse.ok) throw new Error(presetResponse.error.message)
               sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
+              await carryPermissionMode(sourceSessionId, targetSessionId)
               const targetInput = sessionInput(conversation, targetScope)
               report('transferring-draft')
               targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
