@@ -50,8 +50,10 @@ describe('touched file paths', () => {
       'cd /Users/n/infra; git log --oneline -1; git status -sb | head -2; ls',
       'cd /Users/n/infra && git fetch -q origin && B=$(git rev-parse --verify -q origin/master >/dev/null && echo x); git grep -n "a->b" $B 2>&1 | head',
       'git -C /Users/n/other log -1 2>/dev/null >&2',
+      // Work done in a worktree of the checkout, not in the checkout itself.
+      'cd /Users/n/infra && git fetch -q origin && git worktree add -q /tmp/w T-1 2>&1 | tail -1; cd /tmp/w && git commit -qam x && git push -q; cd /Users/n/infra && git worktree remove /tmp/w',
     ].map(command => call('Bash', { command }))
-    expect(touchedFilePaths(read)).toEqual([])
+    expect(touchedFilePaths(read)).toEqual(['/tmp/w'])
     expect(touchedFilePaths([
       call('Bash', { command: 'cd /Users/n/infra && git commit -am x' }),
       call('Bash', { command: 'cd /Users/n/b && sed -i "" s/x/y/ a.ts' }),
