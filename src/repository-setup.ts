@@ -488,7 +488,11 @@ export class RepositorySetupService {
       root,
       GIT_FETCH_TIMEOUT_MS,
     )
-    if (fetched.exitCode !== 0 || fetched.lossy) {
+    // Two remote branches differing only in case cannot both be refs on a
+    // case-insensitive filesystem: git updates every other ref, then exits 1.
+    // That one ref is not the base being branched from, so it does not block.
+    const refClashOnly = !fetched.lossy && /unable to update local ref/u.test(fetched.stderr) && !/^fatal:/mu.test(fetched.stderr)
+    if ((fetched.exitCode !== 0 && !refClashOnly) || fetched.lossy) {
       throw new RepositorySetupError('fetch-failed', 'Git could not refresh remote references.')
     }
   }

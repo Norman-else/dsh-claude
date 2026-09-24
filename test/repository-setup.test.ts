@@ -104,6 +104,18 @@ describe('repository setup service', () => {
     ])
   })
 
+  it('refreshes past two remote branches that differ only in case, which a case-insensitive disk cannot both hold', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const fake = runtime([
+      { stdout: `${root}\n` },
+      { exitCode: 1, stderr: "error: You're on a case-insensitive filesystem, and the remote you are\n ! [new branch]  feat/x -> origin/feat/x  (unable to update local ref)\n" },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: 'origin/main \n' },
+    ])
+    await expect(new RepositorySetupService(fake, { leasePath, worktreeRoot }).refreshBranches(root)).resolves.toMatchObject({ remoteBranches: ['origin/main'] })
+  })
+
   it('fails a refresh the remote rejected instead of returning stale branches', async () => {
     const { root, leasePath, worktreeRoot } = await roots()
     const fake = runtime([
