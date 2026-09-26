@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconRightUpOutline14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRightUpOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MentionableUser, PullRequestReviewComment, PullRequestReviewThread } from './pr-feedback-api.ts'
 import { renderCommentBody } from './comment-markdown.ts'
 import { relativeAge } from './relative-age.ts'
@@ -53,7 +53,7 @@ function CommentBody({ comment, t, now, first }: {
             style={styles.diffGhCommentLink}
             aria-label={t('reviewThreadOpenOnGitHub')}
           >
-            <IconRightUpOutline14 />
+            <IconRightUpOutlineRegular size={14} />
           </a>
         </Tooltip>
       </div>

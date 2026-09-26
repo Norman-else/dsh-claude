@@ -58,7 +58,7 @@ export interface ClaudeSidecarProjection {
  *  `checkpoint` is the one kind that carries no change: it restates where the
  *  stream stands so a reader can notice it is behind. See {@link ClaudeSidecarRepository.checkpoint}. */
 export type ClaudeSidecarDelta =
-  | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string; renderer?: ClaudeRenderMode }
+  | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string; renderer?: ClaudeRenderMode; answer?: true }
   | { kind: 'activity'; activity: ClaudeActivityEvent }
   | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
   | { kind: 'tasks'; value: ClaudeTasksEvent }
@@ -344,7 +344,7 @@ export class ClaudeSidecarRepository {
    *  redacted text grows in place) and persistence is coalesced. */
   appendTranscriptText(
     sessionId: string,
-    value: { turn: number; step: number; ordinal: number; text: string; renderer?: ClaudeRenderMode },
+    value: { turn: number; step: number; ordinal: number; text: string; renderer?: ClaudeRenderMode; answer?: true },
   ): void {
     const normalized = normalizeActivity({ kind: 'text', phase: 'updated', ...value })
     const key = activityKey(normalized)
@@ -362,10 +362,12 @@ export class ClaudeSidecarRepository {
       step: normalized.step,
       ordinal: normalized.ordinal,
       ...(normalized.renderer === undefined ? {} : { renderer: normalized.renderer }),
+      ...(normalized.answer === true ? { answer: true as const } : {}),
     }
     // Redaction may rewrite earlier characters once a secret completes, so a
     // non-prefix update falls back to a full-text replacement.
-    this.#notify(sessionId, previous?.text !== undefined && text.startsWith(previous.text)
+    // Becoming the answer changes no text, so it is always sent in full.
+    this.#notify(sessionId, previous?.text !== undefined && text.startsWith(previous.text) && (normalized.answer === true) === (previous.answer === true)
       ? { kind: 'text', ...base, append: text.slice(previous.text.length) }
       : { kind: 'text', ...base, text })
     this.#scheduleTextFlush(sessionId)

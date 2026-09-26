@@ -11,7 +11,11 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
  *  fenced block appears and the Slot entry — the whole Chat node — goes down
  *  with it. */
 export interface ClaudeMarkdownLabels {
-  code: { copyLabel: string; copiedLabel: string }
+  code: {
+    copyLabel: string
+    copiedLabel: string
+    toolbarLabels: { codeLabel: string; wrapLabel: string; unwrapLabel: string }
+  }
   footnotes: string
 }
 
@@ -21,7 +25,11 @@ export function useClaudeMarkdownLabels(
   t: (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string,
 ): ClaudeMarkdownLabels {
   return useMemo(() => ({
-    code: { copyLabel: t('markdownCopy'), copiedLabel: t('markdownCopied') },
+    code: {
+      copyLabel: t('markdownCopy'),
+      copiedLabel: t('markdownCopied'),
+      toolbarLabels: { codeLabel: t('codeBlockTitle'), wrapLabel: t('codeBlockWrap'), unwrapLabel: t('codeBlockUnwrap') },
+    },
     footnotes: t('markdownFootnotes'),
   }), [t])
 }

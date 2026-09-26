@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ClaudeActivityEvent } from '../events.ts'
 import { autoFixEnabled } from './auto-fix.ts'
@@ -204,7 +204,7 @@ export function ClaudePullRequestsPanel({ t, closeDetails, openSession, loadStat
           <span style={styles.tasksHeading}>{t('overviewTitle')}</span>
           <span style={styles.tasksTurnMeta}>{t('overviewBody')}</span>
         </div>
-        <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
+        <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutlineRegular /></button>
       </header>
       <div style={styles.overviewBody}>
         {rows.length === 0 ? <p style={styles.overviewEmpty}>{t('overviewEmpty')}</p> : rows.map(row => {

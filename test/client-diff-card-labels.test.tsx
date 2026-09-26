@@ -15,22 +15,25 @@ interface DiffCardLabels {
   collapseAria: string
   expand: (hidden: number) => string
   expandAria: (hidden: number) => string
-  files: (count: number) => string
+  codeLabel: string
+  wrapLabel: string
+  unwrapLabel: string
 }
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  // Reads every label the 0.1.2 card reads, in the same during-render way.
+  // Reads every label the 0.1.7 card reads, in the same during-render way.
   DiffBlock: ({ labels }: { labels: DiffCardLabels }) => (
     <div data-diff="">{[
       labels.copy, labels.copied, labels.collapse, labels.collapseAria,
-      labels.expand(3), labels.expandAria(3), labels.files(1),
+      labels.expand(3), labels.expandAria(3),
+      labels.codeLabel, labels.wrapLabel, labels.unwrapLabel,
     ].join('|')}</div>
   ),
   DisclosureRow: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   MarkdownText: () => null,
   StateDot: () => null,
-  IconApiOutline14: () => null,
-  IconThinkOutline14: () => null,
+  IconApiOutlineRegular: () => null,
+  IconThinkOutlineRegular: () => null,
 }))
 
 const { ClaudeTranscriptToolItem } = await import('../src/client/ClaudeActivityNode.tsx')
@@ -42,7 +45,7 @@ const t = ((key: keyof typeof en, params?: Record<string, unknown>) => {
 }) as never
 
 describe('diff card labels', () => {
-  it('supplies every string the 0.1.2 diff card reads while rendering', () => {
+  it('supplies every string the 0.1.7 diff card reads while rendering', () => {
     const markup = renderToStaticMarkup(<ClaudeTranscriptToolItem t={t} tool={{
       toolUseId: 'call-1',
       toolName: 'Edit',
@@ -55,7 +58,8 @@ describe('diff card labels', () => {
     expect(markup).toContain(en.markdownCopied)
     expect(markup).toContain(en.diffCardCollapse)
     expect(markup).toContain('Show 3 more lines')
-    expect(markup).toContain('1 files')
+    expect(markup).toContain(en.codeBlockWrap)
+    expect(markup).toContain(en.codeBlockUnwrap)
     expect(markup).not.toContain('undefined')
   })
 })

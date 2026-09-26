@@ -78,6 +78,11 @@ export interface ClaudeActivityEvent {
    *  It travels with the data so a step always renders the way it was
    *  recorded, whatever the setting says now. */
   renderer?: ClaudeRenderMode
+  /** Set on the turn's closing prose under the plugin renderer. Host 0.1.7
+   *  folds a completed turn down to its final assistant answer, so that prose
+   *  is also handed to the Host as the answer and the plugin transcript skips
+   *  it instead of drawing it a second time inside the fold. */
+  answer?: true
 }
 
 export interface ClaudeContextUsageCategory {
@@ -236,6 +241,7 @@ export function normalizeActivity(
   if (activity.isError !== undefined) normalized.isError = activity.isError
   if (activity.usage !== undefined) normalized.usage = { ...activity.usage }
   if (isClaudeRenderMode(activity.renderer)) normalized.renderer = activity.renderer
+  if (activity.answer === true) normalized.answer = true
   return normalized
 }
 

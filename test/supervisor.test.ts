@@ -567,11 +567,17 @@ describe('Claude supervisor', () => {
       { type: 'text-delta', text: 'hel' },
       { type: 'text-delta', text: 'lo' },
       { type: 'usage', usage: { inputTokens: 4, outputTokens: 2, cumulativeCostUsd: 0.01 } },
+      // The closing prose doubles as the Host's answer under the plugin renderer.
+      { type: 'answer', text: 'hello' },
       { type: 'complete', text: 'hello' },
     ])
-    await expect(projection(runtime)).resolves.toMatchObject({
+    const settled = await projection(runtime)
+    expect(settled).toMatchObject({
       binding: { claudeSessionId: 'claude-session-1' },
     })
+    expect(settled.activities.filter(activity => activity.kind === 'text')).toEqual([
+      expect.objectContaining({ text: 'hello', answer: true }),
+    ])
     expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle', claudeSessionId: 'claude-session-1' })
     await runtime.dispose()
   })
@@ -2016,9 +2022,10 @@ describe('Claude supervisor', () => {
 
   it('records an unknown message type once per process, not once per frame', async () => {
     // A type this package does not handle arrives in batches of identical frames
-    // (command_lifecycle did, five per turn). One row is evidence; the rest are
-    // noise the transcript never draws. Tool-progress heartbeats are telemetry,
-    // not an unknown type, and leave no row at all.
+    // (command_lifecycle did, five per turn, before it was handled). One row is
+    // evidence; the rest are noise the transcript never draws. Tool-progress
+    // heartbeats and command lifecycle transitions are telemetry, not unknown
+    // types, and leave no row at all.
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -2029,12 +2036,12 @@ describe('Claude supervisor', () => {
     query.push({ type: 'command_lifecycle', state: 'running' } as unknown as SDKMessage)
     query.push({ type: 'tool_progress', tool_use_id: 'tool-1', elapsed_time_seconds: 3 } as unknown as SDKMessage)
     query.push({ type: 'future_message', value: 1 } as unknown as SDKMessage)
+    query.push({ type: 'future_message', value: 2 } as unknown as SDKMessage)
     query.push(result('done'))
     await collect(output)
     const notices = (await projection(runtime)).activities
       .filter(activity => String(activity.title).startsWith('Unknown Claude SDK message:'))
     expect(notices.map(activity => activity.title)).toEqual([
-      'Unknown Claude SDK message: command_lifecycle',
       'Unknown Claude SDK message: future_message',
     ])
     await runtime.dispose()

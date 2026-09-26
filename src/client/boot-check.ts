@@ -36,8 +36,10 @@ export const CLAUDE_COMPOSER_BAR_ATTRIBUTE = 'data-dsh-claude-composer-bar'
  *  itself and only broke once a user ran it. Naming the methods here turns
  *  that into a boot-time line. Methods with a runtime fallback stay out. */
 export const CLAUDE_REQUIRED_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = {
-  sessions: ['scope', 'open', 'binding'],
+  sessions: ['scope', 'binding'],
   workspaces: ['create', 'delete', 'archiveSession'],
+  // Not injected (the plugin runs without it); checked through `services`.
+  uiWorkspace: ['connectWorkspace', 'openSession'],
   uiConversation: ['binding'],
   uiSession: ['provide'],
   inputTriggers: ['registerSource'],
@@ -46,7 +48,8 @@ export const CLAUDE_REQUIRED_SERVICE_METHODS: Readonly<Record<string, readonly s
 }
 
 export interface ClaudeBootCheckInput {
-  /** Service names the plugin declares in `export const inject`. */
+  /** Service names the plugin resolves: `export const inject` plus the
+   *  optional services it reads through `ctx.get`. */
   services: readonly string[]
   resolve(name: string): unknown
 }
@@ -61,7 +64,7 @@ export function claudeBootCheckFindings(
   for (const name of input.services) {
     const service = input.resolve(name)
     if (service === undefined) {
-      findings.push(`service "${name}" is declared in inject but the Host does not provide it`)
+      findings.push(`service "${name}" is not provided by the Host`)
       continue
     }
     for (const method of methods[name] ?? []) {

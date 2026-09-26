@@ -4,7 +4,7 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
@@ -16,7 +16,6 @@ import { resolveClaudeExecutable } from './executable.ts'
 import { ClaudeProcessLimitError, ClaudeSupervisor, ClaudeTurnBusyError, type ClaudeSteeringOutcome, type ClaudeSteeringService } from './supervisor.ts'
 import { mountClaudeSteering } from './steering.ts'
 import { createClaudeCodeAdapter } from './adapter.ts'
-import { ensureManagedPreset, ManagedPresetConflictError } from './preset-installer.ts'
 import { claudeBridgeDiagnostics, registerClaudeDoctorRoutes, type ClaudeBridgeDiagnostic } from './doctor-routes.ts'
 import { registerClaudeProjectionRoute } from './projection-routes.ts'
 import { RepositoryStatusService, type RepositoryStatus } from './repository-status.ts'
@@ -50,6 +49,7 @@ import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
 import { claudeModelRow, claudeModelValue, probeClaudeModels } from './model-catalog.ts'
 import { withElectronNodeRunner } from './windows-job-runner.ts'
+import { detectWindowsSystemProxy, withSystemProxy, type ProxyEnv } from './system-proxy.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
 import { readDefaultPermissionMode, readPermissionSelector, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
@@ -231,27 +231,19 @@ export function mountClaudeMetadata(
   }, 'dsh-claude: agent metadata bridge')
 }
 
-export async function installManagedPresetCompatibility(
-  logger: Pick<Context['logger'], 'warn'>,
-  install: typeof ensureManagedPreset = ensureManagedPreset,
-): Promise<'installed' | 'unchanged' | 'conflict'> {
-  try {
-    return await install()
-  } catch (error) {
-    if (!(error instanceof ManagedPresetConflictError)) throw error
-    logger.warn(`dsh-claude: preserving user-modified preset at ${error.path}`)
-    return 'conflict'
-  }
-}
-
 export async function apply(ctx: Context, config: Config): Promise<void> {
   // Every subprocess this plugin starts goes through one runtime so the
-  // Desktop 2.0.7 Windows Job runner workaround applies to all of them.
-  const subprocess = withElectronNodeRunner(ctx.subprocess)
-  // DSH Desktop 2.0.4 does not retain third-party preset roots from bundle
-  // patches, so keep a guarded user-root copy. Its bare route specifier resolves
-  // through the profile package factory and does not create a second Loader source.
-  await installManagedPresetCompatibility(ctx.logger)
+  // Desktop 2.0.7 Windows Job runner workaround applies to all of them, and so
+  // each inherits the system proxy when the Host passes none (see
+  // system-proxy.ts). Detection runs in the background: the first Claude turn
+  // comes long after it settles, and boot is not held on the registry.
+  const runner = withElectronNodeRunner(ctx.subprocess)
+  let systemProxy: ProxyEnv | undefined
+  const subprocess = withSystemProxy(runner, () => systemProxy)
+  void detectWindowsSystemProxy(runner).then(proxy => {
+    systemProxy = proxy
+    if (proxy !== undefined) ctx.logger.info('dsh-claude: child processes use the Windows system proxy')
+  })
   const defaultLimits = {
     idleTimeoutMs: config.idleTimeoutMs ?? 30 * 60 * 1_000,
     maxProcesses: config.maxProcesses ?? 4,
@@ -399,10 +391,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const timer = setTimeout(retry, MOUNT_RETRY_MS)
         timer.unref?.()
       }
-      const stopCreated = ctx.on('agent/created', ({ agent }) => { mountWhenPresetSettles(agent, true) })
+      const stopCreated = ctx.on('agent/created', ({ agent }) => {
+        mountWhenPresetSettles(agent, true)
+        return undefined
+      })
       // Belt and suspenders: the session records its preset selection as a
       // durable event, which agent-presets republishes as agent-preset/selected.
-      // agent-preset/selected is emitted by dsh-agent-presets but is not part
+      // agent-preset/selected is emitted by dsh-agent-preset-registry but is not part
       // of the typed host event map yet; subscribe through a typed escape hatch.
       const onPresetSelected = ctx.on as (event: 'agent-preset/selected', handler: (sessionId: string, preset: string) => void) => () => void
       const stopSelected = onPresetSelected('agent-preset/selected', (sessionId, preset) => {

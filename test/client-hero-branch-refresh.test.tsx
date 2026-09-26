@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
   const { cloneElement } = await import('react')
   return {
-    IconBranchOutline16: () => <svg data-icon="branch" />,
-    IconCheckOutline14: () => <svg data-icon="check" />,
-    IconChevronDownOutline14: () => <svg data-icon="chevron-down" />,
-    IconRefreshOutline14: () => <svg data-icon="refresh" />,
-    IconSearchOutline16: () => <svg data-icon="search" />,
+    IconBranchOutlineRegular: () => <svg data-icon="branch" />,
+    IconCheckOutlineRegular: () => <svg data-icon="check" />,
+    IconChevronDownOutlineRegular: () => <svg data-icon="chevron-down" />,
+    IconRefreshOutlineRegular: () => <svg data-icon="refresh" />,
+    IconSearchOutlineRegular: () => <svg data-icon="search" />,
     Tooltip: ({ label, children }: { label: string; children: React.ReactElement }) =>
       cloneElement(children, { 'data-tooltip': label } as Record<string, unknown>),
   }

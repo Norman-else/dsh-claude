@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconBranchOutline16, IconCheckOutline14, IconChevronDownOutline14, IconRefreshOutline14, IconSearchOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconRefreshOutlineRegular, IconSearchOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RepositoryBranchList } from '../repository-setup.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { ensureClaudeHeroPortal, locateClaudePresetSeat, removeClaudeHeroPortals, retainsClaudeHeroPortal, showsOtherPresetSeat } from './hero-dom-bridge.ts'
@@ -278,15 +278,15 @@ export function ClaudeHeroRepositoryCapsule({
           disabled={busy}
           onClick={() => { onMenuOpenChange(!menuOpen) }}
         >
-          <IconBranchOutline16 />
+          <IconBranchOutlineRegular />
           <span style={styles.heroBranchName}>{selected}</span>
-          <IconChevronDownOutline14 />
+          <IconChevronDownOutlineRegular />
         </button>
         {menuOpen ? (
           <span role="menu" aria-activedescendant={filtered[activeIndex] === undefined ? undefined : `claude-branch-option-${activeIndex}`} style={styles.heroBranchMenu} onKeyDown={handleMenuKeyDown}>
             <span style={styles.heroBranchSearchRow}>
               <label style={{ ...styles.heroBranchSearch, ...styles.heroBranchSearchGrow }}>
-                <IconSearchOutline16 />
+                <IconSearchOutlineRegular />
                 <input
                   ref={searchRef}
                   type="search"
@@ -314,7 +314,7 @@ export function ClaudeHeroRepositoryCapsule({
                   onMouseLeave={() => { setRefreshHovered(false) }}
                   onClick={onRefresh}
                 >
-                  <IconRefreshOutline14 />
+                  <IconRefreshOutlineRegular size={14} />
                 </button>
               </Tooltip>
             </span>
@@ -341,7 +341,7 @@ export function ClaudeHeroRepositoryCapsule({
                   onClick={() => { onSelect(branch) }}
                 >
                   <span style={styles.heroBranchItemName}>{branch}</span>
-                  {branch === selected ? <IconCheckOutline14 /> : null}
+                  {branch === selected ? <IconCheckOutlineRegular size={14} /> : null}
                 </button>
               ))}
             </span>
@@ -667,13 +667,13 @@ export function ClaudeHeroRepositoryControls({
                 <span style={styles.heroBranchName}>
                   {tickets.length === 0 ? t('heroTicket') : tickets.length === 1 ? tickets[0]?.key : t('heroTicketCount', { count: tickets.length })}
                 </span>
-                <IconChevronDownOutline14 />
+                <IconChevronDownOutlineRegular />
               </button>
             </Tooltip>
             {ticketMenuOpen ? (
               <span role="menu" style={{ ...styles.heroBranchMenu, ...styles.heroTicketMenu }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTicketMenuOpen(false) } }}>
                 <label style={styles.heroBranchSearch}>
-                  <IconSearchOutline16 />
+                  <IconSearchOutlineRegular />
                   <input
                     ref={ticketSearchRef}
                     type="search"

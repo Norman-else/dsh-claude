@@ -124,7 +124,9 @@ export async function resolveDirectUserPrompt(
   signal?: AbortSignal,
 ): Promise<ClaudePrompt> {
   const message = [...messages].reverse().find(candidate => (
-    candidate.role === 'user' && candidate.source.kind === 'user'
+    // Request-only user inputs (Host 0.1.7) carry no source and are not the
+    // durable human turn this route answers.
+    candidate.role === 'user' && candidate.source?.kind === 'user'
   ))
   if (message === undefined) {
     throw new Error('dsh-claude: no direct human input was present in this model step')
@@ -375,8 +377,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // The plugin renderer draws the visible transcript from the sidecar, so
     // prose and Claude tool groups share one exact ordinal stream and DSH
-    // receives only an empty assistant completion anchor plus usage/lifecycle
-    // metadata. The native renderer needs the opposite: every visible span
+    // receives only the turn's closing prose (the answer its fold keeps in
+    // view) plus usage/lifecycle metadata. The native renderer needs the
+    // opposite: every visible span
     // arrives as ordinary DSH content blocks.
     //
     // Read once, here, and handed to the supervisor: the setting is live, and
@@ -417,6 +420,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         }
         if (event.type === 'text-delta') {
           if (native) text += event.text
+          continue
+        }
+        if (event.type === 'answer') {
+          // Plugin renderer: only the closing prose reaches the Host, as the
+          // answer its fold keeps visible; the process stays plugin-drawn.
+          if (!native) text = event.text
           continue
         }
         if (event.type === 'thinking') {

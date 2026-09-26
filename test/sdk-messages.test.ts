@@ -198,6 +198,16 @@ describe('Claude SDK message normalization', () => {
     }))).toEqual([{ kind: 'progress', subtype: 'tool_progress' }])
   })
 
+  it('treats command lifecycle transitions as telemetry, not unknown messages', () => {
+    expect(normalizeSdkMessage(sdk({
+      type: 'command_lifecycle',
+      command_uuid: 'command-1',
+      state: 'queued',
+      uuid: 'uuid-3',
+      session_id: 'session-1',
+    }))).toEqual([{ kind: 'progress', subtype: 'command_lifecycle' }])
+  })
+
   it('normalizes successful result usage', () => {
     expect(normalizeSdkMessage(sdk({
       type: 'result',

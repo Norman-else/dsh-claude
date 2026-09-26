@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  IconChevronDownOutline14,
-  IconChevronRightOutline14,
-  IconChevronUpOutline14,
-  IconCloseOutline16,
+  IconChevronDownOutlineRegular,
+  IconChevronRightOutlineRegular,
+  IconChevronUpOutlineRegular,
+  IconCloseOutlineRegular,
   Menu,
   Modal,
   Tooltip,
@@ -394,7 +394,7 @@ function DiffFileSection({
     <section style={styles.diffFile}>
       <button type="button" className={styles.diffFileHeaderClass} style={styles.diffFileHeader} aria-expanded={open} onClick={() => onOpenChange(!open)}>
         <span data-diff-file-chevron="" style={{ ...styles.diffFileChevron, ...(open ? styles.chevronOpen : {}) }} aria-hidden="true">
-          <IconChevronRightOutline14 size={14} />
+          <IconChevronRightOutlineRegular size={14} />
         </span>
         <span style={styles.diffFilePath}>
           <Tooltip label={file.path} side="bottom" delayMs={300} maxWidth={520}>
@@ -843,7 +843,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
             {repositories.length < 2 ? null : <>
               <Menu open={repositoryMenuOpen} items={repositoryItems} selectedId={repository.root ?? repository.cwd} onSelect={(id: string) => { setSelectedRoot(id); setRepositoryMenuOpen(false) }} onClose={() => setRepositoryMenuOpen(false)} portal compact anchor={
                 <button type="button" className={styles.diffRepositoryTriggerClass} aria-label={t('diffRepository')} aria-haspopup="menu" aria-expanded={repositoryMenuOpen} onClick={() => setRepositoryMenuOpen(value => !value)}>
-                  <span>{repositoryLabel(repository)}</span><IconChevronDownOutline14 />
+                  <span>{repositoryLabel(repository)}</span><IconChevronDownOutlineRegular />
                 </button>
               } />
               <span aria-hidden="true">›</span>
@@ -854,7 +854,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
               <Menu open={menuOpen} items={menuItems} onSelect={(id: string) => { if (availability[id as PanelActionKind]) openAction(id as PanelActionKind) }} onClose={() => setMenuOpen(false)} align="end" portal anchor={
-                <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutline14 /></button>
+                <button type="button" style={{ ...styles.diffCommitMenuButton, ...(anyActionAvailable ? {} : styles.diffActionDisabled) }} disabled={!anyActionAvailable} aria-label={t('diffCommitMenu')} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><IconChevronDownOutlineRegular /></button>
               } />
             </div>
             {targets.length === 0 ? null : (
@@ -866,7 +866,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
                   title={t('diffCommentPosition', { index: targetIndex + 1, total: targets.length })}
                   onClick={() => goToComment('ArrowUp')}
                 >
-                  <IconChevronUpOutline14 />
+                  <IconChevronUpOutlineRegular />
                 </button>
                 <span style={styles.diffCommentNavCount}>{t('diffCommentCounter', { index: targetIndex + 1, total: targets.length })}</span>
                 <button
@@ -876,7 +876,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
                   title={t('diffCommentPosition', { index: targetIndex + 1, total: targets.length })}
                   onClick={() => goToComment('ArrowDown')}
                 >
-                  <IconChevronDownOutline14 />
+                  <IconChevronDownOutlineRegular />
                 </button>
               </div>
             )}
@@ -888,7 +888,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
                 {openThreadCount}
               </button>
             ) : null}
-            <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
+            <button type="button" className={styles.panelIconButtonClass} aria-label={t('diffClose')} onClick={closeDetails}><IconCloseOutlineRegular /></button>
           </div>
         </header>
         <div style={styles.diffSummary}>
@@ -904,7 +904,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
                 aria-label={allFilesOpen ? t('diffCollapseAll') : t('diffExpandAll')}
                 onClick={() => { setOpenFiles(new Map(files.map(file => [file.path, !allFilesOpen]))) }}
               >
-                {allFilesOpen ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+                {allFilesOpen ? <IconChevronDownOutlineRegular /> : <IconChevronRightOutlineRegular />}
               </button>
             </Tooltip>
           )}

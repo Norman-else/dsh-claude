@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { IconCloseOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -204,7 +204,7 @@ export function ClaudeTasksPanel({ useClaudeProjection, t, closeDetails, turn }:
           <span style={styles.tasksHeading}>{t('tasksPanelTurn')}</span>
           <span style={styles.tasksTurnMeta}>{t('tasksTurnNumber', { turn })}</span>
         </div>
-        <button type="button" className={styles.panelIconButtonClass} aria-label={t('tasksClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
+        <button type="button" className={styles.panelIconButtonClass} aria-label={t('tasksClose')} onClick={closeDetails}><IconCloseOutlineRegular /></button>
       </div>
       <div style={styles.tasksBody}>
         <section aria-label={t('tasksRunning')}>

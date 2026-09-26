@@ -10,7 +10,7 @@ Claude Code remains responsible for its agent loop, tools, `CLAUDE.md`, Skills, 
 
 ### Requirements
 
-- DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.5-rc.2` package line (DSH Desktop 2.0.10). Plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`; a Host still on that line must pin `@norman-else/dsh-claude@0.1.36`.
+- DeepSeek Harness Desktop with compatible public plugin APIs. This package is currently developed against the DSH `0.1.7-rc.2` package line (DSH Desktop 2.0.15) and requires it: 0.1.7 replaced directory-scanned presets with declared ones and renamed the shared icons. A Host still on `0.1.5` must pin `@norman-else/dsh-claude@0.1.57`; plugin 0.1.37 and later import symbols that do not exist on `0.1.1-rc.2`, so a Host on that line must pin `@norman-else/dsh-claude@0.1.36`.
 - A local Claude Code installation that is already authenticated.
 - Node.js 20 or later when installing from a source checkout.
 
@@ -51,20 +51,19 @@ dsh plugin --profile desktop add "link:$(pwd)"
 
 ### Remove the plugin
 
-Remove the managed compatibility preset before removing the package:
+The Claude preset is declared by the package's bundle patch, so removing the package removes it:
 
 ```sh
-dsh plugin --profile desktop exec dsh-claude remove-preset
 dsh plugin --profile desktop remove @norman-else/dsh-claude
 ```
 
-DSH does not currently expose a plugin uninstall lifecycle hook. If the package was removed before its managed preset was cleaned up, run the matching installed version directly:
+Plugin 0.1.57 and earlier also copied a compatibility preset to `$DSH_HOME/.agent-presets/claude`. Host 0.1.7 no longer reads that directory; remove the leftover copy with:
 
 ```sh
-pnpm dlx @norman-else/dsh-claude@<version> remove-preset
+dsh plugin --profile desktop exec dsh-claude remove-preset
 ```
 
-Preset cleanup removes only installer-managed content and refuses to delete user-modified preset files.
+Cleanup removes only installer-written content and refuses to delete user-modified preset files.
 
 ## 3. Features
 
@@ -116,7 +115,7 @@ Preset cleanup removes only installer-managed content and refuses to delete user
 - **Plan usage** — Reports the signed-in subscription's utilization windows — five-hour, weekly across all models, and weekly per model — with reset countdowns, degrading to unavailable rather than failing on API-key, Bedrock, and Vertex sessions.
 - **Bounded requests and a rationed connection pool** — Caps the plugin's share of the browser's per-origin connections so its own panels can never starve each other or the Host, and gives every route a declared time budget — answers from memory, local Git work, and calls that reach the network each get their own — with the client waiting one round trip longer than the server, so a slow operation reports which budget elapsed instead of hanging in the browser's queue.
 - **Plugin updates** — Checks npm for new releases and updates in place, only when the installation is uniquely identified; local development links are never replaced.
-- **Managed preset compatibility** — Installs a guarded Claude preset whose route reuses the active profile package source, preserving discovery on Desktop versions that do not retain third-party preset roots without duplicate client-module Loaders or overwriting user changes.
+- **Declared Claude preset** — The bundle patch declares the Claude preset as an `@deepseek-ai/dsh-agent-preset` row; its route reuses the active profile package source, so no second client-module Loader appears.
 
 ## 4. Contributing
 
@@ -154,7 +153,7 @@ Both types require enough detail for someone else to reproduce your situation wi
 - **Motivation** — what a DSH user cannot do today, and why the current workaround is not good enough.
 - **Proposed behavior** — what should happen, described from the user's side, naming the surface it belongs to (composer, hero repository controls, diff panel, activity timeline, Settings panel, Agent Preset picker, …).
 - **Scope and non-goals** — what this explicitly does not cover, so the pull request can be reviewed against a fixed boundary.
-- **Affected layer** — plugin server (`src/`), client (`src/client/`), managed preset (`preset/`), or a combination.
+- **Affected layer** — plugin server (`src/`), client (`src/client/`), bundle patch and preset declaration (`cordis.patch.yml`), or a combination.
 - **Compatibility** — the DSH Desktop and DSH package line it targets, and the Claude Code CLI version it relies on. Say so if it depends on a Claude Code capability that older CLI versions do not have.
 - **Alternatives considered** — including "do nothing", and why they were rejected.
 - **Whether you intend to implement it** — so the maintainer knows whether to assign it to you or to schedule it.

@@ -2,7 +2,7 @@
 
 Status: current architecture and behavior reference
 Originally created: 2026-08-15
-Reviewed against code: 2026-09-14 (plugin 0.1.51, SDK 0.3.247, DSH development graph 0.1.5-rc.2)
+Reviewed against code: 2026-09-26 (plugin 0.1.57, SDK 0.3.247, DSH development graph 0.1.7-rc.2)
 
 The dated filename is retained for existing links. Dated plans and evidence are
 historical, not additional current requirements. This describes implemented
@@ -105,7 +105,7 @@ The bundle adds:
 
 - one host adapter route: `claude`
 - one preset-scoped route plugin that overrides `agent/request` to `{ provider: 'claude', model: <alias> }`
-- one user-visible preset: `claude`, shipped inside the package plus a guarded compatibility copy under `$DSH_HOME/.agent-presets/claude`; activation preserves user edits and uses the profile package source. Dependency removal alone cannot run preset cleanup; follow `INSTALL.md`
+- one user-visible preset: `claude`, declared by the bundle patch as an `@deepseek-ai/dsh-agent-preset` row registered with `agent-preset-registry`; its route uses the profile package source. Removing the dependency removes the declaration. Copies left under `$DSH_HOME/.agent-presets/claude` by plugin 0.1.57 and earlier are no longer read; `dsh-claude remove-preset` deletes installer-written ones
 
 The preset contains no DSH model-facing filesystem, shell, skill, web, goal, todo, workflow, or subagent tools. Claude Code owns those capabilities. It may include only the route plugin and a minimal persona/presentation contribution needed by DSH.
 
@@ -366,7 +366,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 
 ## 7. Compatibility
 
-- Develop against DSH `0.1.5-rc.2` (Desktop 2.0.10); the runtime peer floor remains `0.1.5-rc.1`. The legacy development packages `dsh-client-runtime` and `dsh-host-apiproxy` remain `0.1.1-rc.2`; client registration uses split controllers.
+- Develop against DSH `0.1.7-rc.2` (Desktop 2.0.15), which is also the runtime peer floor: 0.1.7 replaced directory-scanned presets with declared rows, renamed the shared primitive icons, and removed `sessions.open`. Client types come from the split controllers and UI packages; the unpublished `dsh-client-runtime` and `dsh-host-apiproxy` are no longer used. A 0.1.5 Host must stay on plugin 0.1.57.
 - Keep peer dependency ranges broad enough for compatible rc updates but test against the installed host.
 - Never import DSH internal source paths or copy `dsh-agent-loop` implementation.
 - Use public agent request waterfall, LLM adapter, subprocess, approval, Web prefix route, per-agent command registry, session provider, client conversation projection, and additive input-slot APIs.

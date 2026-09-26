@@ -486,6 +486,12 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
     // see CLAUDE_PROGRESS_SUBTYPES.
     return [{ kind: 'progress', subtype: 'tool_progress' }]
   }
+  if (value.type === 'command_lifecycle') {
+    // CLI 2.1.259+ reports each queued prompt's queued → running → done
+    // transitions. The turn lifecycle already tells the same story, so these
+    // are telemetry too, not an unknown message worth a warning row.
+    return [{ kind: 'progress', subtype: 'command_lifecycle' }]
+  }
   const unknownType = String(value.type)
   return [{ kind: 'unknown', type: unknownType, title: `${CLAUDE_UNKNOWN_MESSAGE_PREFIX}${unknownType}`, detail: value }]
 }

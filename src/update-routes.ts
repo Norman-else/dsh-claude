@@ -250,8 +250,8 @@ export async function updatePlugin(deps: UpdateDependencies = {}, signal: AbortS
     canUpdate: false,
     restartRequired: deps.requestRestart === undefined,
     message: deps.requestRestart === undefined
-      ? 'Update installed; restart DSH Desktop to load it'
-      : 'Update installed; DSH Desktop is restarting to load it',
+      ? 'Update installed; restart DeepSeek Harness to load it'
+      : 'Update installed; DeepSeek Harness is restarting to load it',
   }
 }
 

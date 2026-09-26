@@ -210,6 +210,7 @@ export function registerClaudeProjectionRoute(
             ...(delta.append === undefined ? {} : { append: delta.append }),
             ...(delta.text === undefined ? {} : { text: delta.text }),
             ...(delta.renderer === undefined ? {} : { renderer: delta.renderer }),
+            ...(delta.answer === true ? { answer: true } : {}),
             seq: delta.seq,
           })
           return

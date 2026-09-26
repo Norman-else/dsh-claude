@@ -1,7 +1,5 @@
-import type {
-  ChatConversationViewNode,
-  ConversationNodeDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { ConversationNodeDefinition } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeUsage } from '../events.ts'
 import { API_RETRY_TITLE, CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
@@ -586,6 +584,8 @@ export function transcriptItemsForStep(
   for (const activity of ordered) {
     if (activity.kind === 'text') {
       flushGroup()
+      // The closing prose the Host now draws as the turn's native answer.
+      if (activity.answer === true) continue
       if (activity.text !== undefined && activity.text.length > 0) {
         items.push({ kind: 'text', ordinal: activity.ordinal, text: activity.text })
       }
@@ -783,7 +783,8 @@ export const claudeTurnDefinition: ConversationNodeDefinition<ClaudeTurnProjecti
   },
 }
 
-/** Pure chain selector: only Claude-produced turns mount the sidecar-backed tail. */
-export function selectClaudeTurn(owner: TurnTailOwnerProps): ClaudeTurnMarker | null {
+/** Only Claude-produced turns render the sidecar-backed tail. The turn tail is
+ *  a list Slot since Host 0.1.7, so every entry sees every turn and filters here. */
+export function selectClaudeTurn(owner: Pick<TurnTailOwnerProps, 'turn'>): ClaudeTurnMarker | null {
   return owner.turn.data.get('claudeCode') ?? null
 }

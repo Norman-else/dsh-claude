@@ -1,13 +1,13 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
-  ChatConversationViewNode,
   ConversationNodeAssembler as ConversationNodeAssemblerType,
   ConversationNodeDefinition,
   ConversationTimelineSnapshot,
   ConversationViewDefinition,
-} from '@deepseek-ai/dsh-client-runtime/client'
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../src/events.ts'
 import type { ClaudeActivityChatData } from '../src/client/conversation-sidecar.ts'
 import {
@@ -69,9 +69,16 @@ async function loadConversationNodeAssembler(): Promise<typeof ConversationNodeA
   class EmptyService {}
   class EmptyContext {}
   class EmptySlotCore {}
+  // Host 0.1.7 ships the assembler inside the conversation client bundle, whose
+  // components touch React and the store while the module loads.
   const dependencies: Record<string, unknown> = {
     '@deepseek-ai/cordis': { Service: EmptyService, Context: EmptyContext },
     '@deepseek-ai/dsh-client-ui-slots': { SlotCore: EmptySlotCore },
+    'react': await import('react'),
+    'react-dom': await import('react-dom'),
+    'react/jsx-runtime': await import('react/jsx-runtime'),
+    '@deepseek-ai/dsh-client-store': await import('@deepseek-ai/dsh-client-store'),
+    '@deepseek-ai/dsh-client-ui-primitives': await import('@deepseek-ai/dsh-client-ui-primitives'),
   }
   Object.assign(globalThis, {
     window: {
@@ -82,8 +89,8 @@ async function loadConversationNodeAssembler(): Promise<typeof ConversationNodeA
       },
     },
   })
-  await import('@deepseek-ai/dsh-client-runtime/client')
-  if (clientExports?.ConversationNodeAssembler === undefined) throw new Error('Client runtime did not export ConversationNodeAssembler')
+  await import('@deepseek-ai/dsh-client-ui-conversation/client')
+  if (clientExports?.ConversationNodeAssembler === undefined) throw new Error('Conversation client did not export ConversationNodeAssembler')
   loadedConversationNodeAssembler = clientExports.ConversationNodeAssembler
   return loadedConversationNodeAssembler
 }
@@ -187,13 +194,17 @@ async function conversationAssembler(): Promise<InstanceType<typeof Conversation
       }
     },
   }
-  return new ConversationNodeAssembler(
+  const assembler = new ConversationNodeAssembler(
     {
       entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, userTestDefinition, assistantTestDefinition],
       fallbackEntry: () => undefined,
     },
     { entries: () => [timelineView, chatView] },
   )
+  // Host 0.1.7 materializes only targets a reader has activated.
+  assembler.activateTarget('test-timeline')
+  assembler.activateTarget('chat')
+  return assembler
 }
 
 async function projectConversation(events: readonly unknown[]): Promise<TestProjection> {
@@ -220,6 +231,11 @@ describe('Claude sidecar conversation projection', () => {
       }],
     })
     expect(transcriptItemsForStep([taskCall], 1, 1)).toEqual([])
+    // The Host draws the answer segment natively; the transcript keeps the rest.
+    expect(transcriptItemsForStep([
+      { turn: 1, step: 1, ordinal: 0, kind: 'text', phase: 'updated', text: 'Looking.' },
+      { turn: 1, step: 1, ordinal: 1, kind: 'text', phase: 'updated', text: 'Done.', answer: true },
+    ], 1, 1)).toEqual([{ kind: 'text', ordinal: 0, text: 'Looking.' }])
     expect(transcriptItemsForStep([
       taskCall,
       { ...taskCall, step: 2, ordinal: 2, toolUseId: 'task-2' },
@@ -775,7 +791,7 @@ describe('Claude sidecar conversation projection', () => {
 
   it('renders a compact turn-bound Tasks launcher only for background work and subagents', () => {
     const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActivityTail, {
-      matched: { turn },
+      turn: { data: { get: (key: string) => key === 'claudeCode' ? { turn } : undefined } } as never,
       t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
       openTasks: () => {},
       useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,

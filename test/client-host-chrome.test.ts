@@ -20,7 +20,9 @@ describe('host chrome suppression', () => {
   it('hides the header tab strip only in headers this plugin acts on', () => {
     // Without the :has() scope this would strip the view tabs from every
     // Session in the App, including ones driven by other agent presets.
-    expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-header-diff)>[role="tablist"]{display:none}')
+    // Host 0.1.7 nests the strip inside the header's Slot outlet, so the match
+    // is a descendant one; a direct-child match silently missed it.
+    expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-header-diff) [role="tablist"]{display:none}')
     // Every tablist selector must sit behind the :has() scope, so none of them
     // may start a rule (rules start at the CSS head or right after a `}`).
     for (const rule of HOST_CHROME_CSS.split('}').map(part => part.trim()).filter(Boolean)) {
@@ -33,9 +35,14 @@ describe('host chrome suppression', () => {
     // name, and only inside a row where the plugin's selector has mounted:
     // that selector mounts for Claude sessions alone, so other presets keep
     // the Host's three-mode control.
-    expect(HOST_CHROME_CSS).toContain('[class*="_tools"]:has(.dshClaudePermissionSelect) [class*="_modes"]>*:has(span[class*="_triggerLabel"]){display:none}')
+    // Host 0.1.7 renders it through a Slot outlet whose inline
+    // `display:contents` beats any rule without `!important`.
+    expect(HOST_CHROME_CSS).toContain('[class*="_tools"]:has(.dshClaudePermissionSelect) [data-slot="conversation.input.permission"]{display:none!important}')
+    expect(HOST_CHROME_CSS).toContain('[class*="_tools"]:has(.dshClaudePermissionSelect) [class*="_modes"]>*:has(span[class*="_triggerLabel"]){display:none!important}')
     for (const rule of HOST_CHROME_CSS.split('}').map(part => part.trim()).filter(Boolean)) {
-      if (rule.includes('_triggerLabel')) expect(rule.startsWith('[class*="_tools"]:has(.dshClaudePermissionSelect)')).toBe(true)
+      if (rule.includes('_triggerLabel') || rule.includes('conversation.input.permission')) {
+        expect(rule.startsWith('[class*="_tools"]:has(.dshClaudePermissionSelect)')).toBe(true)
+      }
     }
   })
 

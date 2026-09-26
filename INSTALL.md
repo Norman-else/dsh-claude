@@ -19,9 +19,9 @@ dsh plugin --profile desktop add @norman-else/dsh-claude
 ```
 
 Wait for the profile operation to finish, then quit Desktop completely and
-reopen it. Select **Claude** in a new session. The plugin maintains a guarded
-compatibility preset at `$DSH_HOME/.agent-presets/claude`; its route uses the
-active profile package source. User-modified preset files are preserved.
+reopen it. Select **Claude** in a new session. The package's bundle patch
+declares the preset (Desktop 2.0.15 / Host 0.1.7 or later); its route uses the
+active profile package source.
 
 ## 3. Install from a source checkout
 
@@ -100,19 +100,18 @@ establish successful real authentication, approval, streaming, or resume.
 
 ## 6. Remove the plugin
 
-Clean up the compatibility preset while the profile still resolves the package:
+The bundle patch declares the preset, so removing the package removes it:
 
 ```sh
-dsh plugin --profile desktop exec dsh-claude remove-preset
 dsh plugin --profile desktop remove @norman-else/dsh-claude
 ```
 
-DSH has no plugin uninstall lifecycle hook. Direct package removal can leave
-the compatibility preset behind. If necessary, invoke the matching version's
-CLI with the same `DSH_HOME` and inspect its result:
+Plugin 0.1.57 and earlier also wrote a compatibility copy to
+`$DSH_HOME/.agent-presets/claude`, which Host 0.1.7 no longer reads. Delete it
+while the package is still installed:
 
 ```sh
-pnpm dlx @norman-else/dsh-claude@<installed-version> remove-preset
+dsh plugin --profile desktop exec dsh-claude remove-preset
 ```
 
 Cleanup refuses user-modified presets; review them manually rather than forcing

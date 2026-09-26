@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { CLAUDE_CODE_PRESET_ID } from '../constants.ts'
 import { claudeMarkUrl } from './claude-mark.ts'
@@ -67,7 +67,7 @@ export function ClaudeAgentPresetLabel({ t, hostT, roster, sessionId, useSession
       <span className="dsh-claude-preset-label">
         {preset === CLAUDE_CODE_PRESET_ID
           ? <span className="dsh-claude-preset-mark" aria-hidden="true" />
-          : <IconAgentPresetOutline16 size={14} className="dsh-claude-preset-icon" />}
+          : <IconAgentPresetOutlineRegular size={14} className="dsh-claude-preset-icon" />}
         <span className="dsh-claude-preset-name">{text.name}</span>
       </span>
     </Tooltip>

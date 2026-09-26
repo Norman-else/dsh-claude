@@ -295,6 +295,27 @@ describe('DSH stream mapping', () => {
     ])
   })
 
+  // Host 0.1.7 folds a finished turn down to its final answer; without one the
+  // whole Claude reply disappeared behind the fold.
+  it('hands only the closing prose to the Host as the answer under the plugin renderer', async () => {
+    const adapter = new ClaudeCodeAdapter(supervisorEvents([
+      { type: 'text-delta', text: 'Reading the file. ' },
+      { type: 'text-delta', text: 'Done: renamed it.' },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2 } },
+      { type: 'answer', text: 'Done: renamed it.' },
+      { type: 'complete', text: 'Reading the file. Done: renamed it.' },
+    ]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
+    const chunks = []
+    for await (const chunk of adapter.stream(options())) chunks.push(chunk)
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'Done: renamed it.' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'Done: renamed it.' } },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2 } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ])
+  })
+
   it('keeps every task-report segment in the sidecar before one empty assistant finish', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([
       { type: 'text-delta', text: 'Tasks are still running.' },

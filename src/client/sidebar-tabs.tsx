@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react'
-import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected, type ClaudeDiffPanelProps } from './ClaudeDiffPanel.tsx'
 import { ClaudePlanPanel, type ClaudePlanPanelInjected, type ClaudePlanPanelProps } from './ClaudePlanPanel.tsx'

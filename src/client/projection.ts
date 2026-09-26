@@ -402,7 +402,7 @@ export function createClaudeProjectionSource(
   }
 
   const applyText = (event: Record<string, unknown>): boolean => {
-    const { turn, step, ordinal, append, text, renderer } = event
+    const { turn, step, ordinal, append, text, renderer, answer } = event
     if (!nonNegativeInteger(turn) || !nonNegativeInteger(step) || !nonNegativeInteger(ordinal)) return false
     if (append !== undefined && (typeof append !== 'string' || append.length > MAX_TRANSCRIPT_CHARS)) return false
     if (text !== undefined && (typeof text !== 'string' || text.length > MAX_TRANSCRIPT_CHARS)) return false
@@ -429,7 +429,8 @@ export function createClaudeProjectionSource(
       // drawn by the plugin transcript while it streams.
       ...(isClaudeRenderMode(renderer) ? { renderer } : {}),
     }
-    const full = { ...template, text: fullText }
+    // The answer stamp arrives on a later full-text line, after the base.
+    const full = { ...template, text: fullText, ...(answer === true ? { answer: true as const } : {}) }
     const shown = Math.min(pending?.shown ?? existing?.text?.length ?? 0, fullText.length)
     if (fullText.length - shown > MAX_INSTANT_REVEAL) {
       reveal.delete(revealKey)

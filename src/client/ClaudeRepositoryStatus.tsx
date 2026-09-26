@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { IconChevronDownOutline14, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineRegular, Menu, Modal, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RepositoryMergeMethod } from '../repository-actions.ts'
 import type { RepositoryPullRequestStatus, RepositoryStatus } from '../repository-status.ts'
@@ -685,7 +685,7 @@ export function MergePullRequestControl({ sessionId, repository, root, t, report
   return (
     <>
       <Menu open={menuOpen} items={items} onSelect={(id: string) => openMerge(id as RepositoryMergeMethod)} onClose={() => setMenuOpen(false)} align="end" portal anchor={
-        <button type="button" style={styles.repositoryMergeTrigger} aria-label={t('repositoryMergeMenu')} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}>{t('diffMergePr')}<IconChevronDownOutline14 /></button>
+        <button type="button" style={styles.repositoryMergeTrigger} aria-label={t('repositoryMergeMenu')} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}>{t('diffMergePr')}<IconChevronDownOutlineRegular /></button>
       } />
       {dialog === undefined ? null : <style data-dsh-claude-repository-modal-styles>{styles.diffModalCss}</style>}
       <Modal className="dshClaudeRepositoryActionModal dshClaudeUtilityDialog" contentClassName="dshClaudeRepositoryActionModalContent dshClaudeUtilityContent" open={dialog !== undefined} onClose={closeDialog} title={t('diffMergePr')} closeLabel={t('diffCancel')} description={t('diffMergeDescription')} footer={

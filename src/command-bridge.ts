@@ -45,7 +45,7 @@ export interface ClaudeAgentCommandService {
 /**
  * Cordis service name the preset route provides (behind an entry-local
  * isolate realm, so each session gets its own instance) and the host reads
- * back with dsh-agent-presets' official `serviceForAgent(ctx, agent, name)`
+ * back with the agent-preset registry's `serviceFor(agent, name)`
  * — the supported cross-scope read for callers that already hold the agent.
  */
 export const CLAUDE_COMMANDS_SERVICE = 'claudeCommands'

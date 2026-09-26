@@ -1,5 +1,8 @@
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { ClientContext, ISessions, IWorkspaces, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionInput } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 
@@ -12,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDefinition, selectClaudeTurn } from './conversation-sidecar.ts'
+import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDefinition } from './conversation-sidecar.ts'
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
@@ -24,7 +27,6 @@ import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
 import { ClaudePlanHeaderAction, type ClaudePlanHeaderActionInjected } from './ClaudePlanHeaderAction.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
-import { ClaudeQueueDock, type ClaudeQueueDockInjected } from './ClaudeQueueDock.tsx'
 import type { ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { CLAUDE_TAB_KINDS, registerClaudeSidebarTabs } from './sidebar-tabs.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -48,6 +50,7 @@ import { restyleHostChrome } from './host-chrome.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
+import { mainSessionId } from './main-session.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
@@ -70,6 +73,11 @@ interface UiConversationFace {
   binding(sessionId: string): {
     target(target: string): { subscribe(listener: () => void): () => void; getSnapshot(): unknown }
   }
+}
+
+interface UiWorkspaceFace {
+  connectWorkspace?(workspaceId: string): Promise<SessionId>
+  openSession?(sessionId: SessionId): void
 }
 
 interface AgentPresetRemote {
@@ -103,7 +111,7 @@ function sessionInput(conversation: IConversation, scope: SessionScope): Session
   return conversation.input.for(scope as never)
 }
 
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   const namespace = 'settings.claude-code'
   const diagnostics = createClaudeDiagnosticsReporter()
   // Assert the Host still matches this package's assumptions. The Desktop build
@@ -111,7 +119,7 @@ export function apply(ctx: ClientContext): void {
   // happens to be installed rather than the Host this runs inside; drift is
   // invisible until a feature silently stops appearing.
   for (const finding of claudeBootCheckFindings({
-    services: inject,
+    services: [...inject, 'uiWorkspace'],
     resolve: name => ctx.get(name),
   })) diagnostics.report('boot-check', finding)
   // The scoped custom properties cannot be read here: the Host publishes them
@@ -148,12 +156,12 @@ export function apply(ctx: ClientContext): void {
   const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
   // Desktop 0.1.2 split the Workspace runtime in two: the `workspaces`
   // controller kept create/delete/list, while `connectWorkspace` moved to a
-  // new `uiWorkspace` service. Resolve whichever half this Host ships rather
-  // than trusting the installed type declarations, which describe neither.
-  const uiWorkspace = ctx.get('uiWorkspace') as Partial<Pick<IWorkspaces, 'connectWorkspace'>> | undefined
-  const connectWorkspace: IWorkspaces['connectWorkspace'] | undefined
-    = uiWorkspace?.connectWorkspace?.bind(uiWorkspace)
-    ?? (typeof workspaces?.connectWorkspace === 'function' ? workspaces.connectWorkspace.bind(workspaces) : undefined)
+  // new `uiWorkspace` service. Host 0.1.7 also moved opening a Session there
+  // (`sessions.open` is gone). The package ships no client declarations, so
+  // this seat is typed locally.
+  const uiWorkspace = ctx.get('uiWorkspace') as UiWorkspaceFace | undefined
+  const connectWorkspace = uiWorkspace?.connectWorkspace?.bind(uiWorkspace)
+  const openSession = (id: SessionId): void => { uiWorkspace?.openSession?.(id) }
   // Deleting a workspace only mutates the durable registry -- no agent edge,
   // no server-side event -- so the Host would never tell the plugin its
   // worktree is now unclaimed. Watching the list here is the only place that
@@ -207,10 +215,14 @@ export function apply(ctx: ClientContext): void {
       // `this`.
       sessions: {
         subscribe: (listener: () => void) => sessions.list.subscribe(listener),
-        getSnapshot: () => sessions.list.getSnapshot(),
+        getSnapshot: () => {
+          const snapshot = sessions.list.getSnapshot()
+          const current = mainSessionId(snapshot)
+          return current === undefined ? snapshot : { ...snapshot, current }
+        },
       } as unknown as ClaudeSessionAlertsDeps['sessions'],
       projectionFor: id => projections.source(id),
-      open: id => { sessions.open(id as SessionId) },
+      open: id => { openSession(id as SessionId) },
       t,
     }), 'dsh-claude: session alerts')
   }
@@ -244,7 +256,7 @@ export function apply(ctx: ClientContext): void {
     },
     overviewFace: () => sessions === undefined ? undefined : {
       t,
-      openSession: id => { sessions.open(id as SessionId) },
+      openSession: id => { openSession(id as SessionId) },
       loadStatus: loadRepositoryStatusFor,
       sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
       ...(workspaces === undefined ? {} : { workspaces: workspaces.list as unknown as NonNullable<ClaudePullRequestsPanelInjected['workspaces']> }),
@@ -265,7 +277,9 @@ export function apply(ctx: ClientContext): void {
   // "the feature quietly vanished" — which is how each Desktop 2.0 breakage in
   // this package presented, with a clean Host log and a healthy boot report.
   ctx.effect(() => ctx.slots.onEntryError((key, entry, error) => {
-    const id = entry.options.id === undefined ? '' : ` id="${String(entry.options.id)}"`
+    // Host 0.1.7 also reports Factory definitions, which carry a name, not options.
+    const label = 'options' in entry ? entry.options.id : entry.name
+    const id = label === undefined ? '' : ` id="${String(label)}"`
     const message = error instanceof Error
       ? `${error.message}
 ${error.stack ?? ''}`
@@ -282,7 +296,7 @@ ${error.stack ?? ''}`
   }, ClaudeActiveTasksNode))
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
-    select: selectClaudeTurn,
+    id: 'claude-activity-tail',
     inject: (sessionId: string): ClaudeActivityTailInjected => ({
       t,
       openTasks: turn => openTasksPanel(sessionId, turn),
@@ -440,7 +454,7 @@ ${error.stack ?? ''}`
     locale: namespace,
   }, () => <ClaudeSelectionAsk
     t={t}
-    currentSessionId={() => sessions?.list.getSnapshot().current as string | undefined}
+    currentSessionId={() => sessions === undefined ? undefined : mainSessionId(sessions.list.getSnapshot())}
     ownsSession={sessionId => projections.source(sessionId).getSnapshot().owned}
     {...(sessions === undefined || conversation === undefined ? {} : {
       insertIntoChat: (sessionId: string, text: string) => {
@@ -508,7 +522,7 @@ ${error.stack ?? ''}`
     // of the seat must not tear down and rebuild every subscription.
     const rewind: ClaudeRewindInjected = {
       t,
-      currentSessionId: () => sessions.list.getSnapshot().current as string | undefined,
+      currentSessionId: () => mainSessionId(sessions.list.getSnapshot()),
       subscribeSessions: listener => sessions.list.subscribe(listener),
       chatOf: sessionId => claudeChatSource(sessionId),
       projectionOf: sessionId => projections.source(sessionId),
@@ -527,28 +541,6 @@ ${error.stack ?? ''}`
     }, () => <ClaudeRewind {...rewind} />))
   }
 
-  if (sessions !== undefined && conversation !== undefined) {
-    // Shadow the Host queue strip: list-slot entries sharing an id form one
-    // cell and the lowest priority renders, so this replaces it app-wide with
-    // a strip that matches the repository status bar.
-    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-      name: 'conversation.input.dock',
-      id: 'queue',
-      order: 20,
-      priority: -10,
-      locale: namespace,
-      inject: (sessionId: string): ClaudeQueueDockInjected => {
-        const scope = sessions.scope(sessionId as SessionId)
-        const scoped = scope === undefined ? undefined : (scope as unknown as { get(name: string): unknown }).get('conversation') as IConversation | undefined
-        const target = scoped ?? conversation
-        return {
-          t,
-          updateQueue: (itemId, action) => target.updateQueue(itemId as never, action as never),
-          notify: (level, text) => { if (scope !== undefined) sessionInput(conversation, scope).notify(level, text) },
-        }
-      },
-    }, ClaudeQueueDock))
-  }
   if (sessions !== undefined && workspaces !== undefined && connectWorkspace !== undefined && conversation !== undefined && connection !== undefined && remote !== undefined) {
     /** Attach a prepared worktree to its session without blocking the flow. */
     const bindLease = (leaseId: string | undefined, targetSessionId: SessionId): void => {
@@ -604,7 +596,6 @@ ${error.stack ?? ''}`
           if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
           const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
           if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-          sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
           await carryPermissionMode(sourceSessionId, targetSessionId)
           const targetInput = sessionInput(conversation, targetScope)
           onProgress('transferring-draft')
@@ -615,7 +606,7 @@ ${error.stack ?? ''}`
           // it here once left the prepared worktree holding the user's typed
           // message with no way to send it when the route was slow.
           bindLease(prepared.leaseId, targetSessionId)
-          sessions.open(targetSessionId)
+          openSession(targetSessionId)
           onProgress('submitting')
           targetInput.submit()
           sourceInput.setDraft('')
@@ -647,7 +638,6 @@ ${error.stack ?? ''}`
               if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
               const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
               if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-              sessions.noteAgentPreset?.(targetSessionId, presetResponse.value)
               await carryPermissionMode(sourceSessionId, targetSessionId)
               const targetInput = sessionInput(conversation, targetScope)
               report('transferring-draft')

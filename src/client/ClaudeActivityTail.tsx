@@ -3,10 +3,10 @@ import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
-import type { ClaudeTurnMarker } from './conversation-sidecar.ts'
+import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { summarizeTurnTasks, tasksForTurn } from './ClaudeTasksPanel.tsx'
 import { ClaudeTurnUsage } from './ClaudeActivityNode.tsx'
-import { latestTurnUsage } from './conversation-sidecar.ts'
+import { latestTurnUsage, selectClaudeTurn } from './conversation-sidecar.ts'
 import * as styles from './styles.ts'
 
 const MAX_HOVER_TASKS = 6
@@ -17,8 +17,7 @@ export interface ClaudeActivityTailInjected {
   openTasks: (turn: number) => void
 }
 
-export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected {
-  matched: ClaudeTurnMarker
+export interface ClaudeActivityTailProps extends ClaudeActivityTailInjected, Pick<TurnTailOwnerProps, 'turn'> {
   useClaudeProjection: SnapshotSelectorHook<ClaudeClientProjection>
 }
 
@@ -128,6 +127,8 @@ export function ClaudeTurnFooter({ turn, useClaudeProjection, t, openTasks }: Cl
   )
 }
 
-export function ClaudeActivityTail({ matched, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
+export function ClaudeActivityTail({ turn, useClaudeProjection, t, openTasks }: ClaudeActivityTailProps) {
+  const matched = selectClaudeTurn({ turn })
+  if (matched === null) return null
   return <ClaudeTurnFooter turn={matched.turn} useClaudeProjection={useClaudeProjection} t={t} openTasks={openTasks} />
 }

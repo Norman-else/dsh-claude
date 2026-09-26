@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ClaudeClientProjection, ClaudeProjectionSource, ClaudeProjectionStore } from '../src/client/projection.ts'
 import { createClaudeCommandSource, submitClaudeCommand } from '../src/client/claude-command-source.ts'
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, IconListPenOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconListPenOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudePromptView } from '../prompts.ts'
 import type { ClaudeClientProjection } from './projection.ts'
@@ -184,7 +184,7 @@ export function ClaudePromptSaveAction({
           // unavailable rather than by failing once pressed.
           disabled={draft.trim() === ''}
           onClick={() => { if (panel === undefined) open(); else close() }}
-        ><IconListPenOutline16 size={14} /></button>
+        ><IconListPenOutlineRegular size={14} /></button>
       </Tooltip>
       {panel === undefined || typeof document === 'undefined' ? null : createPortal(
         <div ref={panelRef} style={{ ...styles.promptSaveCard, ...position }} role="dialog" aria-label={label}>

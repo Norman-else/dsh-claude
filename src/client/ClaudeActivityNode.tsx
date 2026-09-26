@@ -3,8 +3,8 @@ import {
   DiffBlock,
   type DiffBlockLabels,
   DisclosureRow,
-  IconApiOutline14,
-  IconThinkOutline14,
+  IconApiOutlineRegular,
+  IconThinkOutlineRegular,
   StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
@@ -117,9 +117,9 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
   const summary = activity.summary ?? (running ? t('running') : state === 'error' ? t('failed') : t('done'))
   const body = activity.kind === 'thinking' || activity.kind === 'steering' ? activity.summary : detail
   const icon = activity.kind === 'thinking'
-    ? <IconThinkOutline14 size={14} />
+    ? <IconThinkOutlineRegular size={14} />
     : state === 'done'
-      ? <IconApiOutline14 size={14} />
+      ? <IconApiOutlineRegular size={14} />
       : <StateDot state={state} />
   return (
     <DisclosureRow
@@ -270,7 +270,9 @@ export function diffBlockLabels(t: Translate): DiffBlockLabels {
     collapseAria: t('diffCardCollapse'),
     expand,
     expandAria: expand,
-    files: count => t('diffCardFiles', { count }),
+    codeLabel: t('codeBlockTitle'),
+    wrapLabel: t('codeBlockWrap'),
+    unwrapLabel: t('codeBlockUnwrap'),
   }
 }
 
@@ -390,7 +392,7 @@ export function ClaudeTranscriptToolGroup({
         leadingClassName="dsh-claude-flow-leading"
         titleClassName="dsh-claude-flow-title"
         chevronClassName="dsh-claude-flow-chevron"
-        icon={failed ? <StateDot state="error" /> : running ? <StateDot state="ongoing" /> : <IconApiOutline14 size={14} />}
+        icon={failed ? <StateDot state="error" /> : running ? <StateDot state="ongoing" /> : <IconApiOutlineRegular size={14} />}
         title={summary}
         open={open}
         expandable

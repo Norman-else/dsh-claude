@@ -97,7 +97,7 @@ describe('Claude agent preset label', () => {
     const markup = render('claude', [], 'projection')
 
     expect(markup).toContain('dsh-claude-preset-mark')
-    expect(markup).not.toContain('IconAgentPresetOutline16')
+    expect(markup).not.toContain('IconAgentPresetOutlineRegular')
   })
 
   it('renders nothing until the session records a preset', () => {

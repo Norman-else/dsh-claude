@@ -93,6 +93,9 @@ export type ClaudeTurnStreamEvent =
   | { type: 'thinking'; text: string }
   | { type: 'usage'; usage: ClaudeUsage }
   | { type: 'segment-complete'; text: string }
+  /** The turn's closing prose, sent under the plugin renderer just before
+   *  `complete` so the Host has a final answer to keep outside its fold. */
+  | { type: 'answer'; text: string }
   | { type: 'complete'; text: string }
 
 export type ClaudeThinkingMode = 'off' | 'ultracode' | EffortLevel
@@ -1912,6 +1915,7 @@ export class ClaudeSupervisor {
         phase: 'completed',
         title: 'Claude Code turn completed',
       })
+      this.#markAnswer(active)
       await this.#flushTranscript(active)
       active.output.push({ type: 'complete', text: active.text })
       active.output.close()
@@ -1995,6 +1999,30 @@ export class ClaudeSupervisor {
 
   async #flushTranscript(active: ActiveTurn): Promise<void> {
     await this.#sidecar.flushTranscriptText(active.agent.id as string).catch(() => undefined)
+  }
+
+  /** Hand the closing prose segment to the Host as the turn's answer.
+   *
+   *  Host 0.1.7 folds a finished turn behind a disclosure and keeps only the
+   *  final assistant answer outside it. Under the plugin renderer the answer
+   *  would otherwise be empty, folding Claude's reply away with the rest of
+   *  the turn. The segment is re-stamped so the plugin transcript stops
+   *  drawing it; a turn that ended on a tool call has no closing prose and
+   *  hands nothing over. */
+  #markAnswer(active: ActiveTurn): void {
+    if (active.native || active.transcriptText.trim().length === 0 || active.transcriptTextOrdinal === undefined) return
+    try {
+      this.#sidecar.appendTranscriptText(active.agent.id as string, {
+        text: active.transcriptText,
+        answer: true,
+        turn: active.cursor.turn,
+        step: active.cursor.step,
+        ordinal: active.transcriptTextOrdinal,
+      })
+    } catch {
+      // Transcript persistence is presentational and must not change a Claude outcome.
+    }
+    active.output.push({ type: 'answer', text: active.transcriptText })
   }
 
   #closeTranscriptTextSegment(active: ActiveTurn): void {

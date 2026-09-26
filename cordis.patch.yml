@@ -1,12 +1,23 @@
-# dsh-claude host bundle. The preset stays inside this package as a system
-# preset, so removing the profile dependency removes the complete integration.
-- id: agent-presets
-  config:
-    default: standard
-    roots:
-      - path: !!js "process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(ctx.baseUrl).resolve('@norman-else/dsh-claude/package.json')), 'preset')"
-        trust: system
-
+# dsh-claude host bundle. Host 0.1.7 declares Agent presets as ordinary plugin
+# rows registered with `agent-preset-registry`; it no longer scans preset
+# directories. Removing the profile dependency removes the declaration with it.
 - insert:
+    - id: preset-claude
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: claude
+        name: Claude
+        description: Use the local Claude Code as the complete agent runtime inside DSH.
+        order: 10
+        plugins:
+          # Claude Code owns the inner agent loop and tools; this preset
+          # contributes only the request-route override.
+          - id: claude-code-route
+            name: '@norman-else/dsh-claude/preset-route'
+            # Entry-local isolate realm: each Agent's preset mount gets its own
+            # claudeCommands service instance, read through the registry's
+            # serviceFor(), so sessions never share one catalog.
+            isolate:
+              claudeCommands: true
     - id: llm-claude
       name: '@norman-else/dsh-claude'

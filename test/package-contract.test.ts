@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as buildConfigModule from '../tsdown.config.ts'
@@ -6,11 +6,16 @@ import * as buildConfigModule from '../tsdown.config.ts'
 const root = join(import.meta.dirname, '..')
 
 describe('published package contract', () => {
-  it('ships each system preset under its preset ID directory', async () => {
-    const presetRoot = join(root, 'preset')
-    expect(await readdir(presetRoot)).toEqual(['claude'])
-    await expect(readFile(join(presetRoot, 'claude', 'agent.cordis.yml'), 'utf8')).resolves.toContain("name: '@norman-else/dsh-claude/preset-route'")
-    await expect(readFile(join(presetRoot, 'claude', 'preset.yml'), 'utf8')).resolves.toContain('name: Claude')
+  // Host 0.1.7's registry does not scan preset directories: a preset exists
+  // only as a declared `@deepseek-ai/dsh-agent-preset` row.
+  it('declares the Claude preset as an agent-preset row in the bundle patch', async () => {
+    const patch = await readFile(join(root, 'cordis.patch.yml'), 'utf8')
+    expect(patch).toContain("name: '@deepseek-ai/dsh-agent-preset'")
+    expect(patch).toMatch(/config:\s+id: claude\s+name: Claude/u)
+    expect(patch).toContain("name: '@norman-else/dsh-claude/preset-route'")
+    expect(patch).toContain('claudeCommands: true')
+    // The pre-0.1.7 directory root patched a Host entry that no longer exists.
+    expect(patch).not.toContain('id: agent-presets')
   })
 
   it('contains no legacy claude-code-cli runtime or migration identifier', async () => {
@@ -41,34 +46,28 @@ describe('published package contract', () => {
       .map(([, version]) => version)
     // Issue #19: a `*` peer let a 0.1.1-rc.2 Host install 0.1.37+ and die on
     // `import { ToolCallId } from '@deepseek-ai/dsh-llm'`. Every dsh-* peer
-    // must name the line the plugin is built on; the two packages that never
-    // got a 0.1.5-rc.1 release stay on the rc.2 floor.
+    // must name the line the plugin is built on. Host 0.1.7 replaced the preset
+    // registry and renamed the shared icons, so it is also the floor.
     const dshPeers = Object.entries(packageJson.peerDependencies).filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
     expect(dshPeers.length).toBeGreaterThan(0)
     for (const [name, range] of dshPeers) {
-      expect(range, name).not.toBe('*')
-      expect(range, name).toBe(name === '@deepseek-ai/dsh-client-runtime' ? '>=0.1.1-rc.2' : '>=0.1.5-rc.1')
+      expect(range, name).toBe('>=0.1.7-rc.2')
     }
-    expect(packageJson.peerDependencies['@deepseek-ai/dsh-llm']).toBe('>=0.1.5-rc.1')
-    expect(packageJson.peerDependencies['@deepseek-ai/dsh-session']).toBe('>=0.1.5-rc.1')
+    expect(packageJson.peerDependencies['@deepseek-ai/dsh-agent-preset-registry']).toBe('>=0.1.7-rc.2')
     expect(dshDevelopmentVersions.length).toBeGreaterThan(0)
-    // Desktop 2.0.10 uses 0.1.5-rc.2. Retain the two legacy development
-    // packages on their published line; the runtime uses split controllers.
-    expect(new Set(dshDevelopmentVersions)).toEqual(new Set(['0.1.5-rc.2', '0.1.1-rc.2']))
-    expect(Object.entries(packageJson.devDependencies)
-      .filter(([, version]) => version === '0.1.1-rc.2')
-      .map(([name]) => name)
-      .sort()).toEqual(['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-host-apiproxy'])
-    expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.5-rc.2")
+    // Desktop 2.0.15 uses 0.1.7-rc.2, and every development package is on it.
+    expect(new Set(dshDevelopmentVersions)).toEqual(new Set(['0.1.7-rc.2']))
+    expect(workspace).toContain("'@deepseek-ai/dsh-*': 0.1.7-rc.2")
     expect(host).toContain("'attachments'")
     expect(host).toContain('ctx.attachments')
   })
 
   it('documents the DSH package line the plugin is actually built on', async () => {
     const readme = await readFile(join(root, 'README.md'), 'utf8')
-    expect(readme).toContain('developed against the DSH `0.1.5-rc.2` package line')
-    expect(readme).not.toContain('developed against the DSH `0.1.1-rc.2` package line')
+    expect(readme).toContain('developed against the DSH `0.1.7-rc.2` package line')
+    expect(readme).not.toContain('developed against the DSH `0.1.5-rc.2` package line')
     expect(readme).toContain('0.1.36')
+    expect(readme).toContain('0.1.57')
   })
 
   it('declares every required client service provider in the boot graph', async () => {

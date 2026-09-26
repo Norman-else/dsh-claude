@@ -26,7 +26,7 @@ describe('Claude client boot check', () => {
       services,
       resolve: (name: string) => (name === 'slots' ? {} : undefined),
     })
-    expect(findings).toEqual(['service "uiConversation" is declared in inject but the Host does not provide it'])
+    expect(findings).toEqual(['service "uiConversation" is not provided by the Host'])
   })
 })
 

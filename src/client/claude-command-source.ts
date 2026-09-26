@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
   ClientSessionContext,
   CommandClaim,
@@ -27,6 +27,7 @@ function findCommand(
 
 function claimFor(ctx: ClientContext, session: ClientSessionContext, command: ClaudeCommandView): CommandClaim {
   return {
+    name: command.publicName,
     token: `/${command.publicName} `,
     ...(command.hint === undefined ? {} : { hint: command.hint }),
     async submit(args) {

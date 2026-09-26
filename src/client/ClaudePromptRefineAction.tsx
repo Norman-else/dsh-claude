@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  IconLoadingOutline16,
-  IconRefreshOutline16,
-  IconSparkle16,
+  IconLoadingOutlineRegular,
+  IconRefreshOutlineRegular,
+  IconSparkleRegular,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -94,10 +94,10 @@ export function ClaudePromptRefineAction({
             horizontal rules, which beside the save button's lines-and-pen
             reads as a second list rather than as a different verb. */}
         {busy
-          ? <IconLoadingOutline16 size={14} className={styles.promptSpinClass} />
+          ? <IconLoadingOutlineRegular size={14} className={styles.promptSpinClass} />
           : undoable
-            ? <IconRefreshOutline16 size={14} className={styles.promptUndoClass} />
-            : <IconSparkle16 size={14} />}
+            ? <IconRefreshOutlineRegular size={14} className={styles.promptUndoClass} />
+            : <IconSparkleRegular size={14} />}
       </button>
     </Tooltip>
   )

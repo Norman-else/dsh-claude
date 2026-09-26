@@ -10,6 +10,14 @@ import type { ClaudePermissionMode } from '../src/permission-mode.ts'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
+// The Host 0.1.7 Tooltip measures its bubble with a ResizeObserver, which
+// jsdom does not ship; an inert one lets the bubble mount.
+globalThis.ResizeObserver ??= class {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
 const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string =>
   en[key].replace(/\{(\w+)\}/gu, (_match, name: string) => String(params?.[name] ?? ''))
 

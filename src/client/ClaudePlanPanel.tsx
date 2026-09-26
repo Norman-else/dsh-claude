@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { IconCloseOutline16, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeActivityEvent } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -303,7 +303,7 @@ export function ClaudePlanPanel({ useClaudeProjection, t, sessionId, closeDetail
           {review === undefined ? null : <span style={badge(review.state)}>{t(STATE_LABEL[review.state])}</span>}
         </div>
         <div style={styles.planHeaderEnd}>
-          <button type="button" className={styles.panelIconButtonClass} aria-label={t('planClose')} onClick={closeDetails}><IconCloseOutline16 /></button>
+          <button type="button" className={styles.panelIconButtonClass} aria-label={t('planClose')} onClick={closeDetails}><IconCloseOutlineRegular /></button>
         </div>
       </div>
       <div style={styles.tasksBody} ref={body}>

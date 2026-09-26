@@ -405,6 +405,29 @@ describe('Claude client sidecar projection', () => {
     store.dispose()
   })
 
+  it('stamps a settled text segment as the answer from a later full-text line', async () => {
+    vi.useFakeTimers()
+    const stream = carrier()
+    const { store } = projectionStore([stream])
+    const source = store.source('session')
+    const unsubscribe = source.subscribe(() => {})
+    await flush()
+    stream.push('session', {
+      ...valid,
+      type: 'snapshot',
+      activities: [{ turn: 1, step: 1, ordinal: 0, kind: 'text', phase: 'updated', text: 'Done.' }],
+    })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    stream.push('session', { type: 'text', turn: 1, step: 1, ordinal: 0, text: 'Done.', answer: true })
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(selectStepActivities(source.getSnapshot(), 1, 1)[0]).toMatchObject({ text: 'Done.', answer: true })
+    unsubscribe()
+    stream.close()
+    store.dispose()
+  })
+
   it('applies activity and metadata delta lines', async () => {
     vi.useFakeTimers()
     const stream = carrier()
