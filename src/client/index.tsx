@@ -51,6 +51,7 @@ import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepW
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 import { mainSessionId } from './main-session.ts'
+import { releaseAfterSubmission, retainForHandoff } from './session-handoff.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
@@ -592,23 +593,30 @@ ${error.stack ?? ''}`
           const workspace = await workspaces.create({ path: prepared.path })
           onProgress('starting-session')
           const targetSessionId = await connectWorkspace(workspace.workspaceId)
-          const targetScope = sessions.scope(targetSessionId)
-          if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-          const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
-          if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-          await carryPermissionMode(sourceSessionId, targetSessionId)
-          const targetInput = sessionInput(conversation, targetScope)
-          onProgress('transferring-draft')
-          if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
-          if (draft !== '') targetInput.setDraft(draft)
-          // Lease bookkeeping only matters at cleanup time, so it rides
-          // alongside the submit the way the ticket assignment does. Awaiting
-          // it here once left the prepared worktree holding the user's typed
-          // message with no way to send it when the route was slow.
-          bindLease(prepared.leaseId, targetSessionId)
-          openSession(targetSessionId)
-          onProgress('submitting')
-          targetInput.submit()
+          const reference = await retainForHandoff(sessions, targetSessionId)
+          try {
+            const targetScope = sessions.scope(targetSessionId)
+            if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+            const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+            if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+            await carryPermissionMode(sourceSessionId, targetSessionId)
+            const targetInput = sessionInput(conversation, targetScope)
+            onProgress('transferring-draft')
+            if (imageIds.length > 0 && !targetInput.addAttachments(imageIds)) throw new Error(t('repositoryDraftTransferFailed'))
+            if (draft !== '') targetInput.setDraft(draft)
+            // Lease bookkeeping only matters at cleanup time, so it rides
+            // alongside the submit the way the ticket assignment does. Awaiting
+            // it here once left the prepared worktree holding the user's typed
+            // message with no way to send it when the route was slow.
+            bindLease(prepared.leaseId, targetSessionId)
+            openSession(targetSessionId)
+            onProgress('submitting')
+            targetInput.submit()
+          } catch (error) {
+            reference.release()
+            throw error
+          }
+          releaseAfterSubmission(reference)
           sourceInput.setDraft('')
           for (const imageId of imageIds) sourceInput.removeAttachment(imageId)
         },
@@ -634,17 +642,26 @@ ${error.stack ?? ''}`
               const workspace = await workspaces.create({ path: prepared.path })
               report('starting-session')
               const targetSessionId = await connectWorkspace(workspace.workspaceId)
-              const targetScope = sessions.scope(targetSessionId)
-              if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
-              const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
-              if (!presetResponse.ok) throw new Error(presetResponse.error.message)
-              await carryPermissionMode(sourceSessionId, targetSessionId)
-              const targetInput = sessionInput(conversation, targetScope)
-              report('transferring-draft')
-              targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
-              bindLease(prepared.leaseId, targetSessionId)
-              report('submitting')
-              targetInput.submit()
+              const reference = await retainForHandoff(sessions, targetSessionId)
+              try {
+                const targetScope = sessions.scope(targetSessionId)
+                if (targetScope === undefined) throw new Error(t('repositorySessionUnavailable'))
+                const presetResponse = await remote.agentPresets.select(targetSessionId, 'claude')
+                if (!presetResponse.ok) throw new Error(presetResponse.error.message)
+                await carryPermissionMode(sourceSessionId, targetSessionId)
+                const targetInput = sessionInput(conversation, targetScope)
+                report('transferring-draft')
+                targetInput.setDraft(rawDraft.trim() === '' ? ticketPrompt(ticket) : `${rawDraft.trimEnd()}\n\n${ticketContext(ticket)}`)
+                bindLease(prepared.leaseId, targetSessionId)
+                report('submitting')
+                targetInput.submit()
+              } catch (error) {
+                reference.release()
+                throw error
+              }
+              // None of these Sessions is opened, so this hold is the only one
+              // keeping each submission alive until the Host takes it.
+              releaseAfterSubmission(reference)
             } catch (cause) {
               failures.push(`${ticket.key}: ${cause instanceof Error ? cause.message : String(cause)}`)
             }

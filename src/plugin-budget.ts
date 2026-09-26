@@ -59,3 +59,8 @@ export type PluginLane = keyof typeof PLUGIN_LANE_CAPS
 
 /** Both halves cap the multiplex at the same number. */
 export const MAX_MULTIPLEX_SESSIONS = 16
+
+/** How long a worktree hand-off holds its new Session when the Host never
+ *  reports the submitted draft taken. Releasing earlier would abort the send;
+ *  the Host's own submission path has no shorter bound to wait on. */
+export const HANDOFF_HOLD_BUDGET_MS = 120_000
