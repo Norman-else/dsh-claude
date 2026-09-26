@@ -188,6 +188,38 @@ describe('repository setup service', () => {
     expect(fake.spawn.mock.calls[8]?.[0].argv).toEqual(['/bin/git', 'branch', '-D', '--', result.branch])
   })
 
+  // The Host groups a Session only under a Workspace whose path equals its cwd,
+  // so where the worktree lives is what lets the sidebar's Workspace tree nest
+  // it under its repository.
+  it('creates worktrees under the main checkout and keeps them out of its status', async () => {
+    const { root, leasePath, worktreeRoot } = await roots()
+    const exclude = join(root, '.git', 'info', 'exclude')
+    await mkdir(join(root, '.git', 'info'), { recursive: true })
+    await writeFile(exclude, '# local ignores\n*.log', 'utf8')
+    const create = () => runtime([
+      { stdout: `${root}\n` },
+      { stdout: '# branch.head main\n' },
+      { stdout: 'main\n' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: `${join(root, '.git')}\n${exclude}\n` },
+      { stdout: '' },
+      { stdout: '' },
+    ])
+    const fake = create()
+    const service = new RepositorySetupService(fake, { leasePath, legacyWorktreeRoot: worktreeRoot })
+    const result = await service.setup(root, 'main', true)
+    expect(result.path.startsWith(join(root, '.claude', 'worktrees'))).toBe(true)
+    expect(fake.spawn.mock.calls[6]?.[0].argv).toEqual([
+      '/bin/git', 'rev-parse', '--path-format=absolute', '--git-common-dir', '--git-path', 'info/exclude',
+    ])
+    expect(await readFile(exclude, 'utf8')).toBe('# local ignores\n*.log\n/.claude/worktrees/\n')
+    // A second worktree does not add the line again.
+    await new RepositorySetupService(create(), { leasePath, legacyWorktreeRoot: worktreeRoot }).setup(root, 'main', true)
+    expect((await readFile(exclude, 'utf8')).match(/\/\.claude\/worktrees\//gu)).toHaveLength(1)
+  })
+
   it('uses a configured prefix for generated branches and preserves an explicit branch name', async () => {
     const first = await roots()
     const generatedRuntime = runtime([

@@ -66,7 +66,13 @@ interface LeaseDocument {
 
 export interface RepositorySetupServiceOptions {
   readonly leasePath?: string
+  /** One fixed directory for every new worktree. Unset, each worktree goes
+   *  under its repository's {@link IN_REPOSITORY_WORKTREE_DIR}. */
   readonly worktreeRoot?: string
+  /** Where worktrees created before they moved into the repository live; the
+   *  only directory the orphan sweep lists. Defaults to `worktreeRoot`, then
+   *  to the plugin's own directory under `$DSH_HOME`. */
+  readonly legacyWorktreeRoot?: string
   readonly branchPrefix?: () => Promise<string>
   readonly cleanupGraceMs?: number
   /** Compress the composer draft into a branch slug; `undefined` result (or an
@@ -151,6 +157,21 @@ export function worktreeDirectoryName(root: string, branch: string): string {
   return `${slug(basename(root), 'repository')}-${branchSegment(branch)}`
 }
 
+/** Where new worktrees go, relative to the repository's main checkout.
+ *
+ *  Inside the repository, not under `$DSH_HOME`: the Host only groups a
+ *  Session under a Workspace whose path equals its cwd, so a worktree is always
+ *  a Workspace of its own, and only its path decides whether the sidebar's
+ *  Workspace tree can nest it under the repository it came from. It is the
+ *  directory Claude Code's own `--worktree` uses, so one exclude line keeps
+ *  both out of `git status`. */
+export const IN_REPOSITORY_WORKTREE_DIR = join('.claude', 'worktrees')
+
+/** The line that keeps {@link IN_REPOSITORY_WORKTREE_DIR} out of the main
+ *  checkout's status; written to the local `info/exclude`, never to a tracked
+ *  `.gitignore`. */
+const WORKTREE_EXCLUDE_LINE = '/.claude/worktrees/'
+
 /** Comparable form for path identity: resolved, forward slashes, case-folded
  *  so Windows drive-letter or case spelling differences cannot hide a match. */
 export function comparablePath(value: string): string {
@@ -182,7 +203,8 @@ function lease(value: unknown): WorktreeLease | undefined {
 export class RepositorySetupService {
   readonly #runtime: RepositorySetupRuntime
   readonly #leasePath: string
-  readonly #worktreeRoot: string
+  readonly #worktreeRoot: string | undefined
+  readonly #legacyWorktreeRoot: string
   readonly #branchPrefix: () => Promise<string>
   readonly #summarizeBranch: (intent: string) => Promise<string | undefined>
   readonly #cleanupGraceMs: number
@@ -192,7 +214,8 @@ export class RepositorySetupService {
   constructor(runtime: RepositorySetupRuntime, options: RepositorySetupServiceOptions = {}) {
     this.#runtime = runtime
     this.#leasePath = options.leasePath ?? dshHomePath('plugins', 'dsh-claude', 'worktrees.json')
-    this.#worktreeRoot = options.worktreeRoot ?? dshHomePath('plugins', 'dsh-claude', 'worktrees')
+    this.#worktreeRoot = options.worktreeRoot
+    this.#legacyWorktreeRoot = options.legacyWorktreeRoot ?? options.worktreeRoot ?? dshHomePath('plugins', 'dsh-claude', 'worktrees')
     this.#branchPrefix = options.branchPrefix ?? (async () => 'claude')
     this.#summarizeBranch = options.summarizeBranch ?? (async () => undefined)
     this.#cleanupGraceMs = options.cleanupGraceMs ?? CLEANUP_GRACE_MS
@@ -425,12 +448,12 @@ export class RepositorySetupService {
     const leased = new Set(retained.map(item => comparablePath(item.path)))
     let entries: string[]
     try {
-      entries = await readdir(this.#worktreeRoot)
+      entries = await readdir(this.#legacyWorktreeRoot)
     } catch {
       return // no worktree root yet, or it is unreadable; nothing to sweep
     }
     for (const entry of entries) {
-      const path = join(this.#worktreeRoot, entry)
+      const path = join(this.#legacyWorktreeRoot, entry)
       const key = comparablePath(path)
       if (leased.has(key) || active.has(key)) continue
       try {
@@ -541,9 +564,10 @@ export class RepositorySetupService {
     const suffix = randomUUID().slice(0, 8)
     const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
     const branch = explicitBranchName ?? await this.#generatedBranch(info, baseBranch, intent, stamp, suffix, progress)
-    const path = join(this.#worktreeRoot, await this.#freeDirectoryName(root, branch))
+    const directory = this.#worktreeRoot ?? await this.#inRepositoryWorktreeRoot(git, root)
+    const path = join(directory, await this.#freeDirectoryName(directory, root, branch))
     progress('creating-worktree')
-    await mkdir(this.#worktreeRoot, { recursive: true })
+    await mkdir(directory, { recursive: true })
     // A stale registration from a deleted worktree directory would keep the
     // existing branch "checked out" and block reusing it.
     if (reuseExistingBranch) await this.#run(git, ['worktree', 'prune'], root).catch(() => undefined)
@@ -586,9 +610,34 @@ export class RepositorySetupService {
    *  directory a crash left behind -- or two branches that fold to the same
    *  segment -- would otherwise fail `worktree add` outright. Compared
    *  case-folded, since a case-insensitive filesystem would collide anyway. */
-  async #freeDirectoryName(root: string, branch: string): Promise<string> {
+  /** `<main checkout>/.claude/worktrees`, excluded from that checkout's status.
+   *  Anchored at the main checkout rather than `root`, so a worktree prepared
+   *  from inside another worktree does not nest in it. The exclude is
+   *  best-effort: failing to write it only leaves the directory visible as
+   *  untracked. */
+  async #inRepositoryWorktreeRoot(git: string, root: string): Promise<string> {
+    const dirs = await this.#run(git, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-path', 'info/exclude'], root)
+    const [commonDir = '', excludePath = ''] = dirs.exitCode === 0 ? dirs.stdout.trim().split(/\r?\n/u) : []
+    // ponytail: the main checkout is the parent of the common dir, which holds for any `<root>/.git`; a bare or GIT_DIR-relocated repository falls back to `root`.
+    const mainRoot = commonDir.length > 0 && basename(commonDir) === '.git' ? resolve(commonDir, '..') : root
+    if (excludePath.length > 0) {
+      try {
+        const current = await readFile(excludePath, 'utf8').catch(() => '')
+        if (!current.split(/\r?\n/u).some(line => line.trim() === WORKTREE_EXCLUDE_LINE)) {
+          await mkdir(resolve(excludePath, '..'), { recursive: true })
+          const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n'
+          await writeFile(excludePath, `${current}${separator}${WORKTREE_EXCLUDE_LINE}\n`, 'utf8')
+        }
+      } catch {
+        // An unwritable exclude file leaves the worktrees untracked but usable.
+      }
+    }
+    return join(mainRoot, IN_REPOSITORY_WORKTREE_DIR)
+  }
+
+  async #freeDirectoryName(directory: string, root: string, branch: string): Promise<string> {
     const base = worktreeDirectoryName(root, branch)
-    const taken = await readdir(this.#worktreeRoot).then(
+    const taken = await readdir(directory).then(
       entries => new Set(entries.map(entry => entry.toLocaleLowerCase('en-US'))),
       () => new Set<string>(),
     )
