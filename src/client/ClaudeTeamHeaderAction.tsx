@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Tooltip, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconUsersOutlineRegular, Tooltip, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeClientProjection } from './projection.ts'
@@ -20,9 +20,9 @@ export interface ClaudeTeamHeaderActionProps extends ClaudeTeamHeaderActionInjec
 const EMPTY_TASKS: readonly ClaudeTaskInfo[] = []
 const MAX_MESSAGES = 6
 
-/** Same seat and resting look as the diff trigger next to it; the popover
- *  borrows the Host menu surface so it reads as one family with the Host's
- *  own background-job list. */
+/** Same seat and resting look as the diff trigger next to it, and the same
+ *  people icon the Host's own team roster wears; the popover borrows the
+ *  Host menu surface so it reads as one family with the background-job list. */
 const TEAM_CSS = [
   '.dsh-claude-team-root{position:relative;display:inline-flex;flex:none}',
   '.dsh-claude-header-team{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:5px;',
@@ -34,7 +34,7 @@ const TEAM_CSS = [
     'background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.dsh-claude-header-team:focus-visible{outline:none}',
   '.dsh-claude-header-team>*{flex:none}',
-  '.dsh-claude-header-team>svg{width:18px;height:18px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}',
+  '.dsh-claude-header-team>svg{display:block}',
   '.dsh-claude-team-dot{width:6px;height:6px;border-radius:999px;background:var(--dsw-alias-label-tertiary)}',
   '.dsh-claude-team-dot[data-state="running"]{background:var(--dsw-static-blue-450)}',
   '.dsh-claude-team-dot[data-state="failed"]{background:var(--dsw-alias-state-error-primary)}',
@@ -68,16 +68,6 @@ function ensureCss(): void {
   document.head.appendChild(element)
 }
 
-function TeamGlyph() {
-  return (
-    <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-      <circle cx="6.5" cy="6" r="2.6" />
-      <circle cx="12.5" cy="7" r="2.1" />
-      <path d="M2.5 14.5c.4-2.6 2-4 4-4s3.6 1.4 4 4M11 14.5c.3-1.9 1.3-3 2.5-3 1 0 1.8.7 2 2" />
-    </svg>
-  )
-}
-
 function dotState(members: readonly ClaudeTeamMember[]): 'running' | 'failed' | 'completed' | 'idle' {
   if (members.some(member => member.status === 'running')) return 'running'
   if (members.some(member => member.status === 'failed' || member.status === 'killed')) return 'failed'
@@ -108,7 +98,7 @@ export function ClaudeTeamHeaderAction({ t, sessionId, openTeammate, useClaudePr
           aria-haspopup="dialog"
           onClick={() => { setOpen(value => !value) }}
         >
-          <TeamGlyph />
+          <IconUsersOutlineRegular size={16} />
           <span>{team.members.length + 1}</span>
           <span className="dsh-claude-team-dot" data-state={state} aria-hidden="true" />
         </button>
