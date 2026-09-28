@@ -51,12 +51,11 @@ const WIDE_ROUTE = /\[1m\]$/u
 const SEED: readonly ClaudeModelRow[] = [
   { id: 'default', value: 'default', name: 'Default (recommended)', description: '' },
   { id: 'opus[1m]', value: 'opus[1m]', name: 'Opus (1M context)', description: '', contextWindow: 1_000_000 },
+  { id: 'opus', value: 'opus', name: 'Opus', description: '' },
   { id: 'fable', value: 'fable', name: 'Fable', description: '' },
   { id: 'sonnet', value: 'sonnet', name: 'Sonnet', description: '' },
   { id: 'haiku', value: 'haiku', name: 'Haiku', description: '' },
 ]
-
-const SEEDED = withStandardRoutes(SEED)
 
 /** A 1M-context route spells it in the id, so this needs no capacity table
  *  either. It is only a floor: the supervisor overrides it with the window the
@@ -114,39 +113,43 @@ let inflight: Promise<readonly ClaudeModelRow[]> | undefined
  *   CLI that answers without a catalog cannot blank the selector.
  */
 /**
- * The standard-context route beside every 1M one the lineup lists alone.
+ * The stable aliases, kept in the selector whatever this CLI release lists.
  *
- * The CLI's `/model` lineup names Opus only as `opus[1m]`, yet the bare
- * `opus` is a spelling it still dispatches, and one that reaches DSH from
- * outside the lineup: the profile's default model (`agent-default-model`
- * ships `claude/opus`) and every session that picked Opus while the lineup
- * still carried it. DSH matches a persisted selection to a catalog row by
- * exact id and prints `claude/opus` for one it cannot find, so a family's
- * bare alias is always advertised next to its wide route.
+ * The `/model` lineup is not stable across releases: 2.1.280 named Opus only
+ * as `opus[1m]`, 2.1.283 only as `opus`. DSH persists a selection as a row id
+ * and prints the raw `claude/<id>` for one no row carries, so a lineup that
+ * drops an alias strands every session and profile default that picked it.
+ * The seed aliases are spellings every release accepts, so they stay
+ * selectable -- after the lineup's own rows, under the seed's names.
+ * ponytail: the seed is the whole memory; an alias a future release adds and
+ * a later one drops would need remembered history.
  */
-function withStandardRoutes(rows: readonly ClaudeModelRow[]): readonly ClaudeModelRow[] {
-  const taken = new Set(rows.map(row => row.id))
-  return rows.flatMap(row => {
-    const bare = row.id.replace(WIDE_ROUTE, '')
-    // Only where the CLI itself spells the route as an alias (`opus[1m]`):
-    // its bare form is then an alias too. A concrete id (`claude-x-9[1m]`)
-    // says nothing about which short spellings the CLI accepts.
-    if (bare === row.id || row.value !== row.id || taken.has(bare)) return [row]
-    taken.add(bare)
-    const { contextWindow: _wide, ...rest } = row
-    return [row, { ...rest, id: bare, value: bare, name: row.name.replace(/\s*\(1M context\)$/u, '') }]
-  })
+function withStableAliases(rows: readonly ClaudeModelRow[]): readonly ClaudeModelRow[] {
+  const listed = new Set(rows.map(row => row.id))
+  return [...rows, ...SEED.filter(row => !listed.has(row.id))]
+}
+
+/** Ids a concrete CLI id must not claim: the lineup's own alias rows and the
+ *  stable aliases, whose meaning a persisted selection depends on. */
+function reservedAliases(models: readonly ModelInfo[]): Set<string> {
+  const reserved = new Set(SEED.map(row => row.id))
+  for (const row of models) if (claudeModelAlias(row.value) === row.value) reserved.add(row.value)
+  return reserved
 }
 
 export function recordClaudeModels(models: readonly ModelInfo[]): void {
   if (models.length === 0) return
   const taken = new Set<string>()
-  latest = withStandardRoutes(models.map(row => {
+  const reserved = reservedAliases(models)
+  latest = withStableAliases(models.map(row => {
     const alias = claudeModelAlias(row.value)
     // Two rows of one family in the same lineup (a previous generation kept
     // alongside the current one) cannot share an id; the later row keeps the
     // CLI's own spelling rather than silently shadowing the first.
-    const id = taken.has(alias) ? row.value : alias
+    // A concrete id (`claude-fable-5`) never takes an alias another row or a
+    // persisted selection already means (`fable`): it keeps its own spelling.
+    const concrete = alias !== row.value
+    const id = taken.has(alias) || (concrete && reserved.has(alias)) ? row.value : alias
     taken.add(id)
     return projectModel(row, id)
   }))
@@ -154,7 +157,7 @@ export function recordClaudeModels(models: readonly ModelInfo[]): void {
 
 /** The lineup to advertise: whatever the CLI last reported, else the seed. */
 export function latestClaudeModels(): readonly ClaudeModelRow[] {
-  return latest ?? SEEDED
+  return latest ?? SEED
 }
 
 /** A throwaway probe should not outlive a wedged CLI. */

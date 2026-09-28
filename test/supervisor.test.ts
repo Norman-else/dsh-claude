@@ -1040,9 +1040,9 @@ describe('Claude supervisor', () => {
     query.push(result())
     await collect(output)
 
-    expect(latestClaudeModels()).toEqual([
+    expect(latestClaudeModels()[0]).toEqual(
       { id: 'nextthing[1m]', value: 'claude-nextthing-9[1m]', name: 'Nextthing', description: 'Ships between plugin releases', contextWindow: 1_000_000 },
-    ])
+    )
     await runtime.dispose()
   })
 

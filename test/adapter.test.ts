@@ -423,6 +423,12 @@ describe('Claude Code model catalog', () => {
     expect(models.map(model => ({ id: model.id, name: model.name }))).toEqual([
       { id: 'default', name: 'Default (recommended)' },
       { id: 'nextthing', name: 'Nextthing' },
+      // The stable aliases this lineup did not list stay selectable after it.
+      { id: 'opus[1m]', name: 'Opus (1M context)' },
+      { id: 'opus', name: 'Opus' },
+      { id: 'fable', name: 'Fable' },
+      { id: 'sonnet', name: 'Sonnet' },
+      { id: 'haiku', name: 'Haiku' },
     ])
   })
 
@@ -469,8 +475,14 @@ describe('Claude Code model catalog', () => {
       { value: 'claude-3-5-sonnet-20241022', displayName: 'Sonnet', description: '' },
     ])
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
-    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['fable[1m]', 'sonnet'])
+    // A concrete id takes its family alias unless a stable alias already means
+    // something else: `sonnet` is the latest Sonnet, so an older concrete
+    // Sonnet keeps its own spelling rather than hijacking a persisted `sonnet`.
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual([
+      'fable[1m]', 'claude-3-5-sonnet-20241022', 'default', 'opus[1m]', 'opus', 'fable', 'sonnet', 'haiku',
+    ])
     expect(claudeModelValue('fable[1m]')).toBe('claude-fable-5-1[1m]')
+    expect(claudeModelValue('sonnet')).toBe('sonnet')
   })
 
   it('keeps a family apart from its 1M route, and keeps a repeated family addressable', () => {
@@ -479,25 +491,28 @@ describe('Claude Code model catalog', () => {
       { value: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: '' },
       { value: 'claude-opus-4-8', displayName: 'Opus 4.8', description: '' },
     ])
-    expect(latestClaudeModels().map(row => row.id)).toEqual(['opus', 'opus[1m]', 'claude-opus-4-8'])
+    expect(latestClaudeModels().map(row => row.id).slice(0, 3)).toEqual(['claude-opus-5', 'claude-opus-5[1m]', 'claude-opus-4-8'])
   })
 
-  it('advertises the bare alias beside a 1M route the lineup lists alone', () => {
-    // The CLI lineup names Opus only as `opus[1m]`, but the profile default is
-    // `claude/opus` and older sessions persisted `opus`; DSH prints the raw
-    // `claude/opus` for any selection no row carries.
+  it('keeps every stable alias selectable whichever of them this release lists', () => {
+    // 2.1.280 listed Opus only as `opus[1m]`, 2.1.283 only as `opus`. A
+    // session or profile default that picked the other one must still find a
+    // row, or DSH prints the raw `claude/<id>`.
     recordClaudeModels([
-      { value: 'default', resolvedModel: 'claude-opus-5-5[1m]', displayName: 'Default (recommended)', description: '' },
-      { value: 'opus[1m]', resolvedModel: 'claude-opus-5-5[1m]', displayName: 'Opus (1M context)', description: 'Most capable' },
-      { value: 'sonnet', displayName: 'Sonnet', description: '' },
+      { value: 'default', resolvedModel: 'claude-opus-5-5', displayName: 'Default (recommended)', description: '' },
+      { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus 5.5', description: '' },
+      { value: 'claude-fable-5', displayName: 'Fable 5', description: '' },
     ])
     expect(latestClaudeModels().map(row => [row.id, row.value, row.name])).toEqual([
       ['default', 'default', 'Default (recommended)'],
+      ['opus', 'opus', 'Opus 5.5'],
+      // `fable` already means the latest Fable to anyone who picked it.
+      ['claude-fable-5', 'claude-fable-5', 'Fable 5'],
       ['opus[1m]', 'opus[1m]', 'Opus (1M context)'],
-      ['opus', 'opus', 'Opus'],
+      ['fable', 'fable', 'Fable'],
       ['sonnet', 'sonnet', 'Sonnet'],
+      ['haiku', 'haiku', 'Haiku'],
     ])
-    expect(claudeModelRow('opus')?.contextWindow).toBeUndefined()
   })
 
   it('still resolves a concrete id persisted before the selector aliased anything', () => {
@@ -518,8 +533,8 @@ describe('Claude Code model catalog', () => {
     }
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, undefined, undefined, undefined, probe)
     const [first, second] = await Promise.all([adapter.listModels('claude'), adapter.listModels('claude')])
-    expect(first.map(model => model.id)).toEqual(['nextthing'])
-    expect(second.map(model => model.id)).toEqual(['nextthing'])
+    expect(first.map(model => model.id)[0]).toBe('nextthing')
+    expect(second.map(model => model.id)).toEqual(first.map(model => model.id))
     expect(probes).toBe(1)
   })
 
