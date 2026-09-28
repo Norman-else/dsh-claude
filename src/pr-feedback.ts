@@ -1,6 +1,7 @@
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { githubAvatarUrl } from './github-url.ts'
 import { parseGitHubRemote } from './repository-status.ts'
+import { toolPathEnv } from './spawn.ts'
 
 export { githubAvatarUrl } from './github-url.ts'
 
@@ -379,12 +380,12 @@ export class PullRequestFeedbackService {
   }
 
   #git(): Promise<string> {
-    this.#gitExecutable ??= this.#runtime.resolveExecutable('git')
+    this.#gitExecutable ??= this.#runtime.resolveExecutable('git', toolPathEnv())
     return this.#gitExecutable
   }
 
   #gh(): Promise<string> {
-    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh').catch(() => {
+    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh', toolPathEnv()).catch(() => {
       throw new PullRequestFeedbackError('gh-unavailable', 'GitHub CLI is unavailable.')
     })
     return this.#ghExecutable

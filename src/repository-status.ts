@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { diffFuncnameArgs } from './diff-funcname.ts'
+import { toolPathEnv } from './spawn.ts'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
 /** What the diff panel receives: whole files packed under this budget. */
@@ -505,12 +506,12 @@ export class RepositoryStatusService {
   }
 
   async #git(): Promise<string> {
-    this.#gitExecutable ??= this.#runtime.resolveExecutable('git')
+    this.#gitExecutable ??= this.#runtime.resolveExecutable('git', toolPathEnv())
     return this.#gitExecutable
   }
 
   async #gh(): Promise<string | undefined> {
-    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh').catch(() => undefined)
+    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh', toolPathEnv()).catch(() => undefined)
     return this.#ghExecutable
   }
 

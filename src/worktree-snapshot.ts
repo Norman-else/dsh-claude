@@ -15,6 +15,7 @@ import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { toolPathEnv } from './spawn.ts'
 
 const MAX_OUTPUT_BYTES = 64 * 1024
 /** `add -A` walks the whole checkout; a large repository needs more than the
@@ -73,7 +74,7 @@ async function run(
 export async function captureWorktreeTree(runtime: SnapshotRuntime, cwd: string): Promise<string | undefined> {
   let git: string
   try {
-    git = await runtime.resolveExecutable('git')
+    git = await runtime.resolveExecutable('git', toolPathEnv())
   } catch {
     return undefined
   }
@@ -105,7 +106,7 @@ export async function restoreWorktreeTree(runtime: SnapshotRuntime, cwd: string,
   if (!OBJECT_NAME.test(tree)) return false
   let git: string
   try {
-    git = await runtime.resolveExecutable('git')
+    git = await runtime.resolveExecutable('git', toolPathEnv())
   } catch {
     return false
   }

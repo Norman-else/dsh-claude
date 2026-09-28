@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, win32 } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { redactText } from './events.ts'
+import { toolPathEnv } from './spawn.ts'
 
 const VERSION_PATTERN = /(?:Claude Code\s+)?v?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/i
 const MAX_PROBE_STDOUT = 64 * 1024
@@ -117,7 +118,7 @@ export async function resolveClaudeExecutable(
     if (searched.includes(candidate)) continue
     searched.push(candidate)
     try {
-      const resolved = await runtime.resolveExecutable(candidate, undefined, signal)
+      const resolved = await runtime.resolveExecutable(candidate, toolPathEnv(), signal)
       return { path: await preferNativeWindowsBinary(resolved), searched }
     } catch (error) {
       if (abortError(error) || signal?.aborted === true) throw error

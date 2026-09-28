@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { uniqueBranchName } from './branch-name.ts'
+import { toolPathEnv } from './spawn.ts'
 
 const MAX_OUTPUT_BYTES = 128 * 1024
 const GIT_TIMEOUT_MS = 10_000
@@ -687,7 +688,7 @@ export class RepositorySetupService {
   #git(): Promise<string> {
     // A cached pending or rejected lookup would wedge every later request, so
     // bound it and drop the cache on failure.
-    this.#gitPath ??= this.#runtime.resolveExecutable('git', undefined, AbortSignal.timeout(GIT_TIMEOUT_MS))
+    this.#gitPath ??= this.#runtime.resolveExecutable('git', toolPathEnv(), AbortSignal.timeout(GIT_TIMEOUT_MS))
       .catch((error: unknown) => {
         this.#gitPath = undefined
         throw error

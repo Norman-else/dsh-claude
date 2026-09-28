@@ -45,6 +45,15 @@ export function appendToolPaths(
   return missing.length === 0 ? env : { ...env, PATH: [...current, ...missing].join(':') }
 }
 
+/** The lookup environment for `gh`, `git`, and Claude itself. The Host's own
+ *  PATH is launchd's when the app was opened from the Dock, which has none of
+ *  the tool directories, so `resolveExecutable('gh')` fails there and every
+ *  pull-request lookup silently goes missing. */
+export function toolPathEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const PATH = appendToolPaths({ PATH: env.PATH ?? '/usr/local/bin:/usr/bin:/bin' }).PATH
+  return PATH === undefined ? {} : { PATH }
+}
+
 export class ManagedClaudeProcess extends EventEmitter implements SpawnedProcess {
   readonly stdin: Writable
   readonly stdout: Readable

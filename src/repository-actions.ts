@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import type { SubprocessHandle, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { diffFuncnameArgs } from './diff-funcname.ts'
 import { detectRepositoryOperation } from './repository-status.ts'
+import { toolPathEnv } from './spawn.ts'
 
 const MAX_OUTPUT_BYTES = 256 * 1024
 const MAX_PATCH_CHARS = 64 * 1024
@@ -644,12 +645,12 @@ export class RepositoryActionService {
   }
 
   #git(): Promise<string> {
-    this.#gitExecutable ??= this.#runtime.resolveExecutable('git')
+    this.#gitExecutable ??= this.#runtime.resolveExecutable('git', toolPathEnv())
     return this.#gitExecutable
   }
 
   #gh(): Promise<string> {
-    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh').catch(() => { throw new RepositoryActionError('gh-unavailable', 'GitHub CLI is unavailable.') })
+    this.#ghExecutable ??= this.#runtime.resolveExecutable('gh', toolPathEnv()).catch(() => { throw new RepositoryActionError('gh-unavailable', 'GitHub CLI is unavailable.') })
     return this.#ghExecutable
   }
 
