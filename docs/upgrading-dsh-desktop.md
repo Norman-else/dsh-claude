@@ -48,6 +48,63 @@ What differs in the official app, as audited 2026-09-26:
 - Its `dsh-subprocess-local` lacks DSH Desktop's `ELECTRON_RUN_AS_NODE` patch,
   so `src/windows-job-runner.ts` is still required.
 
+## Audit: official app 0.2.0-rc.1 (2026-09-28)
+
+Static + live audit of the linked plugin against the official
+`@deepseek-ai/dsh-desktop` 0.2.0-rc.1 installation
+(`E:\DeepSeek Harness Desktop\resources\app.asar\dsh\`, Host packages
+0.2.0-rc.1, cordis 4.0.4, Node 24.18.1, hostProtocolVersion 4). The plugin
+baseline remains 0.1.7-rc.2; this section records compatibility evidence, not
+an adopted upgrade.
+
+Host package delta vs the audited 0.1.7-rc.2 install: six added
+(`dsh-desktop-host` — the Electron app now runs a private Node-mode Host
+process; `dsh-otel` + `dsh-host-product-telemetry-otel` +
+`dsh-client-product-analytics` + `dsh-client-ui-settings-session-log` —
+OTel product telemetry and a Session-log upload toggle;
+`dsh-experimental-schedule-bundle`), one removed (the win32-arm64
+LibreOffice kit; irrelevant on x64). No package this plugin imports was
+removed.
+
+What was verified against the installed 0.2.0-rc.1 Host:
+
+- Value-level runtime imports: every value the built `lib/` imports from
+  Host packages resolves, including all 29 destructured
+  `dsh-client-ui-primitives` bindings (all 17 `Icon*Regular` weights
+  intact). Type-only imports are erased in the shipped Host JS and cannot be
+  checked statically; the development graph still pins 0.1.7-rc.2 for those.
+- Slots: all nine keys exist with unchanged kinds and owner props
+  (`turnTail` still `list` with `{turn, seq, openFile}`,
+  `conversation.input.left` still rendered with `{}`, the Host's
+  `agent-preset` label still at id `agent-preset` order -10, the
+  experimental `agent-team` entry still at id `agent-team` order -20,
+  `sidebarRight.openTabIn`/`closeIn`/`sidebarRightTabs.register`
+  unchanged).
+- DOM bridges: every selector the plugin matches (session-log
+  `moreButton`, header `[role="tablist"]`, `seatIcon`, composer
+  `_tools`/`_modes`, `[data-slot="conversation.input.permission"]`,
+  `[data-team-action]`, `--dsh-composer-card-max-width`) resolves
+  identically to the 0.1.7 install; each was compared against both Hosts and
+  no regression was found.
+- Compatibility shims are still required, unchanged: the official
+  0.2.0-rc.1 `dsh-subprocess-local` still lacks the
+  `ELECTRON_RUN_AS_NODE` patch (`src/windows-job-runner.ts`), and no
+  system-proxy propagation exists in `dsh-desktop-host` /
+  `dsh-launch-environment` (`src/system-proxy.ts`).
+- Live under 0.2.0-rc.1 (GUI session 2026-09-28): the plugin's Host half is
+  loaded in the running official app — `/plugins/dsh-claude/doctor`
+  answers 200 with the CLI found (2.1.283, signed in), the model lineup
+  resolves 13 rows with no stranded selections, and three Claude sessions
+  hold registered command bridges (121-command catalogs). No 0.2.0 web-boot
+  crash report exists (the 2026-09-26 report names app 0.1.7-rc.2).
+
+Not verified (needs a Claude session driven in the 0.2.0 GUI, and the
+renderer has no readable log there): the client bundle's boot checks and
+`slot-entry-crashed` reporting, streaming, approval, questions, plan
+review, rewind, sidebar tabs, and the queue strip. Run the INSTALL.md smoke
+list in the official app before adopting 0.2.0-rc.1 as the baseline.
+
+
 ## Current baseline: Desktop 2.0.15 / Host 0.1.7-rc.2
 
 The Host packages are unpacked at
