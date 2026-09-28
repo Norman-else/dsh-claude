@@ -2453,6 +2453,37 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('writes Claude\'s task list into the session log for the Host to-do dock, and carries it into the next turn', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const todoWrites = () => owner.events.filter(event => event.type === 'todo/write').map(event => (event.data as { todos: unknown }).todos)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'plan it' })
+    const query = transport.queries[0]!
+    query.push(init())
+    const call = (id: string, name: string, input: unknown, parent?: string) => ({
+      type: 'assistant',
+      ...(parent === undefined ? {} : { parent_tool_use_id: parent }),
+      message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] },
+    } as SDKMessage)
+    query.push(call('t1', 'TodoWrite', { todos: [{ content: 'Read', status: 'in_progress', activeForm: 'Reading' }, { content: 'Fix', status: 'pending' }] }))
+    // The same list again changes nothing in the log.
+    query.push(call('t2', 'TodoWrite', { todos: [{ content: 'Read', status: 'in_progress' }, { content: 'Fix', status: 'pending' }] }))
+    // A subagent's private TodoWrite is not the lead's list.
+    query.push(call('t3', 'TodoWrite', { todos: [{ content: 'Sub', status: 'pending' }] }, 'agent-1'))
+    query.push(result('done'))
+    await collect(output)
+    expect(todoWrites()).toEqual([[{ content: 'Read', status: 'in_progress' }, { content: 'Fix', status: 'pending' }]])
+
+    owner.events.push({ type: 'turn/start', data: { turn: 2 }, seq: owner.events.length, time: Date.now() })
+    const next = await runtime.runTurn({ agent: owner.agent, prompt: 'continue' })
+    await vi.waitFor(() => expect(todoWrites()).toHaveLength(2))
+    expect(todoWrites()[1]).toEqual(todoWrites()[0])
+    query.push(result('ok'))
+    await collect(next)
+    await runtime.dispose()
+  })
+
   it('does not mirror subagent-nested tool calls into the native tool channel', async () => {
     const transport = factory()
     const owner = fakeAgent()

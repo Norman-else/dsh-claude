@@ -11,6 +11,7 @@
  * roster, board, and mailbox are derived here without a server-side projection.
  */
 import type { ClaudeActivityEvent, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeTaskUsage } from '../events.ts'
+import { createdTaskId } from '../todo-bridge.ts'
 
 export const TEAMMATE_TASK_TYPE = 'in_process_teammate'
 export const SUBAGENT_TASK_TYPE = 'local_agent'
@@ -77,15 +78,7 @@ function strings(value: unknown): readonly string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
-/** The id a TaskCreate result names: a structured `id`, else `#N` in its prose. */
-export function createdTaskId(output: string | undefined): string | undefined {
-  if (output === undefined) return undefined
-  const record = parseRecord(output)
-  const structured = record?.id ?? (parseRecord(JSON.stringify(record?.task ?? null)) ?? {}).id
-  if (typeof structured === 'string' || typeof structured === 'number') return String(structured)
-  const match = /#(\d+)/u.exec(output) ?? /\btask\s+(?:id\s*)?[:#]?\s*(\d+)\b/iu.exec(output)
-  return match?.[1]
-}
+export { createdTaskId }
 
 function taskStatus(value: unknown): ClaudeTeamTaskStatus | undefined {
   return value === 'pending' || value === 'in_progress' || value === 'completed' ? value : undefined

@@ -39,6 +39,8 @@ import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
 import { hostJobKind, hostJobProgress, type ClaudeHostJobs } from './host-jobs.ts'
+import type {} from '@deepseek-ai/dsh-tool-todo'
+import { ClaudeTaskBoard, carriedTodos, todosFromTodoWrite, type TodoItem } from './todo-bridge.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -241,6 +243,8 @@ interface ActiveTurn {
    *  tool name a result carries none of. Emptied as results arrive, so what
    *  remains when a turn ends is exactly what never got an answer. */
   openCalls: Map<string, string>
+  /** The last list written to the Host to-do dock, so an unchanged one is not rewritten. */
+  todoSnapshot?: string
   /** Auto-background timers of the root Bash calls still running, by toolUseId. */
   backgroundTimers: Map<string, ReturnType<typeof setTimeout>>
   signal?: AbortSignal
@@ -281,6 +285,8 @@ interface SupervisorEntry {
   reportedUnknownTypes: Set<string>
   /** Live Claude task board (subagents and background tasks), keyed by task id. */
   tasks: Map<string, ClaudeTaskInfo>
+  /** Claude's task-tool list (TaskCreate / TaskUpdate), mirrored into the Host to-do dock. */
+  taskBoard: ClaudeTaskBoard
   /** Last time a task snapshot was persisted (progress throttling). */
   taskSnapshotAt: number
   /** Pending throttled snapshot flush timer. */
@@ -889,6 +895,11 @@ export class ClaudeSupervisor {
       await this.#disposeEntry(entry, 'turn start failed')
       throw error
     }
+    // The Host's to-do projection empties at every turn/start; a list Claude is
+    // still working through carries over rather than vanishing until its next
+    // update.
+    const carried = carriedTodos(request.agent.session.snapshotEvents())
+    if (carried !== undefined) await this.#writeTodos(active, carried)
     if (signalAborted(request.signal)) {
       active.aborted = true
       active.output.fail(abortFailure())
@@ -1220,6 +1231,7 @@ export class ClaudeSupervisor {
       initialized: false,
       idleTimer: undefined,
       tasks: new Map<string, ClaudeTaskInfo>(),
+      taskBoard: new ClaudeTaskBoard(),
       taskSnapshotAt: 0,
       taskSnapshotTimer: undefined,
       costReading: 0,
@@ -1477,6 +1489,13 @@ export class ClaudeSupervisor {
           summary: message.parentToolUseId === undefined ? rootCallSummary(message.toolName, message.input) : `Subagent called ${message.toolName}`,
           detail: message.input,
         })
+        // The lead's own list, or the task board every member shares.
+        if (message.toolName === 'TodoWrite' && message.parentToolUseId === undefined) {
+          const todos = todosFromTodoWrite(message.input)
+          if (todos !== undefined) await this.#writeTodos(active, todos)
+        } else if (entry.taskBoard.call(message.toolName, message.toolUseId, message.input)) {
+          await this.#writeTodos(active, entry.taskBoard.todos())
+        }
         if (message.parentToolUseId === undefined) {
           active.openCalls.set(message.toolUseId, message.toolName)
           this.#armAutoBackground(entry, active, message.toolUseId, message.toolName, message.input)
@@ -1492,6 +1511,9 @@ export class ClaudeSupervisor {
       case 'tool-result':
         active.openCalls.delete(message.toolUseId)
         this.#disarmAutoBackground(active, message.toolUseId)
+        if (entry.taskBoard.result(message.toolUseId, [message.output, message.content], message.isError)) {
+          await this.#writeTodos(active, entry.taskBoard.todos())
+        }
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-result' : 'subagent',
           phase: message.isError ? 'failed' : 'completed',
@@ -2139,6 +2161,20 @@ export class ClaudeSupervisor {
     })
     this.#interruptions.set(entry.sessionId, interruption)
     return interruption
+  }
+
+  /** Put Claude's list in the session log as the `todo/write` snapshot the
+   *  Host's to-do dock reads. Presentation only: a failed append never
+   *  unsettles the turn. */
+  async #writeTodos(active: ActiveTurn, todos: readonly TodoItem[]): Promise<void> {
+    const snapshot = JSON.stringify(todos)
+    if (snapshot === active.todoSnapshot) return
+    active.todoSnapshot = snapshot
+    try {
+      await active.agent.session.append('todo/write', { todos: todos.map(item => ({ ...item })) })
+    } catch {
+      // The dock is a view; the transcript still has the tool call.
+    }
   }
 
   /** Move one running root tool call to the background: the terminal's Ctrl+B
