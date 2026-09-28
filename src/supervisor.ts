@@ -44,6 +44,9 @@ export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
 /** Control requests must settle; a wedged one must not clog the metadata chain. */
 export const CLAUDE_METADATA_TIMEOUT_MS = 15_000
+/** A blocking Bash call that runs this long is moved to the background on its
+ *  own, where the Host job list can show and stop it. */
+export const CLAUDE_FOREGROUND_BASH_BACKGROUND_MS = 60_000
 /** Bound on steered messages one turn may own, so a misbehaving caller cannot
  *  grow the ownership set without limit. */
 export const MAX_STEERED_PROMPTS_PER_TURN = 16
@@ -85,6 +88,8 @@ export interface ClaudeSupervisorConfig {
   /** Which renderer the visible turn is produced for; read per message so a
    *  Settings change lands on the next turn without a Host restart. */
   renderMode?: ClaudeRenderMode
+  /** After this long a blocking Bash call is moved to the background; 0 disables it. */
+  foregroundBashBackgroundMs?: number
 }
 
 export type ClaudeTurnStreamEvent =
@@ -236,6 +241,8 @@ interface ActiveTurn {
    *  tool name a result carries none of. Emptied as results arrive, so what
    *  remains when a turn ends is exactly what never got an answer. */
   openCalls: Map<string, string>
+  /** Auto-background timers of the root Bash calls still running, by toolUseId. */
+  backgroundTimers: Map<string, ReturnType<typeof setTimeout>>
   signal?: AbortSignal
   abortListener?: () => void
 }
@@ -862,6 +869,7 @@ export class ClaudeSupervisor {
       aborted: false,
       deniedToolUseIds: new Set(),
       openCalls: new Map(),
+      backgroundTimers: new Map(),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
     entry.active = active
@@ -1471,6 +1479,7 @@ export class ClaudeSupervisor {
         })
         if (message.parentToolUseId === undefined) {
           active.openCalls.set(message.toolUseId, message.toolName)
+          this.#armAutoBackground(entry, active, message.toolUseId, message.toolName, message.input)
           // Only root calls are mirrored: a subagent's nested tools belong to
           // the Task card that dispatched them, and the native channel has no
           // nesting to hang them under.
@@ -1482,6 +1491,7 @@ export class ClaudeSupervisor {
         return
       case 'tool-result':
         active.openCalls.delete(message.toolUseId)
+        this.#disarmAutoBackground(active, message.toolUseId)
         await this.#appendActivity(active, {
           kind: message.parentToolUseId === undefined ? 'tool-result' : 'subagent',
           phase: message.isError ? 'failed' : 'completed',
@@ -2131,6 +2141,58 @@ export class ClaudeSupervisor {
     return interruption
   }
 
+  /** Move one running root tool call to the background: the terminal's Ctrl+B
+   *  for a single call. Claude receives a "running in the background" result
+   *  at once and the command joins the Host job list with a stop control. */
+  async backgroundToolCall(sessionId: string, toolUseId: string): Promise<'moved' | 'not-running' | 'unavailable'> {
+    const entry = this.#entries.get(sessionId)
+    const active = entry?.active
+    if (entry === undefined || active === undefined || !active.openCalls.has(toolUseId)) return 'not-running'
+    return await this.#backgroundCall(entry, active, toolUseId, 'requested by the user') ? 'moved' : 'unavailable'
+  }
+
+  /** A blocking Bash call gets one timer; the timer's firing is the auto-move,
+   *  which the call's own result disarms. `run_in_background` calls are
+   *  already detached and need none. */
+  #armAutoBackground(entry: SupervisorEntry, active: ActiveTurn, toolUseId: string, toolName: string, input: unknown): void {
+    const afterMs = this.#config.foregroundBashBackgroundMs ?? CLAUDE_FOREGROUND_BASH_BACKGROUND_MS
+    if (toolName !== 'Bash' || afterMs <= 0) return
+    const arguments_ = input !== null && typeof input === 'object' ? input as { run_in_background?: unknown } : undefined
+    if (arguments_?.run_in_background === true) return
+    const timer = setTimeout(() => {
+      active.backgroundTimers.delete(toolUseId)
+      if (entry.active !== active || !active.openCalls.has(toolUseId)) return
+      void this.#backgroundCall(entry, active, toolUseId, `ran longer than ${afterMs >= 1_000 ? `${Math.round(afterMs / 1000)}s` : `${afterMs}ms`}`)
+    }, afterMs)
+    timer.unref?.()
+    active.backgroundTimers.set(toolUseId, timer)
+  }
+
+  #disarmAutoBackground(active: ActiveTurn, toolUseId: string): void {
+    const timer = active.backgroundTimers.get(toolUseId)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    active.backgroundTimers.delete(toolUseId)
+  }
+
+  async #backgroundCall(entry: SupervisorEntry, active: ActiveTurn, toolUseId: string, reason: string): Promise<boolean> {
+    this.#disarmAutoBackground(active, toolUseId)
+    let moved = false
+    try {
+      moved = await entry.query.backgroundTasks(toolUseId)
+    } catch (error) {
+      this.#logger?.warn(`dsh-claude: moving tool call ${toolUseId} to the background failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    await this.#appendSafely(active, {
+      kind: 'status',
+      phase: moved ? 'completed' : 'failed',
+      toolUseId,
+      title: moved ? 'Claude Code moved the command to the background' : 'Claude Code could not move the command to the background',
+      summary: reason,
+    })
+    return moved
+  }
+
   /** Close out the root tool calls a turn is ending without answers for.
    *
    *  A tool result is the only thing that ever settles a call, and a turn that
@@ -2140,6 +2202,7 @@ export class ClaudeSupervisor {
   async #settleOpenCalls(active: ActiveTurn, summary: string): Promise<void> {
     const open = [...active.openCalls]
     active.openCalls.clear()
+    for (const toolUseId of [...active.backgroundTimers.keys()]) this.#disarmAutoBackground(active, toolUseId)
     for (const [toolUseId, toolName] of open) {
       await this.#appendSafely(active, {
         kind: 'tool-result',
@@ -2268,7 +2331,10 @@ export class ClaudeSupervisor {
     entry.input.discard(abortFailure())
     entry.query.close()
     entry.lifetime.abort()
-    if (entry.active !== undefined) entry.active.output.fail(abortFailure())
+    if (entry.active !== undefined) {
+      for (const toolUseId of [...entry.active.backgroundTimers.keys()]) this.#disarmAutoBackground(entry.active, toolUseId)
+      entry.active.output.fail(abortFailure())
+    }
     entry.process?.kill('SIGTERM')
     if (entry.process !== undefined) {
       try {

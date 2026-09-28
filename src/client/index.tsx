@@ -17,7 +17,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { claudeActivityStepDefinition, claudeTurnDefinition } from './conversation-sidecar.ts'
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
-import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
+import { ClaudeActivityNode, type ClaudeActivityNodeInjected } from './ClaudeActivityNode.tsx'
+import { backgroundToolCall } from './background-task-api.ts'
 import { ClaudeCodeSettings, alertModeOf, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { setClaudeAlertsEnabled, startClaudeSessionAlerts, type ClaudeSessionAlertsDeps } from './session-alerts.ts'
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
@@ -244,6 +245,10 @@ export function apply(ctx: Context): void {
     name: 'conversation.chat.node',
     key: 'claude-activity-step',
     locale: namespace,
+    // A running root Bash card offers the terminal's Ctrl+B.
+    inject: (sessionId: string): ClaudeActivityNodeInjected => ({
+      backgroundCall: toolUseId => backgroundToolCall(sessionId, toolUseId),
+    }),
   }, ClaudeActivityNode))
   // Host 0.1.5 has no details column: the panels are tab types of the
   // right sidebar, declared once here and opened per session below.

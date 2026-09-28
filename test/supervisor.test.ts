@@ -33,6 +33,7 @@ import {
 
 class FakeQuery extends AsyncQueue<SDKMessage> {
   readonly interrupt = vi.fn(async () => undefined)
+  readonly backgroundTasks = vi.fn(async (_toolUseId?: string) => true)
   readonly setModel = vi.fn(async () => undefined)
   readonly applyFlagSettings = vi.fn(async (_settings: unknown) => undefined)
   readonly setPermissionMode = vi.fn(async () => undefined)
@@ -2387,6 +2388,68 @@ describe('Claude supervisor', () => {
     const texts = (await projection(runtime)).activities.filter(activity => activity.kind === 'text')
     expect(texts.filter(activity => activity.parentToolUseId === 'parent-call').map(activity => activity.text)).toEqual(['Looking at the parser.', 'Done reading.'])
     expect(texts.filter(activity => activity.parentToolUseId === undefined).map(activity => activity.text)).toEqual(['Lead answer.'])
+    await runtime.dispose()
+  })
+
+  it('moves a blocking Bash call to the background after the configured time, unless its result came first', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    // The live config object: a minute in production, a blink here.
+    ;(configs.get(runtime) as unknown as { foregroundBashBackgroundMs?: number }).foregroundBashBackgroundMs = 120
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'deploy' })
+    const collected = collect(output)
+    const query = transport.queries[0]!
+    query.push(init())
+    const call = (id: string, input: Record<string, unknown>) => ({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input }] },
+    } as SDKMessage)
+    const answered = (id: string) => ({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+    } as SDKMessage)
+    query.push(call('quick', { command: 'ls' }))
+    query.push(call('detached', { command: 'sleep 999', run_in_background: true }))
+    query.push(call('slow', { command: './deploy.sh prod' }))
+    query.push(answered('quick'))
+    // Only the still-blocking foreground call is moved; the answered one and
+    // the already-detached one are left alone.
+    await vi.waitFor(() => expect(query.backgroundTasks).toHaveBeenCalled(), { timeout: 2_000 })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(query.backgroundTasks.mock.calls).toEqual([['slow']])
+    await vi.waitFor(async () => {
+      const statuses = (await projection(runtime)).activities.filter(activity => activity.kind === 'status' && activity.toolUseId === 'slow')
+      expect(statuses).toEqual([expect.objectContaining({ phase: 'completed', title: 'Claude Code moved the command to the background', summary: 'ran longer than 120ms' })])
+    })
+    query.push(answered('slow'))
+    query.push(result('done'))
+    await expect(collected).resolves.toContainEqual({ type: 'complete', text: 'done' })
+    await runtime.dispose()
+  })
+
+  it('moves a running Bash call to the background on request and refuses one that is not running', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'deploy' })
+    const collected = collect(output)
+    const query = transport.queries[0]!
+    query.push(init())
+    query.push({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'Bash', input: { command: 'sleep 5' } }] },
+    } as SDKMessage)
+    await vi.waitFor(() => expect(runtime.snapshots()[0]?.state).toBe('running'))
+    await vi.waitFor(async () => expect((await projection(runtime)).activities.some(activity => activity.toolUseId === 'call-1')).toBe(true))
+    await expect(runtime.backgroundToolCall(owner.agent.id as string, 'nope')).resolves.toBe('not-running')
+    await expect(runtime.backgroundToolCall(owner.agent.id as string, 'call-1')).resolves.toBe('moved')
+    expect(query.backgroundTasks).toHaveBeenCalledWith('call-1')
+    query.backgroundTasks.mockResolvedValueOnce(false)
+    await expect(runtime.backgroundToolCall(owner.agent.id as string, 'call-1')).resolves.toBe('unavailable')
+    query.push(result('done'))
+    await expect(collected).resolves.toContainEqual({ type: 'complete', text: 'done' })
     await runtime.dispose()
   })
 

@@ -40,6 +40,7 @@ import { registerReviewCommentRoute } from './review-comment-routes.ts'
 import { registerPlanFeedbackRoute } from './plan-feedback-routes.ts'
 import { registerClaudeClientDiagnosticsRoute } from './client-diagnostics-routes.ts'
 import { registerClaudeRewindRoute } from './rewind-routes.ts'
+import { registerClaudeBackgroundTaskRoute } from './background-task-routes.ts'
 import { registerClaudePermissionModeRoute } from './permission-mode-routes.ts'
 import { claudePermissionMode, type ClaudePermissionModeView, type ClaudePermissionSelector } from './permission-mode.ts'
 import { alignSessionWithDefault, applyHostPreset, type HostPermissionPresetService, type HostPresetAccess } from './permission-mode-host.ts'
@@ -587,6 +588,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     }
     registerReviewCommentRoute(webCtx, reviewComments, ownsClaudeSession)
     registerPlanFeedbackRoute(webCtx, supervisor.planFeedback, ownsClaudeSession)
+    registerClaudeBackgroundTaskRoute(webCtx, { background: (sessionId, toolUseId) => supervisor.backgroundToolCall(sessionId, toolUseId) })
     registerClaudeRewindRoute(webCtx, sidecar, {
       eventsFor: sessionId => {
         const agent = webCtx.agents.get(sessionId as never)

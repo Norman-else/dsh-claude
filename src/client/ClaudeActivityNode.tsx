@@ -19,12 +19,20 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 
 type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) => string
 
-export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-step'>, 't'> & { t: Translate }
+export interface ClaudeActivityNodeInjected {
+  /** Move one running root Bash call to the background; resolves with the Host's answer code. */
+  backgroundCall?: (toolUseId: string) => Promise<string>
+}
+export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-step'>, 't'> & ClaudeActivityNodeInjected & { t: Translate }
 
 const EMPTY_TASKS = [] as const
 
 const ACTIVITY_CSS = [
   '.dsh-claude-flow{display:flex;flex-direction:column;gap:10px}',
+  '.dsh-claude-tool-background{flex:none;margin-left:auto;padding:0 8px;border:0;border-radius:6px;background:transparent;',
+    'color:var(--dsw-alias-label-tertiary);font:inherit;font-size:11px;line-height:20px;cursor:pointer}',
+  '.dsh-claude-tool-background:hover,.dsh-claude-tool-background:focus-visible{outline:none;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.dsh-claude-tool-background:disabled{cursor:default;opacity:.6}',
   '.dsh-claude-transcript-text{color:var(--dsw-alias-label-primary);font-size:15px;line-height:24px;overflow-wrap:anywhere}',
   '.dsh-claude-tool-group-native{overflow:visible}',
   '.dsh-claude-tool-group-native>.dsh-claude-flow-row{padding:0}',
@@ -341,12 +349,32 @@ function ToolPresentation({ tool, t }: { tool: ClaudeTranscriptTool; t: Translat
   </>
 }
 
-export function ClaudeTranscriptToolItem({ tool, t }: { tool: ClaudeTranscriptTool; t: Translate }) {
+/** Whether a card is a blocking Bash call the reader may move to the background. */
+function canBackground(tool: ClaudeTranscriptTool): boolean {
+  return tool.toolName === 'Bash' && (tool.phase === 'started' || tool.phase === 'updated') && tool.isError !== true
+}
+
+export function ClaudeTranscriptToolItem({ tool, t, onBackground }: { tool: ClaudeTranscriptTool; t: Translate; onBackground?: (toolUseId: string) => Promise<string> }) {
+  const [moving, setMoving] = useState(false)
   return (
     <details className="dsh-claude-tool-item">
       <summary className="dsh-claude-tool-summary-row">
         <span className="dsh-claude-tool-label">{tool.toolName}</span>
         <span className="dsh-claude-tool-description">{tool.description}</span>
+        {onBackground === undefined || !canBackground(tool) ? null : (
+          <button
+            type="button"
+            className="dsh-claude-tool-background"
+            disabled={moving}
+            aria-label={t('toolBackground')}
+            onClick={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              setMoving(true)
+              void onBackground(tool.toolUseId).finally(() => { setMoving(false) })
+            }}
+          >{t(moving ? 'toolBackgrounding' : 'toolBackground')}</button>
+        )}
         {tool.additions === undefined && tool.deletions === undefined ? null : (
           <span className="dsh-claude-tool-stats">
             <span className="dsh-claude-diff-add">+{tool.additions ?? 0}</span>
@@ -374,12 +402,14 @@ export function ClaudeTranscriptToolGroup({
   deletions,
   files: _files,
   t,
+  onBackground,
 }: {
   tools: readonly ClaudeTranscriptTool[]
   additions?: number
   deletions?: number
   files?: number
   t: Translate
+  onBackground?: (toolUseId: string) => Promise<string>
 }) {
   const [open, setOpen] = useState(false)
   const failed = tools.some(tool => tool.isError === true || tool.phase === 'failed')
@@ -409,7 +439,7 @@ export function ClaudeTranscriptToolGroup({
       />
       {open ? (
         <div className="dsh-claude-tool-list">
-          {tools.map(tool => <ClaudeTranscriptToolItem key={tool.toolUseId} tool={tool} t={t} />)}
+          {tools.map(tool => <ClaudeTranscriptToolItem key={tool.toolUseId} tool={tool} t={t} {...(onBackground === undefined ? {} : { onBackground })} />)}
         </div>
       ) : null}
     </div>
@@ -470,7 +500,7 @@ export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate
   )
 }
 
-export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
+export function ClaudeActivityNode({ node, useClaudeProjection, t, backgroundCall }: ClaudeActivityNodeProps) {
   ensureActivityCss()
   const marker = node.data
   const activities = useClaudeProjection(value => selectStepActivities(value, marker.turn, marker.step))
@@ -480,11 +510,11 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
     [activities, marker.step, marker.turn, tasks],
   )
   if (items.length === 0) return null
-  return <ClaudeTranscriptFlow items={items} t={t} />
+  return <ClaudeTranscriptFlow items={items} t={t} {...(backgroundCall === undefined ? {} : { onBackground: backgroundCall })} />
 }
 
 /** The transcript items of one step or one teammate, drawn as the chat draws them. */
-export function ClaudeTranscriptFlow({ items, t }: { items: readonly ClaudeTranscriptItem[]; t: Translate }) {
+export function ClaudeTranscriptFlow({ items, t, onBackground }: { items: readonly ClaudeTranscriptItem[]; t: Translate; onBackground?: (toolUseId: string) => Promise<string> }) {
   const markdownLabels = useClaudeMarkdownLabels(t)
   ensureActivityCss()
   return (
@@ -500,6 +530,7 @@ export function ClaudeTranscriptFlow({ items, t }: { items: readonly ClaudeTrans
               {...(item.additions === undefined ? {} : { additions: item.additions })}
               {...(item.deletions === undefined ? {} : { deletions: item.deletions })}
               {...(item.files === undefined ? {} : { files: item.files })}
+              {...(onBackground === undefined ? {} : { onBackground })}
               t={t}
             />
           : <ActivityRow key={`activity:${item.ordinal}`} row={item.row} t={t} />)}

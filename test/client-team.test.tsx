@@ -5,6 +5,7 @@ import { createdTaskId, deriveTeam, EMPTY_TEAM } from '../src/client/team.ts'
 import { teammateTranscript, transcriptItemsForStep } from '../src/client/conversation-sidecar.ts'
 import { ClaudeTeamHeaderAction } from '../src/client/ClaudeTeamHeaderAction.tsx'
 import { ClaudeTeammatePanel } from '../src/client/ClaudeTeammatePanel.tsx'
+import { ClaudeTranscriptToolItem } from '../src/client/ClaudeActivityNode.tsx'
 import { EMPTY_CLAUDE_PROJECTION, type ClaudeClientProjection } from '../src/client/projection.ts'
 import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
 
@@ -161,5 +162,16 @@ describe('ClaudeTeammatePanel', () => {
   it('says so when the teammate left the board', () => {
     const markup = renderToStaticMarkup(<ClaudeTeammatePanel t={t} closeDetails={vi.fn()} taskId="nope" useClaudeProjection={hook(true, teammates, activities())} />)
     expect(markup).toContain('no longer on the task board')
+  })
+})
+
+describe('ClaudeTranscriptToolItem background control', () => {
+  const tool = (overrides: Record<string, unknown>) => ({ toolUseId: 'call-1', toolName: 'Bash', description: 'Run deploy', subcalls: [], phase: 'started', ...overrides } as never)
+  const onBackground = async () => 'moved'
+  it('offers to move only a running Bash call, and only where the chat wired the control', () => {
+    expect(renderToStaticMarkup(<ClaudeTranscriptToolItem tool={tool({})} t={t} onBackground={onBackground} />)).toContain('aria-label="Move to background"')
+    expect(renderToStaticMarkup(<ClaudeTranscriptToolItem tool={tool({ phase: 'completed' })} t={t} onBackground={onBackground} />)).not.toContain('Move to background')
+    expect(renderToStaticMarkup(<ClaudeTranscriptToolItem tool={tool({ toolName: 'Read' })} t={t} onBackground={onBackground} />)).not.toContain('Move to background')
+    expect(renderToStaticMarkup(<ClaudeTranscriptToolItem tool={tool({})} t={t} />)).not.toContain('Move to background')
   })
 })
