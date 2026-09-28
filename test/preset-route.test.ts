@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/preset-route.ts'
 import { CLAUDE_CODE_PROVIDER } from '../src/constants.ts'
+import { recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 
 type RequestListener = (payload: unknown, next: () => Promise<{ provider?: string; model?: string }>) => Promise<{ provider?: string; model?: string }>
 
@@ -75,5 +76,20 @@ describe('Claude preset route', () => {
     const attached: string[] = []
     apply(capture({ attachController: name => { attached.push(name); return () => undefined } }).ctx)
     expect(attached).toEqual(['dsh-claude'])
+  })
+
+  it('records the selector id for a model the lineup maps, and leaves an unmapped one alone', async () => {
+    recordClaudeModels([
+      { value: 'opus[1m]', displayName: 'Opus (1M context)', description: '' },
+      { value: 'claude-fable-5-1[1m]', displayName: 'Fable', description: '' },
+    ])
+    const captured = capture()
+    apply(captured.ctx)
+    const route = (model: string) => captured.listener()({} as never, async () => ({ provider: 'claude', model }))
+    await expect(route('claude-fable-5-1[1m]')).resolves.toMatchObject({ model: 'fable[1m]' })
+    await expect(route('claude-fable-5-2[1m]')).resolves.toMatchObject({ model: 'fable[1m]' })
+    await expect(route('opus[1m]')).resolves.toMatchObject({ model: 'opus[1m]' })
+    await expect(route('something-else')).resolves.toMatchObject({ model: 'something-else' })
+    resetClaudeModels()
   })
 })

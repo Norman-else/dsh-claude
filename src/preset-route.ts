@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-jobs'
 import { CLAUDE_CODE_PROVIDER } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE } from './command-bridge.ts'
 import { claudePresenterDefinitions } from './presenters.ts'
+import { canonicalClaudeModelId } from './model-catalog.ts'
 
 export const name = 'claude-code-preset-route'
 export const inject = ['tools', 'commands']
@@ -17,10 +18,13 @@ export interface Config {
 export function apply(ctx: Context, config: Config = {}): void {
   ctx.on('agent/request', async (_payload, next) => {
     const upstream = await next()
+    // The returned model is what the Host writes into this request's header,
+    // and that header is the session's persisted selection from then on: write
+    // the selector's own id for it, never a spelling no catalog row carries.
     return {
       ...upstream,
       provider: CLAUDE_CODE_PROVIDER,
-      model: config.model ?? upstream.model ?? 'default',
+      model: canonicalClaudeModelId(config.model ?? upstream.model ?? 'default'),
     }
   })
   // Expose the effective Host command names for collision-safe projection.

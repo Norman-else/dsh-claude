@@ -250,6 +250,21 @@ export function claudeModelRow(id: string): ClaudeModelRow | undefined {
 }
 
 /**
+ * The selector id DSH should persist for a model it is about to record.
+ *
+ * DSH matches a persisted selection to a catalog row by exact id and prints
+ * the raw `provider/model` for one no row carries. Whatever the lineup can map
+ * -- a concrete CLI id (`claude-fable-5-1[1m]`), a version-bumped one, a row's
+ * own id -- is written back as that row's id, so the next header and the
+ * profile default carry a spelling the selector can show. An id the lineup
+ * does not cover is returned unchanged: it still dispatches, and a guess would
+ * change which model runs.
+ */
+export function canonicalClaudeModelId(id: string): string {
+  return claudeModelRow(id)?.id ?? id
+}
+
+/**
  * The spelling to hand the CLI for one selector id.
  * @param id - the id DSH persisted on the session.
  * @returns the CLI's own id, or the selector id itself when the lineup does not

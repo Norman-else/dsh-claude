@@ -49,7 +49,7 @@ import { linkedRepositoryShown, touchedFilePaths, touchedPullRequests, touchedRe
 import { SessionRootLedger } from './session-root-ledger.ts'
 import { ReviewCommentStore } from './review-comments.ts'
 import { registerClaudeUpdateRoutes } from './update-routes.ts'
-import { claudeModelRow, claudeModelValue, probeClaudeModels } from './model-catalog.ts'
+import { canonicalClaudeModelId, claudeModelRow, claudeModelValue, ensureClaudeModels, probeClaudeModels } from './model-catalog.ts'
 import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { detectWindowsSystemProxy, withSystemProxy, type ProxyEnv } from './system-proxy.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
@@ -313,6 +313,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       [...CLAUDE_CODE_PROVIDER_IDS],
       createClaudeCodeAdapter(supervisor, ctx.agents, ctx.attachments, agent => ctx.agentPresets.composedPreset(agent.ctx), sessionId => reviewComments.drain(sessionId), () => readRenderMode(), request => summarizeSessionTitle(supervisorConfig.executablePath, request), () => probeClaudeModels(supervisorConfig.executablePath)),
     )
+    // The profile's default model is written by whatever the user last picked,
+    // so it can hold a spelling a later lineup no longer lists -- every new
+    // session then opens on it and the selector prints `claude/<id>`. Once
+    // the lineup is known, a default the lineup maps is rewritten to its row.
+    void ensureClaudeModels(() => probeClaudeModels(supervisorConfig.executablePath)).then(() => {
+      const defaults = ctx.get('agentDefaultModel') as {
+        currentSelection(): { provider: string; model: string; reasoningEffort?: string }
+        saveSelection(next: { provider: string; model: string; reasoningEffort?: string }): Promise<void>
+      } | undefined
+      const current = defaults?.currentSelection()
+      if (defaults === undefined || current === undefined || !(CLAUDE_CODE_PROVIDER_IDS as readonly string[]).includes(current.provider)) return
+      const model = canonicalClaudeModelId(current.model)
+      if (model === current.model) return
+      return defaults.saveSelection({ ...current, model })
+    }).catch((error: unknown) => {
+      ctx.logger.warn(`dsh-claude: could not normalize the default model: ${error instanceof Error ? error.message : String(error)}`)
+    })
     // Steering entry point. A message steered into a running Claude turn has to
     // pass through the supervisor that owns that turn's process; whoever takes
     // it out of the agent inbox calls this first, and `unavailable` tells them
