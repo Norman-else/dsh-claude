@@ -2802,6 +2802,18 @@ export const diffFileRevert: CSSProperties = {
   color: 'var(--dsw-alias-label-tertiary)',
 }
 
+export const diffDangerButton: CSSProperties = {
+  background: 'var(--dsw-alias-state-error-primary)',
+}
+
+export const diffRevertQuestion: CSSProperties = {
+  margin: 0,
+  fontSize: 13,
+  lineHeight: '20px',
+  color: 'var(--dsw-alias-label-primary)',
+  overflowWrap: 'anywhere',
+}
+
 export const diffRevertAllButton: CSSProperties = {
   minHeight: 28,
   padding: '4px 10px',

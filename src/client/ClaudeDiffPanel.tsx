@@ -712,37 +712,49 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
     }
   }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, report, root, sessionId, t])
   // Discarding work cannot be undone, so the file count comes from a fresh
-  // preview, the reader confirms it, and the revert runs against that exact
-  // fingerprint: a tree that moved in between is refused, not half-reverted.
-  const [reverting, setReverting] = useState(false)
-  const revert = useCallback(async (paths?: readonly string[]) => {
-    if (reverting) return
-    setReverting(true)
-    try {
-      const preview = await loadRepositoryActionPreview(sessionId, undefined, root)
+  // preview, the reader confirms it in the panel's own dialog, and the revert
+  // runs against that exact fingerprint: a tree that moved in between is
+  // refused, not half-reverted.
+  const [revertDialog, setRevertDialog] = useState<{
+    readonly paths?: readonly string[]
+    readonly preview?: RepositoryActionPreview
+    readonly count: number
+    readonly submitting: boolean
+    readonly error?: string
+  }>()
+  const requestRevert = useCallback((paths?: readonly string[]) => {
+    setRevertDialog({ ...(paths === undefined ? {} : { paths }), count: 0, submitting: false })
+    void loadRepositoryActionPreview(sessionId, undefined, root).then(preview => {
       const count = paths === undefined ? preview.files.length : preview.files.filter(file => paths.includes(file.path)).length
       if (count === 0) {
+        setRevertDialog(undefined)
         report(t('diffRevertNothing'))
         return
       }
-      const question = paths?.length === 1
-        ? t('diffRevertFileConfirm', { path: paths[0] ?? '' })
-        : t('diffRevertAllConfirm', { count })
-      if (!window.confirm(question)) return
+      setRevertDialog(current => (current === undefined ? current : { ...current, preview, count }))
+    }, error => {
+      setRevertDialog(current => (current === undefined ? current : { ...current, error: error instanceof Error ? error.message : t('diffActionFailed') }))
+    })
+  }, [report, root, sessionId, t])
+  const confirmRevert = useCallback(async () => {
+    if (revertDialog?.preview === undefined || revertDialog.submitting) return
+    const { error: _error, ...pending } = revertDialog
+    setRevertDialog({ ...pending, submitting: true })
+    try {
       const result = await executeRepositoryAction(sessionId, {
         action: 'revert',
-        fingerprint: preview.fingerprint,
+        fingerprint: revertDialog.preview.fingerprint,
         message: '',
         includeUnstaged: true,
-        ...(paths === undefined ? {} : { paths }),
+        ...(revertDialog.paths === undefined ? {} : { paths: revertDialog.paths }),
       }, root)
-      report(t('diffRevertCompleted', { count: result.reverted ?? count }))
+      setRevertDialog(undefined)
+      report(t('diffRevertCompleted', { count: result.reverted ?? revertDialog.count }))
     } catch (error) {
-      report(error instanceof Error ? error.message : t('diffActionFailed'))
-    } finally {
-      setReverting(false)
+      setRevertDialog({ ...pending, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed') })
     }
-  }, [report, reverting, root, sessionId, t])
+  }, [report, revertDialog, root, sessionId, t])
+  const reverting = revertDialog !== undefined
   const openCommentEditor = useCallback((path: string, anchor: ReviewCommentAnchor) => {
     setCommentEditor({ path, ...anchor })
     setCommentDraft('')
@@ -899,7 +911,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
           </div>
           <div style={styles.diffHeaderActions}>
             {files.length === 0 || !availability['commit'] ? null : (
-              <button type="button" style={{ ...styles.button, ...styles.diffRevertAllButton }} disabled={reverting} onClick={() => void revert()}>{t('diffRevertAll')}</button>
+              <button type="button" style={{ ...styles.button, ...styles.diffRevertAllButton }} disabled={reverting} onClick={() => requestRevert()}>{t('diffRevertAll')}</button>
             )}
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
@@ -971,7 +983,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
               root={repository.pullRequestOnly === true ? undefined : repository.root}
               open={fileOpen(file.path, index)}
               onOpenChange={open => { setFileOpen(file.path, open) }}
-              onRevert={availability['commit'] && !reverting ? () => void revert([file.path]) : undefined}
+              onRevert={availability['commit'] ? () => { if (!reverting) requestRevert([file.path]) } : undefined}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
               ghThreads={ghThreads.filter(thread => thread.path === file.path)}
@@ -989,6 +1001,22 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
           ))}
         </div>
       </div>
+      <Modal className="dshClaudeRepositoryActionModal" contentClassName="dshClaudeRepositoryActionModalContent" open={revertDialog !== undefined} onClose={() => { if (revertDialog?.submitting !== true) setRevertDialog(undefined) }} title={revertDialog?.paths?.length === 1 ? t('diffRevertFile') : t('diffRevertAll')} closeLabel={t('diffCancel')} footer={
+        <div style={styles.diffModalFooter}>
+          <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={revertDialog?.submitting === true} onClick={() => setRevertDialog(undefined)}>{t('diffCancel')}</button>
+          <button type="button" style={{ ...styles.primaryButton, ...styles.diffModalButton, ...styles.diffDangerButton }} disabled={revertDialog?.preview === undefined || revertDialog.submitting} onClick={() => void confirmRevert()}>{revertDialog?.submitting === true ? t('diffSubmitting') : t('diffRevertConfirmAction')}</button>
+        </div>
+      }>
+        <div style={styles.diffModalBody}>
+          {revertDialog?.preview === undefined && revertDialog?.error === undefined
+            ? <p className="dshClaudeCommitProgress" role="status">{t('diffLoadingPreview')}</p>
+            : revertDialog?.preview === undefined ? null
+            : <p style={styles.diffRevertQuestion}>{revertDialog.paths?.length === 1
+              ? t('diffRevertFileConfirm', { path: revertDialog.paths[0] ?? '' })
+              : t('diffRevertAllConfirm', { count: revertDialog.count })}</p>}
+          {revertDialog?.error === undefined ? null : <p style={styles.diffModalError} role="alert">{revertDialog.error}</p>}
+        </div>
+      </Modal>
       <Modal className="dshClaudeRepositoryActionModal dshClaudeCommitDialog" contentClassName="dshClaudeRepositoryActionModalContent dshClaudeCommitContent" open={dialog !== undefined} onClose={closeDialog} title={dialog === undefined ? t('diffCommit') : actionLabel(dialog.action, t)} closeLabel={t('diffCancel')} footer={
         <div style={styles.diffModalFooter}>
           <button type="button" style={{ ...styles.button, ...styles.diffModalButton }} disabled={dialog?.submitting === true} onClick={closeDialog}>{t('diffCancel')}</button>
