@@ -28,15 +28,17 @@ function result(toolUseId: string, output: unknown, parentToolUseId?: string, is
 
 const teammates: ClaudeTaskInfo[] = [
   { taskId: 'tm-1', toolUseId: 'spawn-1', description: 'Review the diff', status: 'running', taskType: 'in_process_teammate', lastToolName: 'Read', usage: { toolUses: 4 } },
-  { taskId: 'tm-2', toolUseId: 'spawn-2', description: 'Write tests', status: 'completed', taskType: 'in_process_teammate' },
+  { taskId: 'tm-2', toolUseId: 'spawn-2', description: 'Write tests', status: 'completed', taskType: 'local_agent', subagentType: 'general-purpose', backgrounded: true },
   { taskId: 'bg-1', description: 'sleep 30', status: 'running', taskType: 'local_bash', backgrounded: true },
+  { taskId: 'sa-1', toolUseId: 'spawn-3', description: 'Anonymous helper', status: 'running', taskType: 'local_agent', backgrounded: true },
 ]
 
 function activities(): ClaudeActivityEvent[] {
   ordinal = 0
   return [
     call('spawn-1', 'Agent', { name: 'reviewer', description: 'Review the diff', prompt: 'Review PR 12' }),
-    call('spawn-2', 'Agent', { name: 'tester', description: 'Write tests', prompt: 'Cover the parser' }),
+    call('spawn-2', 'Agent', { name: 'tester', description: 'Write tests', prompt: 'Cover the parser', run_in_background: true }),
+    call('spawn-3', 'Agent', { description: 'Anonymous helper', prompt: 'Look around' }),
     call('tc-1', 'TaskCreate', { subject: 'Review parser change', description: 'Look at src/parse.ts', activeForm: 'Reviewing' }),
     result('tc-1', 'Task #1 created successfully: Review parser change'),
     call('tc-2', 'TaskCreate', { subject: 'Add parser tests' }, 'spawn-2'),
@@ -53,7 +55,7 @@ function activities(): ClaudeActivityEvent[] {
 }
 
 describe('deriveTeam', () => {
-  it('names teammates from their spawning Agent call and leaves background commands to the job list', () => {
+  it('counts in-process teammates and named subagents, not anonymous agents or background commands', () => {
     const team = deriveTeam(activities(), teammates)
     expect(team.members).toEqual([
       expect.objectContaining({ taskId: 'tm-1', name: 'reviewer', role: 'teammate', status: 'running', toolUseId: 'spawn-1', lastToolName: 'Read' }),
@@ -77,7 +79,7 @@ describe('deriveTeam', () => {
     ])
   })
 
-  it('keeps an unnamed teammate under its description and a create without a result on the board', () => {
+  it('keeps an unnamed in-process teammate under its description and a create without a result on the board', () => {
     ordinal = 0
     const team = deriveTeam(
       [call('tc-9', 'TaskCreate', { subject: 'Still pending' })],
@@ -107,7 +109,7 @@ function hook(owned: boolean, tasks: readonly ClaudeTaskInfo[], events: readonly
 
 describe('ClaudeTeamHeaderAction', () => {
   it('renders nothing without a team and a counted trigger with one', () => {
-    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!], [])} />)).toBe('')
+    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!, teammates[3]!], [call('spawn-3', 'Agent', { description: 'Anonymous helper' })])} />)).toBe('')
     expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(false, teammates, activities())} />)).toBe('')
     const markup = renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, teammates, activities())} />)
     expect(markup).toContain('aria-label="Show team"')

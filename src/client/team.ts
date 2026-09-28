@@ -1,15 +1,19 @@
 /**
  * Claude Code's native Agent Team, read off what the sidecar already holds.
  *
- * The CLI runs teammates as `in_process_teammate` tasks, the shared task list
- * through its TaskCreate / TaskUpdate tools, and mail through SendMessage. The
- * task board names the teammates and the activity log carries every tool
- * call's input, so the roster, board, and mailbox are derived here without a
- * second server-side projection.
+ * A teammate is an `Agent` call that carries a `name` (the CLI's own team
+ * model: the session is one implicit team and a named agent is addressable
+ * through SendMessage). Over the SDK the CLI never initializes a session
+ * team, so such an agent runs as a `local_agent` task rather than an
+ * `in_process_teammate`; both count. The shared task list comes through the
+ * TaskCreate / TaskUpdate tools and mail through SendMessage. The task board
+ * carries the spawning call id and the activity log every call's input, so
+ * roster, board, and mailbox are derived here without a server-side projection.
  */
 import type { ClaudeActivityEvent, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeTaskUsage } from '../events.ts'
 
 export const TEAMMATE_TASK_TYPE = 'in_process_teammate'
+export const SUBAGENT_TASK_TYPE = 'local_agent'
 export const LEAD_NAME = 'lead'
 
 export interface ClaudeTeamMember {
@@ -86,10 +90,6 @@ function taskStatus(value: unknown): ClaudeTeamTaskStatus | undefined {
 /** Fold the sidecar into the team: teammates from the task board, the shared
  *  task list and mail from the tool calls that wrote them. */
 export function deriveTeam(activities: readonly ClaudeActivityEvent[], tasks: readonly ClaudeTaskInfo[]): ClaudeTeamView {
-  const teammates = tasks.filter(task => task.taskType === TEAMMATE_TASK_TYPE)
-  if (teammates.length === 0 && !activities.some(activity => activity.toolName === 'TaskCreate' || activity.toolName === 'SendMessage')) {
-    return EMPTY_TEAM
-  }
   const ordered = [...activities].sort((left, right) => left.ordinal - right.ordinal)
   const spawnInputs = new Map<string, Record<string, unknown>>()
   for (const activity of ordered) {
@@ -97,6 +97,13 @@ export function deriveTeam(activities: readonly ClaudeActivityEvent[], tasks: re
       const input = parseRecord(activity.detail)
       if (input !== undefined) spawnInputs.set(activity.toolUseId, input)
     }
+  }
+  const spawnName = (task: ClaudeTaskInfo): string | undefined =>
+    task.toolUseId === undefined ? undefined : text(spawnInputs.get(task.toolUseId)?.name)
+  const teammates = tasks.filter(task =>
+    task.taskType === TEAMMATE_TASK_TYPE || (task.taskType === SUBAGENT_TASK_TYPE && spawnName(task) !== undefined))
+  if (teammates.length === 0 && !ordered.some(activity => activity.toolName === 'TaskCreate' || activity.toolName === 'SendMessage')) {
+    return EMPTY_TEAM
   }
   const members: ClaudeTeamMember[] = teammates.map(task => {
     const spawn = task.toolUseId === undefined ? undefined : spawnInputs.get(task.toolUseId)
