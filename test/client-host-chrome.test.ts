@@ -46,6 +46,10 @@ describe('host chrome suppression', () => {
     }
   })
 
+  it('hides the Host team roster only where the plugin roster mounted', () => {
+    expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-team-root) [data-team-action]{display:none}')
+  })
+
   it('restores the slack the tab row used to give the divider', () => {
     expect(HOST_CHROME_CSS).toContain('header:has(.dsh-claude-header-diff){padding-bottom:10px}')
   })

@@ -66,7 +66,14 @@ const PERMISSION_SELECT_CSS = [
   `[class*="_tools"]:has(.${PERMISSION_SELECT_CLASS}) [class*="_modes"]>*:has(span[class*="_triggerLabel"]){display:none!important}`,
 ].join('')
 
-export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}${PERMISSION_SELECT_CSS}`
+/** The Host's experimental Agent Team roster (`[data-team-action]`, in the
+ *  header action row) only ever shows the Lead for a Claude session: its
+ *  teammates live inside Claude Code, not in Host child Sessions. The plugin's
+ *  roster takes the same seat, so the Host's is hidden wherever ours mounted,
+ *  which is Claude sessions alone; other presets keep the native one. */
+const AGENT_TEAM_CSS = 'header:has(.dsh-claude-team-root) [data-team-action]{display:none}'
+
+export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEAT_CSS}${PERMISSION_SELECT_CSS}${AGENT_TEAM_CSS}`
 
 /** Install the stylesheet and the one DOM flag it depends on.
  *  @returns a disposer that removes both again. */

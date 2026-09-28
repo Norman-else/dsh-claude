@@ -130,11 +130,11 @@ describe('ClaudeTeamHeaderAction', () => {
     expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!, teammates[3]!], [call('spawn-3', 'Agent', { description: 'Anonymous helper' })])} />)).toBe('')
     expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(false, teammates, activities())} />)).toBe('')
     const markup = renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, teammates, activities())} />)
-    expect(markup).toContain('aria-label="Show team"')
+    expect(markup).toContain('aria-label="Agent Team"')
     expect(markup).toContain('aria-expanded="false"')
     // Lead plus two teammates; the background command is not a member.
-    expect(markup).toContain('<span>3</span>')
-    expect(markup).toContain('data-state="running"')
+    expect(markup).toContain('<span class="dsh-claude-team-count">3</span>')
+    expect(markup).toContain('dsh-claude-team-trigger-label')
   })
 })
 

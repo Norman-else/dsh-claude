@@ -314,12 +314,14 @@ ${error.stack ?? ''}`
       }),
     }, ClaudeAgentPresetLabel))
   }
-  // Claude Code's own Agent Team, in the seat the Host gives its team roster:
-  // members, the shared task list, and mail, with a teammate tab per member.
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
+  // Claude Code's own Agent Team in the Host roster's seat (its `agent-team`
+  // entry sits at order -20 in this row and is hidden for Claude sessions by
+  // host-chrome.ts): members, the shared task list, and mail, with a teammate
+  // tab per member.
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions',
     id: 'claude-team',
-    order: 28,
+    order: -19,
     locale: namespace,
     inject: (sessionId: string): ClaudeTeamHeaderActionInjected => ({
       t,
