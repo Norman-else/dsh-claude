@@ -1,4 +1,6 @@
+import { CLAUDE_PRESET_DESCRIPTION } from '../constants.ts'
 import { isClaudePresetText } from './hero-dom-bridge.ts'
+import { en, zh } from './locales.ts'
 
 /** Flags the Host's agent-preset seat while it names the Claude preset.
  *
@@ -35,9 +37,37 @@ export function markClaudePresetSeats(root: ParentNode): void {
   }
 }
 
-/** Keep the flag in step with the Host's own re-renders.
+/** Every spelling the Claude preset's description can currently have in the
+ *  tree: the published English, or a translation this bridge already wrote
+ *  before the locale changed. */
+const DESCRIPTION_VARIANTS = new Set([CLAUDE_PRESET_DESCRIPTION, en.presetClaudeDescription, zh.presetClaudeDescription])
+
+/**
+ * Translate the Claude preset's description where the Host's preset menu
+ * renders it. The Host resolves only its own presets' copy through the locale
+ * dictionaries and prints a third-party preset's metadata verbatim, and no
+ * public hook reaches that menu, so the text node itself is rewritten. It
+ * fails open: a Host that renders the copy differently keeps the English.
+ * @param root - subtree to sweep.
+ * @param text - the description in the active locale.
+ */
+export function localizeClaudePresetDescription(root: ParentNode, text: string): void {
+  for (const menu of root.querySelectorAll('[role="menu"], [role="listbox"], [role="dialog"], [role="tooltip"]')) {
+    const walker = menu.ownerDocument.createTreeWalker(menu, 4 /* NodeFilter.SHOW_TEXT */)
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const value = node.nodeValue ?? ''
+      const trimmed = value.trim()
+      if (trimmed === text || !DESCRIPTION_VARIANTS.has(trimmed)) continue
+      node.nodeValue = value.replace(trimmed, text)
+    }
+  }
+}
+
+/** Keep the flag, and the translated description, in step with the Host's
+ *  own re-renders.
+ *  @param description - the Claude preset description in the active locale.
  *  @returns a disposer that stops observing and clears every flag it set. */
-export function trackClaudePresetSeats(): () => void {
+export function trackClaudePresetSeats(description?: () => string): () => void {
   if (typeof document === 'undefined' || typeof window === 'undefined' || typeof MutationObserver === 'undefined') return () => {}
   let frame: number | undefined
   const schedule = (): void => {
@@ -45,6 +75,9 @@ export function trackClaudePresetSeats(): () => void {
     frame = window.requestAnimationFrame(() => {
       frame = undefined
       markClaudePresetSeats(document)
+      // Idempotent: a node already carrying the text is skipped, so the
+      // character-data record this write produces settles on the next frame.
+      if (description !== undefined) localizeClaudePresetDescription(document, description())
     })
   }
   // Attributes are deliberately not observed: this bridge writes one, and
@@ -52,6 +85,7 @@ export function trackClaudePresetSeats(): () => void {
   const observer = new MutationObserver(schedule)
   observer.observe(document.body, { childList: true, subtree: true, characterData: true })
   markClaudePresetSeats(document)
+  if (description !== undefined) localizeClaudePresetDescription(document, description())
   return () => {
     observer.disconnect()
     if (frame !== undefined) window.cancelAnimationFrame(frame)

@@ -63,7 +63,7 @@ export function ClaudeAgentPresetLabel({ t, hostT, roster, sessionId, useSession
   ensureCss()
   const text = presetDisplayText(rows.find(row => row.id === preset), preset, hostT)
   return (
-    <Tooltip label={text.description ?? t('presetHeaderHint')} side="bottom" delayMs={250} maxWidth={280}>
+    <Tooltip label={preset === CLAUDE_CODE_PRESET_ID ? t('presetClaudeDescription') : text.description ?? t('presetHeaderHint')} side="bottom" delayMs={250} maxWidth={280}>
       <span className="dsh-claude-preset-label">
         {preset === CLAUDE_CODE_PRESET_ID
           ? <span className="dsh-claude-preset-mark" aria-hidden="true" />

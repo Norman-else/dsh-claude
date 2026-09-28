@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { locateClaudePresetSeat, showsOtherPresetSeat } from '../src/client/hero-dom-bridge.ts'
+import { localizeClaudePresetDescription } from '../src/client/preset-seat-mark.ts'
 
 /** The hero row as it stands once the controls are up: a labelled workspace
  *  picker, the unlabelled preset seat, and the portal -- whose branch trigger
@@ -39,5 +40,21 @@ describe('hero preset seat', () => {
     expect(showsOtherPresetSeat()).toBe(false)
     document.body.innerHTML = '<div data-phase="hero"></div>'
     expect(showsOtherPresetSeat()).toBe(false)
+  })
+})
+
+describe('Claude preset description translation', () => {
+  it('rewrites the published description inside menus, both ways, and nothing else', () => {
+    const english = 'Use the local Claude Code as the complete agent runtime inside DSH.'
+    const chinese = '在 DSH 中以本地 Claude Code 作为完整的 Agent 运行时。'
+    document.body.innerHTML = `<div role="menu"><div><span>Claude</span><span> ${english} </span></div><span>Other preset</span></div><p>${english}</p>`
+    localizeClaudePresetDescription(document, chinese)
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain(chinese)
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain('Other preset')
+    // Outside a menu the Host's own text is left alone.
+    expect(document.querySelector('p')?.textContent).toBe(english)
+    localizeClaudePresetDescription(document, english)
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain(english)
+    document.body.innerHTML = ''
   })
 })

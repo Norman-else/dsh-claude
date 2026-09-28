@@ -132,7 +132,7 @@ export function apply(ctx: Context): void {
   }), 'dsh-claude: composer style drift probe')
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'dsh-claude: client copy')
   const t = ctx.locale.bind(namespace) as ClaudeCodeSettingsInjected['t']
-  ctx.effect(() => restyleHostChrome(), 'dsh-claude: Host chrome restyling')
+  ctx.effect(() => restyleHostChrome(() => t('presetClaudeDescription')), 'dsh-claude: Host chrome restyling')
   // The prose palette is a Client-side setting the Settings panel may never be
   // opened to deliver, so read it once at boot. Deliberately unawaited and
   // silently swallowed: a Host that cannot answer leaves the sheet on its

@@ -1,5 +1,9 @@
 export const CLAUDE_CODE_PROVIDER = 'claude'
 export const CLAUDE_CODE_PRESET_ID = 'claude'
+/** The preset description cordis.patch.yml publishes. The Host renders a
+ *  third-party preset's description verbatim, so the client swaps this exact
+ *  text for its own translation (see preset-seat-mark.ts). */
+export const CLAUDE_PRESET_DESCRIPTION = 'Use the local Claude Code as the complete agent runtime inside DSH.'
 export const CLAUDE_CODE_PROVIDER_IDS = [CLAUDE_CODE_PROVIDER] as const
 export const CLAUDE_SESSION_BOUND_EVENT = 'claude-code/session-bound'
 export const CLAUDE_ACTIVITY_EVENT = 'claude-code/activity'

@@ -77,13 +77,13 @@ export const HOST_CHROME_CSS = `${SESSION_LOG_CSS}${HEADER_TABS_CSS}${PRESET_SEA
 
 /** Install the stylesheet and the one DOM flag it depends on.
  *  @returns a disposer that removes both again. */
-export function restyleHostChrome(): () => void {
+export function restyleHostChrome(presetDescription?: () => string): () => void {
   if (typeof document === 'undefined') return () => {}
   const element = document.createElement('style')
   element.dataset.dshClaudeHostChrome = ''
   element.textContent = HOST_CHROME_CSS
   document.head.appendChild(element)
-  const untrack = trackClaudePresetSeats()
+  const untrack = trackClaudePresetSeats(presetDescription)
   return () => {
     untrack()
     element.remove()
