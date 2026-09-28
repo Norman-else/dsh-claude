@@ -35,6 +35,8 @@ export type NormalizedSdkMessage =
     usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }
     /** Ambient/housekeeping task: hide from chat rows, keep on the task board. */
     skipTranscript?: boolean
+    /** task_started: registered detached (true) or blocking its tool call (false). */
+    backgrounded?: boolean
     /** Where the CLI wrote the settled task's output (task_notification). */
     outputFile?: string
   }
@@ -250,6 +252,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       ...(subagentType === undefined ? {} : { subagentType }),
       ...(taskType === undefined ? {} : { taskType }),
       ...(message.skip_transcript === true ? { skipTranscript: true } : {}),
+      ...(typeof message.is_backgrounded === 'boolean' ? { backgrounded: message.is_backgrounded } : {}),
     }]
   }
   if (subtype === 'task_progress') {

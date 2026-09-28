@@ -43,7 +43,7 @@ describe('Claude client slot registration', () => {
     const captured = conversationCapture()
     apply(captured.ctx as never)
 
-    expect(captured.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step', 'claude-active-tasks'])
+    expect(captured.definitions.map(definition => definition.kind)).toEqual(['claudeCode', 'claude-activity-step'])
     expect(captured.registrations.some(entry => entry.key === 'claude-activity-step')).toBe(true)
     expect(captured.registrations.some(entry => entry.name === 'conversation.chat.turnTail')).toBe(true)
   })
@@ -89,7 +89,7 @@ describe('Claude client slot registration', () => {
 
     apply(ctx as never)
 
-    expect(definitions).toHaveLength(3)
+    expect(definitions).toHaveLength(2)
   })
 
   it('stacks the dock as comments, queue dock, then repository status', () => {
@@ -266,10 +266,10 @@ describe('Claude client slot registration', () => {
 
     // Host 0.1.5 has no details column: every panel is a tab type declared
     // once at apply time, with its body keyed the same way.
-    expect(definitions.map(definition => definition.kind).sort()).toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-tasks'])
+    expect(definitions.map(definition => definition.kind).sort()).toEqual(['claude-diff', 'claude-overview', 'claude-plan'])
     for (const definition of definitions) expect(definition.id).toBe(definition.kind)
     expect(registrations.filter(entry => entry.name === 'sidebar.right.pane.tab').map(entry => entry.key).sort())
-      .toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-tasks'])
+      .toEqual(['claude-diff', 'claude-overview', 'claude-plan'])
     expect(registrations.some(entry => entry.name === 'details')).toBe(false)
 
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')
@@ -293,11 +293,6 @@ describe('Claude client slot registration', () => {
     const planActions = planHeader?.inject?.('session-1') as { togglePlan(): void }
     planActions.togglePlan()
     expect(opened.at(-1)).toEqual(['session-1', 'claude-plan', { params: {} }])
-
-    const tail = registrations.find(entry => entry.name === 'conversation.chat.turnTail')
-    const tailActions = tail?.inject?.('session-1') as { openTasks(turn: number): void }
-    tailActions.openTasks(3)
-    expect(opened.at(-1)).toEqual(['session-1', 'claude-tasks', { params: { turn: 3 } }])
 
   })
 })

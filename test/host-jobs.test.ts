@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { JobHooks, JobOutcome, JobSpec } from '@deepseek-ai/dsh-jobs'
-import { ClaudeHostJobs, HOST_JOB_SETTLE_GRACE_MS, hostJobDetail } from '../src/host-jobs.ts'
+import { ClaudeHostJobs, HOST_JOB_SETTLE_GRACE_MS, hostJobDetail, hostJobKind, hostJobProgress } from '../src/host-jobs.ts'
 
 interface Started {
   spec: JobSpec
@@ -52,12 +52,12 @@ describe('ClaudeHostJobs', () => {
       `Command running in background with ID: bx48f9. Output is being written to: ${path}. You will be notified.`,
     ])
     const stop = vi.fn(async () => undefined)
-    mirror.started('dsh-1', 'bx48f9', 'sleep 30 && echo done', stop)
-    mirror.started('dsh-1', 'bx48f9', 'sleep 30 && echo done', stop) // level snapshots repeat; one job
+    mirror.started('dsh-1', 'bx48f9', 'bash', 'sleep 30 && echo done', stop)
+    mirror.started('dsh-1', 'bx48f9', 'bash', 'sleep 30 && echo done', stop) // level snapshots repeat; one job
 
     expect(jobs.start).toHaveBeenCalledTimes(1)
     const job = jobs.started[0]!
-    expect(job.spec).toMatchObject({ kind: 'claude', label: 'sleep 30 && echo done', owner: 'dsh-1' })
+    expect(job.spec).toMatchObject({ kind: 'bash', label: 'sleep 30 && echo done', owner: 'dsh-1' })
 
     const head = read(job, 0)
     expect(head).toMatchObject({ text: 'first line\n', nextOffset: 11, lossy: false, spillPath: path })
@@ -77,7 +77,7 @@ describe('ClaudeHostJobs', () => {
   it('falls back to the notification output file when no path was seen while running', async () => {
     const jobs = registry()
     const mirror = new ClaudeHostJobs(() => jobs, () => undefined)
-    mirror.started('dsh-1', 't1', 'deploy', async () => undefined)
+    mirror.started('dsh-1', 't1', 'subagent', 'deploy', async () => undefined)
     const job = jobs.started[0]!
     expect(read(job, 0)).toEqual({ text: '', nextOffset: 0, lossy: false })
 
@@ -93,8 +93,8 @@ describe('ClaudeHostJobs', () => {
     vi.useFakeTimers()
     const jobs = registry()
     const mirror = new ClaudeHostJobs(() => jobs, () => undefined)
-    mirror.started('dsh-1', 'a', 'a', async () => undefined)
-    mirror.started('dsh-1', 'b', 'b', async () => undefined)
+    mirror.started('dsh-1', 'a', 'subagent', 'a', async () => undefined)
+    mirror.started('dsh-1', 'b', 'subagent', 'b', async () => undefined)
     mirror.removed('dsh-1', 'a')
     mirror.removed('dsh-1', 'b')
     mirror.settled('dsh-1', 'b', 'failed', 'exit code 3')
@@ -106,8 +106,8 @@ describe('ClaudeHostJobs', () => {
   it('fails the session\'s live jobs when its CLI process is gone', async () => {
     const jobs = registry()
     const mirror = new ClaudeHostJobs(() => jobs, () => undefined)
-    mirror.started('dsh-1', 'a', 'a', async () => undefined)
-    mirror.started('dsh-2', 'b', 'b', async () => undefined)
+    mirror.started('dsh-1', 'a', 'subagent', 'a', async () => undefined)
+    mirror.started('dsh-2', 'b', 'subagent', 'b', async () => undefined)
     mirror.abandon('dsh-1')
     await expect(jobs.started[0]!.hooks.done).resolves.toEqual({ status: 'failed', detail: 'Claude Code exited' })
     const other = await Promise.race([jobs.started[1]!.hooks.done, Promise.resolve('live' as const)])
@@ -118,8 +118,8 @@ describe('ClaudeHostJobs', () => {
     const warnings: string[] = []
     const start = vi.fn((_spec: JobSpec): never => { throw new Error('no attached job controller serves dsh-1') })
     const mirror = new ClaudeHostJobs(() => ({ start }), message => { warnings.push(message) })
-    mirror.started('dsh-1', 'a', 'a', async () => undefined)
-    mirror.started('dsh-1', 'b', 'b', async () => undefined)
+    mirror.started('dsh-1', 'a', 'subagent', 'a', async () => undefined)
+    mirror.started('dsh-1', 'b', 'subagent', 'b', async () => undefined)
     mirror.progress('dsh-1', 'a', 'ignored')
     mirror.settled('dsh-1', 'a', 'completed')
     expect(start).toHaveBeenCalledTimes(2)
@@ -129,8 +129,16 @@ describe('ClaudeHostJobs', () => {
 
   it('does nothing without a registry', () => {
     const mirror = new ClaudeHostJobs(() => undefined, () => { throw new Error('unexpected') })
-    mirror.started('dsh-1', 'a', 'a', async () => undefined)
+    mirror.started('dsh-1', 'a', 'subagent', 'a', async () => undefined)
     mirror.settled('dsh-1', 'a', 'completed')
+  })
+
+  it('maps task types onto Host job kinds and composes the progress line', () => {
+    expect(['local_bash', 'local_agent', 'local_workflow', undefined].map(hostJobKind)).toEqual(['bash', 'subagent', 'claude', 'claude'])
+    expect(hostJobProgress({ summary: 'Reading the router', lastToolName: 'Read' })).toBe('Reading the router')
+    expect(hostJobProgress({ lastToolName: 'Read', usage: { toolUses: 12, totalTokens: 8_120 } })).toBe('Read · 12 tools · 8.1k tok')
+    expect(hostJobProgress({ usage: { totalTokens: 640 } })).toBe('640 tok')
+    expect(hostJobProgress({})).toBeUndefined()
   })
 
   it('derives the row detail from the summary', () => {

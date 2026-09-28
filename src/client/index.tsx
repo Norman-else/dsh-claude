@@ -15,9 +15,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { claudeActiveTasksDefinition, claudeActivityStepDefinition, claudeTurnDefinition } from './conversation-sidecar.ts'
+import { claudeActivityStepDefinition, claudeTurnDefinition } from './conversation-sidecar.ts'
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
-import { ClaudeActiveTasksNode } from './ClaudeActiveTasksNode.tsx'
 import { ClaudeActivityNode } from './ClaudeActivityNode.tsx'
 import { ClaudeCodeSettings, alertModeOf, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { setClaudeAlertsEnabled, startClaudeSessionAlerts, type ClaudeSessionAlertsDeps } from './session-alerts.ts'
@@ -234,7 +233,6 @@ export function apply(ctx: Context): void {
   if (uiConversation !== undefined) {
     ctx.effect(() => uiConversation.events.register(claudeTurnDefinition), 'dsh-claude: Claude turn marker')
     ctx.effect(() => uiConversation.events.register(claudeActivityStepDefinition), 'dsh-claude: Claude activity flow node')
-    ctx.effect(() => uiConversation.events.register(claudeActiveTasksDefinition), 'dsh-claude: active Claude tasks node')
   }
   // The transcript node is always registered. Which renderer actually draws a
   // step is decided from the step's own records, not from a Client-side copy
@@ -264,9 +262,6 @@ export function apply(ctx: Context): void {
       projectionFor: id => projections.source(id),
     },
   })
-  const openTasksPanel = (sessionId: string, turn: number): void => {
-    sidebarTabs.open(CLAUDE_TAB_KINDS.tasks, sessionId, { turn })
-  }
   const openOverviewPanel = (sessionId: string): void => {
     sidebarTabs.open(CLAUDE_TAB_KINDS.overview, sessionId, {})
   }
@@ -287,21 +282,10 @@ ${error.stack ?? ''}`
       : String(error)
     diagnostics.report('slot-entry-crashed', `slot "${key}"${id}: ${message}`)
   }), 'dsh-claude: Slot entry failure reporting')
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'claude-active-tasks',
-    locale: namespace,
-    inject: (sessionId: string) => ({
-      openTasks: (turn: number) => openTasksPanel(sessionId, turn),
-    }),
-  }, ClaudeActiveTasksNode))
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
     id: 'claude-activity-tail',
-    inject: (sessionId: string): ClaudeActivityTailInjected => ({
-      t,
-      openTasks: turn => openTasksPanel(sessionId, turn),
-    }),
+    inject: (): ClaudeActivityTailInjected => ({ t }),
   }, ClaudeActivityTail))
   // Icon-only diff trigger in the Session header's right-aligned utility
   // group. The action row next to the title is left-aligned (it rides inside

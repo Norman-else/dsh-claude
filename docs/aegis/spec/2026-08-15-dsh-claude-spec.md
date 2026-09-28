@@ -284,9 +284,9 @@ A lightweight `ConversationNodeDefinition` starts exactly once at each standard 
 The activity card is the `plugin` renderer's contribution. Its chat node is
 registered unconditionally; a step whose records carry the `native` stamp folds
 to no items and the node renders null, so DSH's assistant message, reasoning,
-and mirrored tool cards are the only thing drawn for it. The turn marker, the
-live task launcher, and every other control surface this package contributes
-stay mounted under both renderers because they have no native counterpart.
+and mirrored tool cards are the only thing drawn for it. The turn marker and
+every other control surface this package contributes stay mounted under both
+renderers because they have no native counterpart.
 Compaction boundaries and non-tool activity rows (status, warning) have no
 native equivalent either and remain sidecar-only under `native`.
 
@@ -302,15 +302,13 @@ The activity card shows:
 
 Do not render raw JSON by default. An expand control may show already-redacted detail. Use DSH theme tokens and existing primitive styles; no private shell modification.
 
-### 5.3 Background tasks panel
+### 5.3 Background tasks
 
-Register an active-turn chat-node launcher and a completed-turn tail launcher only when that turn owns tasks in the latest sidecar snapshot; do not keep a permanent session-header Tasks control. The active launcher is reactive while the DSH turn remains open, disappears at `turn/end`, and hands off to the completed-turn tail without duplication. Both launchers reflect running, completed, or failed state and open the tasks tab in the right sidebar scoped to that origin turn. The panel groups that turn's tasks into Running and Finished sections and shows bounded description, task/agent type, status, duration, tokens, tool-use count, last tool, and summary when supplied.
+The plugin draws no tasks launcher, tasks tab, or per-task Stop control of its own; whole-turn cancellation remains the native DSH composer Stop action. The Host's session-header background-job list is the one surface for Claude's detached work.
 
-Finished tasks may be collapsed and cleared from the mounted Client view. Clear is deliberately local presentation state: it does not mutate or falsify the canonical sidecar snapshot, and a newly observed settled task remains visible. “View activity” filters only already-redacted sidecar activity by the bounded task id; it never reads Claude transcript paths or exposes the resume identity.
+Tasks are mirrored into the Host job registry (`ctx.jobs`) under the DSH session: detached tasks from the `background_tasks_changed` level signal and every `local_agent` subagent from `task_started` (ambient tasks excluded), with kind `bash`, `subagent`, or `claude` by task type. The plugin settles on the task notification (or, after a short grace, on the task leaving the live set), publishes `task_progress` as the progress line (the CLI summary, else last tool, tool-use count, and tokens), and relays the Host's kill to the SDK `stop_task` request, declaring `perTaskStopAffordance` so a turn interrupt spares background work. Live output is read from the `<taskId>.output` path the CLI names in the backgrounding tool result's block content; when none was seen, the notification's `output_file` is drained at settlement. The preset route attaches a job controller for its agents because the Claude preset does not load `dsh-tool-jobs`; a Host without a job registry runs unchanged.
 
-The panel itself presents no per-task Stop control; whole-turn cancellation remains the native DSH composer Stop action.
-
-Detached tasks are additionally mirrored into the Host job registry (`ctx.jobs`, kind `claude`, owner = the DSH session), so the Host's own session-header background-job list shows them with live output and its Stop control. The plugin registers on the `background_tasks_changed` level signal (ambient tasks excluded), settles on the task notification (or, after a short grace, on the task leaving the live set), and relays the Host's kill to the SDK `stop_task` request, declaring `perTaskStopAffordance` so a turn interrupt spares background work. Live output is read from the `<taskId>.output` path the CLI names in the backgrounding tool result; when none was seen, the notification's `output_file` is drained at settlement. The preset route attaches a job controller for its agents because the Claude preset does not load `dsh-tool-jobs`; a Host without a job registry runs unchanged.
+The sidecar still records the task board (`tasks` snapshot): the supervisor holds a DSH turn open until that turn's detached tasks settle, and activity folding uses it to classify lifecycle rows.
 
 ### 5.4 Context meter
 
@@ -320,7 +318,7 @@ include a standalone `conversation.input.right` context-meter slot. Refresh
 metadata after initialization and turns; unavailable samples must not block
 prompting. Do not expose memory paths, tool identities, or prompt contents.
 
-Diff, plan, tasks, and overview are registered through `sidebarRightTabs` and
+Diff, plan, and overview are registered through `sidebarRightTabs` and
 `sidebar.right.pane.tab`; `sidebarRight.openTabIn` opens them per session.
 The Host owns fullscreen and close. Composer bars use `conversation.input.dock`,
 and prompt save/refine actions use `conversation.input.left` with standard input

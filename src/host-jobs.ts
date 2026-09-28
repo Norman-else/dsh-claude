@@ -22,6 +22,30 @@ declare module '@deepseek-ai/dsh-jobs/view' {
 }
 
 export type ClaudeHostJobStatus = 'completed' | 'failed' | 'stopped' | 'killed'
+/** `bash` and `subagent` are the Host's own kinds; `claude` covers the rest (workflows). */
+export type ClaudeHostJobKind = 'bash' | 'subagent' | 'claude'
+
+export function hostJobKind(taskType: string | undefined): ClaudeHostJobKind {
+  return taskType === 'local_bash' ? 'bash' : taskType === 'local_agent' ? 'subagent' : 'claude'
+}
+
+/** The live progress line: the CLI's own summary, else what the task is up to. */
+export function hostJobProgress(update: {
+  summary?: string
+  lastToolName?: string
+  usage?: { totalTokens?: number; toolUses?: number }
+}): string | undefined {
+  if (update.summary !== undefined) return update.summary
+  const parts: string[] = []
+  if (update.lastToolName !== undefined) parts.push(update.lastToolName)
+  if (update.usage?.toolUses !== undefined) parts.push(`${update.usage.toolUses} tools`)
+  if (update.usage?.totalTokens !== undefined) parts.push(`${formatTokens(update.usage.totalTokens)} tok`)
+  return parts.length === 0 ? undefined : parts.join(' · ')
+}
+
+function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)
+}
 
 /** How long a task that left the live set may wait for its notification
  *  (which carries the real status) before it is settled as completed. */
@@ -90,7 +114,7 @@ export class ClaudeHostJobs {
   }
 
   /** Register one detached task; `stop` relays the Host's kill to the CLI. */
-  started(sessionId: string, taskId: string, label: string, stop: () => Promise<void>): void {
+  started(sessionId: string, taskId: string, kind: ClaudeHostJobKind, label: string, stop: () => Promise<void>): void {
     const key = keyOf(sessionId, taskId)
     if (this.#jobs.has(key)) return
     const registry = this.#registry()
@@ -103,7 +127,7 @@ export class ClaudeHostJobs {
     }
     try {
       registry.start({
-        kind: 'claude',
+        kind,
         label,
         owner: sessionId as never,
         output: [{ channel: 'stdout', read: from => readOutput(job, from) }],

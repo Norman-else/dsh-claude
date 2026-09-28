@@ -38,7 +38,7 @@ import { claudeModelRow, claudeModelValue, recordClaudeModels } from './model-ca
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
-import type { ClaudeHostJobs } from './host-jobs.ts'
+import { hostJobKind, hostJobProgress, type ClaudeHostJobs } from './host-jobs.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -1644,8 +1644,15 @@ export class ClaudeSupervisor {
     const settled = next.status !== 'running'
     if (next.status !== 'running') {
       this.#hostJobs?.settled(entry.sessionId, taskId, next.status, message.summary, message.outputFile)
-    } else if (message.summary !== undefined) {
-      this.#hostJobs?.progress(entry.sessionId, taskId, message.summary)
+    } else if (message.phase === 'started') {
+      // Detached work and subagents (long-running even in the foreground) go
+      // to the Host job list; a blocking Bash call stays a tool card.
+      if ((message.backgrounded === true || next.taskType === 'local_agent') && message.skipTranscript !== true) {
+        this.#hostJobs?.started(entry.sessionId, taskId, hostJobKind(next.taskType), next.description, () => entry.query.stopTask(taskId))
+      }
+    } else {
+      const line = hostJobProgress(message)
+      if (line !== undefined) this.#hostJobs?.progress(entry.sessionId, taskId, line)
     }
     await this.#scheduleTasksSnapshot(entry, settled)
     if (settled) await this.#continueAfterTasks(entry)
@@ -1662,7 +1669,7 @@ export class ClaudeSupervisor {
     let changed = false
     for (const task of tasks) {
       if (task.ambient !== true) {
-        this.#hostJobs?.started(entry.sessionId, task.taskId, task.description, () => entry.query.stopTask(task.taskId))
+        this.#hostJobs?.started(entry.sessionId, task.taskId, hostJobKind(task.taskType), task.description, () => entry.query.stopTask(task.taskId))
       }
       const existing = entry.tasks.get(task.taskId)
       if (existing === undefined) {

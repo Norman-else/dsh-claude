@@ -69,16 +69,6 @@ export interface ClaudeActivityStepMarker {
   readonly step: number
 }
 
-export interface ClaudeActiveTasksMarker {
-  readonly turn: number
-}
-
-interface ClaudeActiveTasksState extends ClaudeActiveTasksMarker {
-  readonly active: boolean
-  readonly anchored: boolean
-  readonly anchorSeq: number
-}
-
 interface ClaudeTurnProjectionState extends ClaudeTurnMarker {
   readonly claude: boolean
 }
@@ -92,7 +82,6 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
 declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'claude-activity-step': ClaudeActivityStepMarker
-    'claude-active-tasks': ClaudeActiveTasksMarker
   }
 }
 
@@ -418,76 +407,6 @@ function toolDescription(
 }
 
 
-/** The call id a task's own lifecycle pings were dispatched from. */
-function taskParentToolUseId(activities: readonly ClaudeActivityEvent[], taskId: string): string | undefined {
-  for (const activity of activities) {
-    if (activity.taskId !== taskId) continue
-    const detail = inputRecord(activity.detail)
-    const id = detail?.tool_use_id
-    if (typeof id === 'string' && id.length > 0) return id
-  }
-  return undefined
-}
-
-/**
- * The tools one task ran, in the shape the transcript's tool cards take.
- *
- * The task's own activities are lifecycle pings whose detail is the raw
- * protocol message -- useful to nobody reading a panel. The work is in the
- * activities addressed to the call that dispatched the task: a subagent's
- * nested calls carry it as `parentToolUseId`, and a backgrounded command IS
- * that call. Both are folded here the way {@link transcriptItemsForStep} folds
- * a step, so one card renderer serves the transcript and the task panel.
- */
-export function taskTools(
-  activities: readonly ClaudeActivityEvent[],
-  taskId: string,
-): readonly ClaudeTranscriptTool[] {
-  const parent = taskParentToolUseId(activities, taskId)
-  if (parent === undefined) return []
-  const tools = new Map<string, ClaudeTranscriptTool>()
-  const answered = answeredQuestions(activities)
-  const ordered = [...activities].sort((left, right) => left.ordinal - right.ordinal)
-  for (const activity of ordered) {
-    const own = activity.parentToolUseId === parent
-    const isRoot = activity.parentToolUseId === undefined && activity.toolUseId === parent
-    if (!own && !isRoot) continue
-    const toolUseId = activity.toolUseId
-    if (toolUseId === undefined) continue
-    const previous = tools.get(toolUseId)
-    // The opening record is the one that names the tool; everything after it
-    // is that call being answered.
-    if (previous === undefined) {
-      if (activity.toolName === undefined) continue
-      const input = inputRecord(activity.detail)
-      const recorded = activity.toolName === ASK_USER_QUESTION ? answered.get(toolUseId) : undefined
-      tools.set(toolUseId, {
-        toolUseId,
-        toolName: activity.toolName,
-        description: toolDescription(activity.toolName, input, false, recorded),
-        ...(recorded === undefined ? {} : { answers: recorded }),
-        ...(activity.summary === undefined ? {} : { summary: activity.summary }),
-        ...(activity.detail === undefined ? {} : { input: activity.detail }),
-        ...(activity.phase === undefined ? {} : { phase: activity.phase }),
-        ...(activity.isError === undefined ? {} : { isError: activity.isError }),
-        subcalls: [],
-      })
-      continue
-    }
-    const failed = activity.isError === true || activity.phase === 'failed'
-    const answers = cardAnswers(previous, activity.detail, failed)
-    tools.set(toolUseId, {
-      ...previous,
-      description: toolDescription(previous.toolName, inputRecord(previous.input), failed, answers),
-      ...(answers === undefined ? {} : { answers }),
-      ...(activity.detail === undefined ? {} : { output: activity.detail }),
-      ...(activity.phase === undefined ? {} : { phase: activity.phase }),
-      ...(activity.isError === undefined ? {} : { isError: activity.isError }),
-    })
-  }
-  return [...tools.values()]
-}
-
 /** Whether the Host drew this step with DSH's own renderer.
  *
  *  The stamp rides on the records themselves rather than on a Client-side copy
@@ -710,52 +629,6 @@ export const claudeActivityStepDefinition: ConversationNodeDefinition<ClaudeActi
       location: context.start?.location ?? { kind: 'unresolved' },
       visibility: 'visible',
       data: { turn: state.turn, step: state.step },
-    }
-  },
-}
-
-/** Keep one sidecar-backed task launcher mounted only while its DSH turn is open. */
-export const claudeActiveTasksDefinition: ConversationNodeDefinition<ClaudeActiveTasksState> = {
-  kind: 'claude-active-tasks',
-  target: 'chat',
-  match(event) {
-    if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
-    if (event.type === 'turn/end' || event.type === 'step/start' || event.type === 'assistant/message') {
-      return { id: String(event.data.turn), role: 'update' }
-    }
-    return null
-  },
-  start(_context, match) {
-    if (match.event.type !== 'turn/start') throw new Error('Claude active tasks require turn/start')
-    // A user/message has no turn coordinate in the public event payload, so it
-    // cannot update this turn-keyed Context directly. Keep the launcher at the
-    // live chat tail until assistant output provides a concrete later anchor.
-    return {
-      turn: match.event.data.turn,
-      active: true,
-      anchored: false,
-      anchorSeq: Number.MAX_SAFE_INTEGER,
-    }
-  },
-  update(context, match) {
-    if (match.event.type === 'turn/end') return { ...context.state, active: false }
-    if (match.event.type === 'step/start' && !context.state.anchored) return context.state
-    return { ...context.state, anchored: true, anchorSeq: match.event.seq + 0.1 }
-  },
-  buildViewNode(context): ChatConversationViewNode | null {
-    const state = context.state
-    if (state === undefined) return null
-    return {
-      key: context.key,
-      kind: 'claude-active-tasks',
-      id: context.id,
-      target: 'chat',
-      anchorSeq: state.anchorSeq,
-      location: context.start?.location ?? { kind: 'unresolved' },
-      // Incremental assemblers forbid withdrawing a materialized node. Keep
-      // its key stable after turn/end and hide it while the turn tail takes over.
-      visibility: state.active ? 'visible' : 'hidden',
-      data: { turn: state.turn },
     }
   },
 }

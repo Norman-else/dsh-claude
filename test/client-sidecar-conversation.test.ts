@@ -11,22 +11,12 @@ import type {
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../src/events.ts'
 import type { ClaudeActivityChatData } from '../src/client/conversation-sidecar.ts'
 import {
-  claudeActiveTasksDefinition,
   claudeActivityStepDefinition,
   claudeTurnDefinition,
   nativelyRenderedStep,
   selectClaudeTurn,
   transcriptItemsForStep,
 } from '../src/client/conversation-sidecar.ts'
-import {
-  activitiesForTask,
-  ClaudeTasksPanel,
-  summarizeTurnTasks,
-  tasksForTurn,
-  visibleTaskGroups,
-} from '../src/client/ClaudeTasksPanel.tsx'
-import { ClaudeActivityTail } from '../src/client/ClaudeActivityTail.tsx'
-import { ClaudeActiveTasksNode } from '../src/client/ClaudeActiveTasksNode.tsx'
 import {
   ClaudeActivityNode,
   ClaudeCompactionDivider,
@@ -196,7 +186,7 @@ async function conversationAssembler(): Promise<InstanceType<typeof Conversation
   }
   const assembler = new ConversationNodeAssembler(
     {
-      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, claudeActiveTasksDefinition, userTestDefinition, assistantTestDefinition],
+      entries: () => [claudeTurnDefinition, claudeActivityStepDefinition, userTestDefinition, assistantTestDefinition],
       fallbackEntry: () => undefined,
     },
     { entries: () => [timelineView, chatView] },
@@ -685,11 +675,6 @@ describe('Claude sidecar conversation projection', () => {
       expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'background' }) }) }),
       expect.objectContaining({ kind: 'activity', row: expect.objectContaining({ activity: expect.objectContaining({ taskId: 'agent' }) }) }),
     ]))
-    expect(tasksForTurn([
-      { ...tasks[0]!, originTurn: 2 },
-      { ...tasks[1]!, originTurn: 2 },
-      { ...tasks[2]!, originTurn: 2 },
-    ], 2).map(task => task.taskId)).toEqual(['background', 'agent'])
   })
 
   it('hides uncorrelated lifecycle noise while keeping classified background work', () => {
@@ -761,86 +746,13 @@ describe('Claude sidecar conversation projection', () => {
     })])
   })
 
-  it('selects task groups, client-local clear state, activity, and origin-turn launchers', () => {
-    const tasks = [
-      { taskId: 'running-2', description: 'two', status: 'running' as const, originTurn: 2, backgrounded: true },
-      { taskId: 'running-3', description: 'three', status: 'running' as const, originTurn: 3, subagentType: 'Explore' },
-      { taskId: 'done', description: 'done', status: 'completed' as const, originTurn: 2, subagentType: 'general-purpose' },
-    ]
-    expect(visibleTaskGroups(tasks, new Set())).toMatchObject({
-      running: [{ taskId: 'running-2' }, { taskId: 'running-3' }],
-      finished: [{ taskId: 'done' }],
-    })
-    expect(visibleTaskGroups(tasks, new Set(['done'])).finished).toEqual([])
-    expect(tasksForTurn(tasks, 2).map(task => task.taskId)).toEqual(['running-2', 'done'])
-    expect(summarizeTurnTasks(tasksForTurn(tasks, 2))).toEqual({
-      state: 'running', count: 2, running: 1, failed: 0, completed: 1,
-    })
-    expect(summarizeTurnTasks([{ taskId: 'failed', description: 'failed', status: 'failed' }])).toEqual({
-      state: 'failed', count: 1, running: 0, failed: 1, completed: 0,
-    })
-    expect(summarizeTurnTasks([{ taskId: 'done', description: 'done', status: 'completed' }])).toEqual({
-      state: 'completed', count: 1, running: 0, failed: 0, completed: 1,
-    })
-    const activities = [
-      { ...nestedStarted, taskId: 'running-2' },
-      { ...nestedDone, taskId: 'running-3' },
-    ]
-    expect(activitiesForTask(activities, 'running-2')).toEqual([activities[0]])
-  })
-
-  it('renders a compact turn-bound Tasks launcher only for background work and subagents', () => {
-    const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActivityTail, {
-      turn: { data: { get: (key: string) => key === 'claudeCode' ? { turn } : undefined } } as never,
-      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
-      openTasks: () => {},
-      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
-    }))
-    expect(render([])).toBe('')
-    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3, backgrounded: true }])).toBe('')
-    expect(render([{ taskId: 'foreground', description: 'foreground', status: 'completed', originTurn: 2, taskType: 'local_bash' }])).toBe('')
-    const running = render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true }])
-    expect(running).toContain('tasksTurnRunning')
-    expect(running).toContain('tasksOpen')
-    expect(running).toContain('border-radius:999px')
-    expect(running).toContain('justify-content:flex-start')
-    expect(running).toContain('tasksTurnRunning:{&quot;count&quot;:1}</span>')
-    expect(running).toContain('dsh-claude-act-running')
-    const mixed = render([
-      { taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true },
-      { taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' },
-      { taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' },
-    ])
-    expect(mixed).toContain('tasksTurnRunning:{&quot;count&quot;:1}</span>')
-    const done = render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' }])
-    expect(done).toContain('tasksTurnCompleted')
-    expect(done).not.toContain('dsh-claude-act-running')
-    expect(render([{ taskId: 'failed', description: 'failed', status: 'failed', originTurn: 2, subagentType: 'general-purpose' }])).toContain('tasksTurnFailed')
-  })
-
-  it('renders the active task node reactively for the owning turn', () => {
-    const render = (tasks: readonly unknown[], turn = 2) => renderToStaticMarkup(createElement(ClaudeActiveTasksNode, {
-      node: { data: { turn } },
-      t: ((key: string, params?: Record<string, unknown>) => `${key}:${JSON.stringify(params ?? {})}`) as never,
-      openTasks: () => {},
-      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({ owned: true, activities: [], tasks: { tasks } })) as never,
-    } as never))
-    expect(render([])).toBe('')
-    expect(render([{ taskId: 'other', description: 'other', status: 'running', originTurn: 3, backgrounded: true }])).toBe('')
-    expect(render([{ taskId: 'foreground', description: 'foreground', status: 'running', originTurn: 2, taskType: 'local_bash' }])).toBe('')
-    expect(render([{ taskId: 'running', description: 'run', status: 'running', originTurn: 2, backgrounded: true }])).toContain('tasksTurnRunning')
-    expect(render([{ taskId: 'done', description: 'done', status: 'completed', originTurn: 2, subagentType: 'Explore' }])).toContain('tasksTurnCompleted')
-  })
-
-  it('mounts live Claude activity at step/start and hides the active task node at turn/end', async () => {
+  it('mounts live Claude activity at step/start and keeps it after turn/end', async () => {
     const turnStart = { type: 'turn/start', seq: 1, time: 1, data: { turn: 2 } }
     const stepStart = { type: 'step/start', seq: 2, time: 2, data: { turn: 2, step: 1 } }
     const active = await projectConversation([turnStart, stepStart])
     expect(active.chat.map(node => [node.kind, node.data])).toEqual([
       ['claude-activity-step', { turn: 2, step: 1 }],
-      ['claude-active-tasks', { turn: 2 }],
     ])
-    expect(active.chat[0]?.anchorSeq).toBeLessThan(active.chat[1]?.anchorSeq ?? 0)
 
     const completed = await projectConversation([
       turnStart,
@@ -876,58 +788,6 @@ describe('Claude sidecar conversation projection', () => {
       'test-user',
     ])
     expect(projection.chat[0]?.anchorSeq).toBeLessThan(projection.chat[1]?.anchorSeq ?? 0)
-  })
-
-  it('keeps an active turn task launcher after its direct user message before assistant output', async () => {
-    const assembler = await conversationAssembler()
-    const events = [
-      { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
-      { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
-      {
-        type: 'assistant/message',
-        seq: 3,
-        time: 3,
-        data: {
-          turn: 1,
-          step: 1,
-          message: { role: 'assistant', content: [], source: { provider: 'claude', model: 'default' } },
-        },
-      },
-      { type: 'step/end', seq: 4, time: 4, data: { turn: 1, step: 1 } },
-      { type: 'turn/end', seq: 5, time: 5, data: { turn: 1 } },
-      { type: 'turn/start', seq: 6, time: 6, data: { turn: 2 } },
-      { type: 'step/start', seq: 7, time: 7, data: { turn: 2, step: 1 } },
-      {
-        type: 'user/message',
-        seq: 8,
-        time: 8,
-        data: {
-          id: 'turn-2-user',
-          role: 'user',
-          content: [{ type: 'text', text: 'Handle the PR comments' }],
-          source: { kind: 'user' },
-        },
-      },
-    ]
-
-    for (const event of events) {
-      assembler.append({ event, view: undefined } as never)
-      expect(() => assembler.flush()).not.toThrow()
-    }
-
-    const chat = assembler.snapshot('chat') as readonly ChatConversationViewNode[]
-    expect(chat.slice(-3).map(node => node.kind)).toEqual([
-      'test-user',
-      'claude-activity-step',
-      'claude-active-tasks',
-    ])
-    expect(chat.at(-3)?.anchorSeq).toBeLessThan(chat.at(-2)?.anchorSeq ?? 0)
-    expect(chat.at(-2)?.anchorSeq).toBeLessThan(chat.at(-1)?.anchorSeq ?? 0)
-    expect(chat.at(-1)).toMatchObject({
-      kind: 'claude-active-tasks',
-      visibility: 'visible',
-      data: { turn: 2 },
-    })
   })
 
   it('keeps incremental projection alive for a second turn after the first turn ends', async () => {
@@ -969,32 +829,6 @@ describe('Claude sidecar conversation projection', () => {
       { turn: 1, step: 1 },
       { turn: 2, step: 1 },
     ])
-  })
-
-  it('renders only the selected turn in the Tasks details panel', () => {
-    const markup = renderToStaticMarkup(createElement(ClaudeTasksPanel, {
-      turn: 2,
-      t: ((key: string) => key) as never,
-      closeDetails: () => {},
-      useClaudeProjection: ((selector: (projection: unknown) => unknown) => selector({
-        owned: true,
-        activities: [],
-        tasks: { tasks: [
-          { taskId: 'turn-2', description: 'Task for selected turn', status: 'completed', originTurn: 2, subagentType: 'Explore' },
-          { taskId: 'turn-3', description: 'Task for other turn', status: 'completed', originTurn: 3, backgrounded: true },
-        ] },
-      })) as never,
-    }))
-    expect(markup).toContain('Task for selected turn')
-    expect(markup).not.toContain('Task for other turn')
-    expect(markup).toContain('tasksPanelTurn')
-    expect(markup).toContain('class="dshClaudeDetailsCard"')
-    expect(markup).toContain('.dshClaudeDetailsCard {\n  box-sizing: border-box;\n  width: calc(100% - 16px);\n  height: calc(100% - 16px);\n  margin: 8px;')
-    expect(markup).toContain('border-radius:12px')
-    expect(markup).toContain('box-shadow:0 4px 16px')
-    expect(markup).toMatch(/class="dshClaudePanelIconButton" aria-label="tasksClose"[^>]*><svg\b/u)
-    expect(markup).not.toContain('>×</button>')
-    expect(markup).toContain('.dshClaudePanelIconButton:hover')
   })
 
   it('publishes one marker when a Claude turn contains multiple assistant steps', async () => {
@@ -1040,7 +874,7 @@ describe('Claude sidecar conversation projection', () => {
     expect(native.timeline.turns.get(2)?.data.get('claudeCode')).toBeUndefined()
     // Generic live anchors exist, but their renderers stay null when a native
     // turn has no Claude sidecar activities or tasks.
-    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant', 'claude-active-tasks', 'claude-activity-step'])
+    expect(native.chat.map(node => node.kind)).toEqual(['test-assistant', 'claude-activity-step'])
   })
 
   it('selects the turn tail from engine-owned turn data', () => {

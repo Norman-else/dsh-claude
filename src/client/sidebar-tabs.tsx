@@ -4,7 +4,6 @@ import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected, type ClaudeDiffPanelProps } from './ClaudeDiffPanel.tsx'
 import { ClaudePlanPanel, type ClaudePlanPanelInjected, type ClaudePlanPanelProps } from './ClaudePlanPanel.tsx'
-import { ClaudeTasksPanel, type ClaudeTasksPanelInjected, type ClaudeTasksPanelProps } from './ClaudeTasksPanel.tsx'
 import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
@@ -18,7 +17,7 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
  * into `sidebar.right.pane.tab` under the type's id, and opened per session
  * through `ctx.sidebarRight.openTabIn`. Reopening a type that is already open
  * focuses that tab and re-delivers the navigation params, so a second "show
- * tasks" press for another turn lands in the same tab.
+ * diff" press for another root lands in the same tab.
  *
  * The Host owns fullscreen and closing now: the sidebar chrome carries its
  * own fullscreen toggle, so the panels draw none, and a panel's close button
@@ -28,14 +27,12 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 export const CLAUDE_TAB_KINDS = {
   diff: 'claude-diff',
   plan: 'claude-plan',
-  tasks: 'claude-tasks',
   overview: 'claude-overview',
 } as const
 
 export type ClaudeTabKind = (typeof CLAUDE_TAB_KINDS)[keyof typeof CLAUDE_TAB_KINDS]
 
 export interface ClaudeTabParams {
-  readonly turn?: number
   readonly initialRoot?: string
 }
 
@@ -148,11 +145,6 @@ export function ClaudePlanTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<Cl
   return <ClaudePlanPanel {...panel} closeDetails={closeDetails} />
 }
 
-export function ClaudeTasksTab({ useTabInfo, noteTab, ...panel }: TabBodyProps<Omit<ClaudeTasksPanelProps, 'turn'>>) {
-  const { closeDetails, params } = useClaudeTab(useTabInfo, noteTab)
-  return <ClaudeTasksPanel {...panel} closeDetails={closeDetails} turn={params.turn ?? 0} />
-}
-
 export function ClaudeOverviewTab({ useTabInfo, noteTab, face }: ClaudeTabFace & {
   useTabInfo: UseSidebarRightTabInfo
   face: Omit<ClaudePullRequestsPanelInjected, 'closeDetails'> | undefined
@@ -162,7 +154,7 @@ export function ClaudeOverviewTab({ useTabInfo, noteTab, face }: ClaudeTabFace &
   return <ClaudePullRequestsPanel {...face} closeDetails={closeDetails} />
 }
 
-/** Declare the four tab types and their bodies; returns the per-session
+/** Declare the three tab types and their bodies; returns the per-session
  *  open / close / toggle face the rest of the client drives them through. */
 export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSidebarTabOptions): ClaudeSidebarTabs {
   const { t, namespace } = options
@@ -174,7 +166,6 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
   const titles: Record<ClaudeTabKind, () => string> = {
     [CLAUDE_TAB_KINDS.diff]: () => t('diffTabTitle'),
     [CLAUDE_TAB_KINDS.plan]: () => t('planPanelTitle'),
-    [CLAUDE_TAB_KINDS.tasks]: () => t('tasksPanel'),
     [CLAUDE_TAB_KINDS.overview]: () => t('overviewTitle'),
   }
   for (const kind of Object.values(CLAUDE_TAB_KINDS)) {
@@ -200,14 +191,6 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
       { t, sessionId, ...faceFor(CLAUDE_TAB_KINDS.plan, sessionId) }
     ),
   }, ClaudePlanTab))
-  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-    name: 'sidebar.right.pane.tab',
-    key: CLAUDE_TAB_KINDS.tasks,
-    locale: namespace,
-    inject: (sessionId: string): Omit<ClaudeTasksPanelInjected, 'closeDetails' | 'turn'> & ClaudeTabFace => (
-      { t, ...faceFor(CLAUDE_TAB_KINDS.tasks, sessionId) }
-    ),
-  }, ClaudeTasksTab))
   ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab',
     key: CLAUDE_TAB_KINDS.overview,
