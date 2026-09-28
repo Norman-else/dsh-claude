@@ -4,6 +4,7 @@ import {
   IconChevronRightOutlineRegular,
   IconChevronUpOutlineRegular,
   IconCloseOutlineRegular,
+  IconRefreshOutlineRegular,
   Menu,
   Modal,
   Tooltip,
@@ -340,6 +341,8 @@ interface DiffFileSectionProps {
   readonly editorNode: ReactNode
   readonly activeTargetKey: string | undefined
   readonly onOpenChange: (open: boolean) => void
+  /** Put this file's uncommitted changes back; undefined when nothing may be reverted. */
+  readonly onRevert: (() => void) | undefined
   readonly onOpenEditor: (anchor: ReviewCommentAnchor) => void
   readonly onRemoveComment: (id: string) => void
 }
@@ -347,7 +350,7 @@ interface DiffFileSectionProps {
 function DiffFileSection({
   file, root, open, t, comments, ghThreads, editorAnchor, editorNode, now,
   activeTargetKey,
-  suggestMention, onOpenEditor, onOpenChange, onRemoveComment, onReplyToThread, onThreadResolvedChange, onSendThreadToAi,
+  suggestMention, onOpenEditor, onOpenChange, onRevert, onRemoveComment, onReplyToThread, onThreadResolvedChange, onSendThreadToAi,
 }: DiffFileSectionProps) {
   const [revealed, setRevealed] = useState<ReadonlyMap<number, string>>(() => new Map())
   const [total, setTotal] = useState<number>()
@@ -392,7 +395,11 @@ function DiffFileSection({
   const dragSide = drag === undefined ? undefined : anchors[drag.start]?.side
   return (
     <section style={styles.diffFile}>
-      <button type="button" className={styles.diffFileHeaderClass} style={styles.diffFileHeader} aria-expanded={open} onClick={() => onOpenChange(!open)}>
+      {/* The header row, not the toggle, is sticky: the revert control sits
+          beside the toggle rather than inside it, where a nested button would
+          be invalid markup. */}
+      <div className={styles.diffFileHeaderClass} style={styles.diffFileHeaderRow}>
+      <button type="button" style={styles.diffFileHeaderToggle} aria-expanded={open} onClick={() => onOpenChange(!open)}>
         <span data-diff-file-chevron="" style={{ ...styles.diffFileChevron, ...(open ? styles.chevronOpen : {}) }} aria-hidden="true">
           <IconChevronRightOutlineRegular size={14} />
         </span>
@@ -408,6 +415,14 @@ function DiffFileSection({
         )}
         <span style={styles.diffFileStats}><span style={styles.diffAdd}>+{file.additions}</span><span style={styles.diffDelete}>−{file.deletions}</span></span>
       </button>
+      {onRevert === undefined ? null : (
+        <Tooltip label={t('diffRevertFile')} side="bottom" delayMs={300}>
+          <button type="button" className={styles.panelIconButtonClass} style={styles.diffFileRevert} aria-label={t('diffRevertFileNamed', { path: file.path })} onClick={onRevert}>
+            <IconRefreshOutlineRegular size={14} />
+          </button>
+        </Tooltip>
+      )}
+      </div>
       {open ? <div style={styles.diffCode}>{rows.map((entry, index) => {
         if (entry.kind === 'collapsed' && entry.gap !== undefined) {
           return <DiffGapRow key={`gap:${entry.gap.newStart}`} gap={entry.gap} t={t} busy={expanding} onExpand={root === undefined ? undefined : expand} />
@@ -485,7 +500,7 @@ export function actionLabel(action: RepositoryActionKind, t: ClaudeDiffPanelInje
 
 /** The panel's own menu. Resuming a stopped merge or rebase belongs to the
  *  repository bar, which is the surface that can still be reached from one. */
-export type PanelActionKind = Exclude<RepositoryActionKind, 'resolve-continue' | 'resolve-abort'>
+export type PanelActionKind = Exclude<RepositoryActionKind, 'resolve-continue' | 'resolve-abort' | 'revert'>
 export type RepositoryActionAvailability = Readonly<Record<PanelActionKind, boolean>>
 
 export function repositoryActionAvailability(
@@ -696,6 +711,38 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
       setDialog({ ...dialog, submitting: false, error: error instanceof Error ? error.message : t('diffActionFailed'), ...(completedCommit === undefined ? {} : { commit: completedCommit }) })
     }
   }, [baseBranch, dialog, draft, includeUnstaged, message, prBody, prTitle, report, root, sessionId, t])
+  // Discarding work cannot be undone, so the file count comes from a fresh
+  // preview, the reader confirms it, and the revert runs against that exact
+  // fingerprint: a tree that moved in between is refused, not half-reverted.
+  const [reverting, setReverting] = useState(false)
+  const revert = useCallback(async (paths?: readonly string[]) => {
+    if (reverting) return
+    setReverting(true)
+    try {
+      const preview = await loadRepositoryActionPreview(sessionId, undefined, root)
+      const count = paths === undefined ? preview.files.length : preview.files.filter(file => paths.includes(file.path)).length
+      if (count === 0) {
+        report(t('diffRevertNothing'))
+        return
+      }
+      const question = paths?.length === 1
+        ? t('diffRevertFileConfirm', { path: paths[0] ?? '' })
+        : t('diffRevertAllConfirm', { count })
+      if (!window.confirm(question)) return
+      const result = await executeRepositoryAction(sessionId, {
+        action: 'revert',
+        fingerprint: preview.fingerprint,
+        message: '',
+        includeUnstaged: true,
+        ...(paths === undefined ? {} : { paths }),
+      }, root)
+      report(t('diffRevertCompleted', { count: result.reverted ?? count }))
+    } catch (error) {
+      report(error instanceof Error ? error.message : t('diffActionFailed'))
+    } finally {
+      setReverting(false)
+    }
+  }, [report, reverting, root, sessionId, t])
   const openCommentEditor = useCallback((path: string, anchor: ReviewCommentAnchor) => {
     setCommentEditor({ path, ...anchor })
     setCommentDraft('')
@@ -851,6 +898,9 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
             <span style={styles.diffHeaderBranch} title={branch}>{branch}</span>
           </div>
           <div style={styles.diffHeaderActions}>
+            {files.length === 0 || !availability['commit'] ? null : (
+              <button type="button" style={{ ...styles.button, ...styles.diffRevertAllButton }} disabled={reverting} onClick={() => void revert()}>{t('diffRevertAll')}</button>
+            )}
             <div style={styles.diffSplitButton}>
               <button type="button" style={{ ...styles.diffCommitButton, ...(availability['commit'] ? {} : styles.diffActionDisabled) }} disabled={!availability['commit']} onClick={() => openAction('commit')}>{t('diffCommit')}</button>
               <Menu open={menuOpen} items={menuItems} onSelect={(id: string) => { if (availability[id as PanelActionKind]) openAction(id as PanelActionKind) }} onClose={() => setMenuOpen(false)} align="end" portal anchor={
@@ -921,6 +971,7 @@ export function ClaudeDiffPanel({ useClaudeProjection, t, sessionId, closeDetail
               root={repository.pullRequestOnly === true ? undefined : repository.root}
               open={fileOpen(file.path, index)}
               onOpenChange={open => { setFileOpen(file.path, open) }}
+              onRevert={availability['commit'] && !reverting ? () => void revert([file.path]) : undefined}
               t={t}
               comments={reviewComments.filter(comment => comment.path === file.path)}
               ghThreads={ghThreads.filter(thread => thread.path === file.path)}

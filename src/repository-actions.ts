@@ -50,7 +50,7 @@ const GENERATE_ARGUMENTS: readonly string[] = [
 const GENERATE_ENV: Readonly<Record<string, string>> = { MAX_THINKING_TOKENS: '0' }
 
 type RepositoryActionRuntime = Pick<SubprocessRuntime, 'resolveExecutable' | 'spawn'>
-export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch' | 'resolve-continue' | 'resolve-abort'
+export type RepositoryActionKind = 'commit' | 'commit-push' | 'push' | 'create-pr' | 'merge-pr' | 'update-branch' | 'resolve-continue' | 'resolve-abort' | 'revert'
 export type RepositoryMergeMethod = 'merge' | 'squash' | 'rebase'
 
 interface CommandResult {
@@ -62,6 +62,8 @@ interface CommandResult {
 
 export interface RepositoryActionFile {
   readonly path: string
+  /** The path a rename or copy came from, which a revert must restore too. */
+  readonly origPath?: string
   readonly staged: boolean
   readonly unstaged: boolean
   readonly untracked: boolean
@@ -105,6 +107,9 @@ export interface RepositoryActionRequest {
   readonly pullNumber?: number
   /** Push once `resolve-continue` finishes the operation it resumed. */
   readonly push?: boolean
+  /** `revert`: the root-relative paths to put back; absent reverts every
+   *  uncommitted change. */
+  readonly paths?: readonly string[]
 }
 
 export interface PullRequestText {
@@ -124,6 +129,8 @@ export interface RepositoryActionResult {
   /** Conflicted paths left in the working tree by an update-branch merge or
    *  rebase, or by the commit a resumed one stopped on next. */
   readonly conflicts?: readonly string[]
+  /** `revert`: how many listed files were put back. */
+  readonly reverted?: number
 }
 
 export class RepositoryActionError extends Error {
@@ -171,12 +178,20 @@ export function parseRepositoryActionStatus(output: string): readonly Repository
     const index = line[0] ?? ' '
     const worktree = line[1] ?? ' '
     let path = line.slice(3)
+    let origPath: string | undefined
     const rename = path.lastIndexOf(' -> ')
-    if (rename >= 0) path = path.slice(rename + 4)
-    if (output.includes('\0') && (index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C')) position += 1
+    if (rename >= 0) {
+      origPath = path.slice(0, rename)
+      path = path.slice(rename + 4)
+    }
+    if (output.includes('\0') && (index === 'R' || index === 'C' || worktree === 'R' || worktree === 'C')) {
+      position += 1
+      origPath = records[position]
+    }
     if (path.length === 0 || path.includes('\0') || isProtectedWarpPath(path)) continue
     files.set(path, {
       path,
+      ...(origPath === undefined || origPath.length === 0 || index === 'C' ? {} : { origPath }),
       staged: index !== ' ' && index !== '?',
       unstaged: worktree !== ' ' && worktree !== '?',
       untracked: index === '?' && worktree === '?',
@@ -417,6 +432,7 @@ export class RepositoryActionService {
     if (request.action === 'resolve-continue' || request.action === 'resolve-abort') return this.#resolve(cwd, request.action, request.push === true)
     const before = await this.#preview(cwd)
     if (before.fingerprint !== request.fingerprint) throw new RepositoryActionError('repository-changed', 'Repository changes have changed. Refresh the commit panel.')
+    if (request.action === 'revert') return this.#revert(before, request.paths)
     if (request.action === 'push') {
       const git = await this.#git()
       try {
@@ -574,6 +590,28 @@ export class RepositoryActionService {
     }
     this.#invalidate(root)
     return { commit: head, pushed: true }
+  }
+
+  /** Put uncommitted changes back to HEAD: tracked files (staged and working
+   *  tree, a rename's source included) through `git restore`, untracked ones
+   *  deleted. Only paths the preview lists are touched, and pathspecs are
+   *  literal, so a name with glob characters reverts that one file. */
+  async #revert(before: RepositoryActionPreview, paths: readonly string[] | undefined): Promise<RepositoryActionResult> {
+    const wanted = paths === undefined ? before.files : before.files.filter(file => paths.includes(file.path))
+    if (wanted.length === 0) {
+      throw new RepositoryActionError('nothing-to-revert', 'Only uncommitted changes can be reverted; these are already committed.')
+    }
+    const git = await this.#git()
+    const tracked = wanted.filter(file => !file.untracked).flatMap(file => [file.path, ...(file.origPath === undefined ? [] : [file.origPath])])
+    const untracked = wanted.filter(file => file.untracked).map(file => file.path)
+    if (tracked.length > 0) {
+      await this.#mustRun(git, ['--literal-pathspecs', 'restore', '--source=HEAD', '--staged', '--worktree', '--', ...tracked], before.root, GIT_TIMEOUT_MS, 'revert-failed', 'Git could not restore the files.')
+    }
+    if (untracked.length > 0) {
+      await this.#mustRun(git, ['--literal-pathspecs', 'clean', '-f', '--', ...untracked], before.root, GIT_TIMEOUT_MS, 'revert-failed', 'Git could not remove the untracked files.')
+    }
+    this.#invalidate(before.root)
+    return { commit: before.head, pushed: false, reverted: wanted.length }
   }
 
   async #head(git: string, root: string): Promise<string> {

@@ -64,7 +64,7 @@ describe('repository action parsing', () => {
       ' M nested\\warp.md',
     ].join('\n'))).toEqual([
       { path: 'new.ts', staged: false, unstaged: false, untracked: true },
-      { path: 'renamed.ts', staged: true, unstaged: false, untracked: false },
+      { path: 'renamed.ts', origPath: 'old.ts', staged: true, unstaged: false, untracked: false },
       { path: 'staged.ts', staged: true, unstaged: false, untracked: false },
       { path: 'unstaged.ts', staged: false, unstaged: true, untracked: false },
     ])
@@ -72,7 +72,7 @@ describe('repository action parsing', () => {
     expect(isProtectedWarpPath('nested/warp.MD')).toBe(true)
     expect(isProtectedWarpPath('WARP.md.bak')).toBe(false)
     expect(parseRepositoryActionStatus('R  renamed.ts\0old.ts\0?? space name.ts\0')).toEqual([
-      { path: 'renamed.ts', staged: true, unstaged: false, untracked: false },
+      { path: 'renamed.ts', origPath: 'old.ts', staged: true, unstaged: false, untracked: false },
       { path: 'space name.ts', staged: false, unstaged: false, untracked: true },
     ])
   })
@@ -254,6 +254,34 @@ describe('repository action service', () => {
     expect(argv).toContainEqual(['C:/bin/git.exe', 'commit', '-m', 'Update files', '--'])
     expect(argv.flat()).not.toContain('nested/WARP.md')
     expect(invalidated).toHaveBeenCalledWith('C:/repo')
+  })
+
+  it('reverts the named files: tracked ones and a rename source restored, untracked ones deleted, literally', async () => {
+    const status = ' M src/a.ts\n?? src/new.ts\nR  src/moved.ts -> src/[x].ts\n M src/keep.ts\n'
+    const fake = runtime([...previewResults(status), ...previewResults(status), { stdout: '' }, { stdout: '' }])
+    const invalidated = vi.fn()
+    const service = new RepositoryActionService(fake, 'claude', invalidated)
+    const initial = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'revert', fingerprint: initial.fingerprint, message: '', includeUnstaged: true,
+      paths: ['src/a.ts', 'src/new.ts', 'src/[x].ts', 'not-listed.ts'],
+    })).resolves.toEqual({ commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', pushed: false, reverted: 3 })
+    const argv = fake.spawn.mock.calls.map(call => call[0].argv)
+    expect(argv).toContainEqual(['C:/bin/git.exe', '--literal-pathspecs', 'restore', '--source=HEAD', '--staged', '--worktree', '--', 'src/[x].ts', 'src/moved.ts', 'src/a.ts'])
+    expect(argv).toContainEqual(['C:/bin/git.exe', '--literal-pathspecs', 'clean', '-f', '--', 'src/new.ts'])
+    // An unlisted path and an unnamed listed file are left alone.
+    expect(argv.flat()).not.toContain('not-listed.ts')
+    expect(argv.flat()).not.toContain('src/keep.ts')
+    expect(invalidated).toHaveBeenCalledWith('C:/repo')
+  })
+
+  it('refuses to revert when none of the named files has uncommitted changes', async () => {
+    const fake = runtime([...previewResults(), ...previewResults()])
+    const service = new RepositoryActionService(fake, 'claude')
+    const initial = await service.preview('C:/repo')
+    await expect(service.execute('C:/repo', {
+      action: 'revert', fingerprint: initial.fingerprint, message: '', includeUnstaged: true, paths: ['committed-only.ts'],
+    })).rejects.toMatchObject({ code: 'nothing-to-revert' })
   })
 
   it('refuses an already staged WARP.md', async () => {

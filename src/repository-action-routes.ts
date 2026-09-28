@@ -13,9 +13,10 @@ import {
 const MAX_BODY_BYTES = 16 * 1024
 const MAX_SESSION_ID_CHARS = 1_024
 const MAX_ROOT_CHARS = 4_096
-const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
+const ACTIONS = new Set<RepositoryActionKind>(['commit', 'commit-push', 'push', 'create-pr', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort', 'revert'])
 /** Actions that commit nothing of their own, so the panel sends no message. */
-const MESSAGELESS = new Set<RepositoryActionKind>(['push', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort'])
+const MESSAGELESS = new Set<RepositoryActionKind>(['push', 'merge-pr', 'update-branch', 'resolve-continue', 'resolve-abort', 'revert'])
+const MAX_REVERT_PATHS = 2_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
@@ -77,6 +78,12 @@ function actionRequest(input: Record<string, unknown>): RepositoryActionRequest 
     ...(optionalString(input, 'prBody') === undefined ? {} : { prBody: optionalString(input, 'prBody')! }),
     ...(optionalString(input, 'baseBranch') === undefined ? {} : { baseBranch: optionalString(input, 'baseBranch')! }),
     ...(input.draft === undefined ? {} : typeof input.draft === 'boolean' ? { draft: input.draft } : (() => { throw new RepositoryActionError('invalid-request', 'The draft field must be a boolean.') })()),
+    ...(input.paths === undefined
+      ? {}
+      : Array.isArray(input.paths) && input.paths.length > 0 && input.paths.length <= MAX_REVERT_PATHS
+        && input.paths.every(path => typeof path === 'string' && path.length > 0 && path.length <= 4_096 && !path.includes('\0'))
+        ? { paths: input.paths as string[] }
+        : (() => { throw new RepositoryActionError('invalid-request', 'The paths field must list repository paths.') })()),
     ...(input.push === undefined ? {} : typeof input.push === 'boolean' ? { push: input.push } : (() => { throw new RepositoryActionError('invalid-request', 'The push field must be a boolean.') })()),
     ...(input.admin === undefined ? {} : typeof input.admin === 'boolean' ? { admin: input.admin } : (() => { throw new RepositoryActionError('invalid-request', 'The admin field must be a boolean.') })()),
     ...(input.pullNumber === undefined

@@ -2779,6 +2779,35 @@ export const diffFileHeader: CSSProperties = {
   cursor: 'pointer',
 }
 
+/** The sticky row a file header lives in: the expand toggle plus its revert control. */
+export const diffFileHeaderRow: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  display: 'flex',
+  alignItems: 'center',
+  background: 'var(--dsw-alias-bg-layer-1)',
+}
+
+export const diffFileHeaderToggle: CSSProperties = {
+  ...diffFileHeader,
+  position: 'static',
+  flex: 1,
+  width: 'auto',
+  minWidth: 0,
+}
+
+export const diffFileRevert: CSSProperties = {
+  flex: 'none',
+  marginRight: 6,
+  color: 'var(--dsw-alias-label-tertiary)',
+}
+
+export const diffRevertAllButton: CSSProperties = {
+  minHeight: 28,
+  padding: '4px 10px',
+  fontSize: 12,
+}
+
 export const diffFilePath: CSSProperties = {
   minWidth: 0,
   flex: 1,
