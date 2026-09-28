@@ -1351,9 +1351,21 @@ export class ClaudeSupervisor {
         return
       }
       if (message.userMessageUuid !== undefined && !active.ownedPromptUuids.has(message.userMessageUuid)) {
-        // A stale internal continuation must not settle the explicit final
-        // report request. Primary-turn mismatches remain protocol failures.
-        if (active.phase === 'follow-up') return
+        if (active.phase === 'follow-up') {
+          // The CLI reacts to the last task notification on its own, and a
+          // report prompt that lands mid-reaction is folded into that turn
+          // (stream-json steering), so this foreign result carries the report.
+          // Only a send the CLI still has queued means another result follows.
+          // ponytail: a prompt the CLI had not read yet runs an orphan turn
+          // whose text is dropped; pull it back if that ever shows up.
+          if ((message.queuedTurnCount ?? 0) > 0) {
+            await this.#completeProgressSegment(active, message)
+            return
+          }
+          await this.#completeTurn(entry, active, message)
+          return
+        }
+        // Primary-turn mismatches remain protocol failures.
         throw new ClaudeProtocolError(`Claude Code result for user message ${message.userMessageUuid} does not match active request ${active.promptUuid}`)
       }
       // A steered send the CLI had not reached when it produced this result is

@@ -1926,6 +1926,56 @@ describe('Claude supervisor', () => {
     }
   })
 
+  it('closes the turn on the CLI\'s own reaction to a stopped task once the report prompt was folded into it', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'start a ticker' })
+    const collected = collect(output)
+    const query = transport.queries[0]!
+    const input = query.input[Symbol.asyncIterator]()
+    await input.next()
+    query.push(init())
+    query.push({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'tick',
+      description: 'Print a tick every 10s',
+      task_type: 'local_bash',
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    query.push({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'tick', task_type: 'local_bash', description: 'Print a tick every 10s' }],
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    query.push(result('Ticker started in the background.'))
+    await vi.waitFor(() => expect(runtime.snapshots()[0]?.state).toBe('running'))
+
+    // The user stops it from the Host job list: the notification arrives, the
+    // plugin sends its report prompt, and the CLI reacts to the notification
+    // itself in the same breath, folding the prompt into that reaction turn.
+    query.push({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'tick',
+      status: 'stopped',
+      summary: 'Background command stopped',
+      session_id: 'claude-session-1',
+    } as SDKMessage)
+    const followUp = await input.next()
+    expect(followUp.value?.message.content).toContain('all settled')
+    query.push(delta('The ticker was stopped before it finished.'))
+    query.push({ ...result('The ticker was stopped before it finished.') as object, user_message_uuid: 'cli-task-reaction', queued_turn_count: 0 } as SDKMessage)
+
+    await expect(collected).resolves.toEqual(expect.arrayContaining([
+      { type: 'complete', text: 'The ticker was stopped before it finished.' },
+    ]))
+    expect(runtime.snapshots()[0]).toMatchObject({ state: 'idle' })
+    await runtime.dispose()
+  })
+
   it('rejects a result with the wrong user-message UUID', async () => {
     const transport = factory()
     const owner = fakeAgent()
