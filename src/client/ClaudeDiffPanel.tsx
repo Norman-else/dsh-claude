@@ -4,7 +4,6 @@ import {
   IconChevronRightOutlineRegular,
   IconChevronUpOutlineRegular,
   IconCloseOutlineRegular,
-  IconRefreshOutlineRegular,
   Menu,
   Modal,
   Tooltip,
@@ -322,6 +321,18 @@ function CommentGlyph() {
   )
 }
 
+/** The undo arrow: a hook bending back to the left. Drawn inline because the
+ *  primitives icon set has no undo icon, and its refresh circle reads as
+ *  "reload" rather than "discard these changes". */
+function RevertGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+      <path d="M5.5 3.5 2.5 6.5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2.75 6.5h6.75a3.75 3.75 0 0 1 0 7.5H7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 interface DiffFileSectionProps {
   readonly file: DiffFile
   /** Repository root the working tree lives in; without it unmodified lines cannot be expanded. */
@@ -418,7 +429,7 @@ function DiffFileSection({
       {onRevert === undefined ? null : (
         <Tooltip label={t('diffRevertFile')} side="bottom" delayMs={300}>
           <button type="button" className={styles.panelIconButtonClass} style={styles.diffFileRevert} aria-label={t('diffRevertFileNamed', { path: file.path })} onClick={onRevert}>
-            <IconRefreshOutlineRegular size={14} />
+            <RevertGlyph />
           </button>
         </Tooltip>
       )}
