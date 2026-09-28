@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-jobs'
 import { CLAUDE_CODE_PROVIDER } from './constants.ts'
 import { CLAUDE_COMMANDS_SERVICE } from './command-bridge.ts'
 import { claudePresenterDefinitions } from './presenters.ts'
@@ -34,4 +35,12 @@ export function apply(ctx: Context, config: Config = {}): void {
   for (const definition of claudePresenterDefinitions()) {
     ctx.effect(() => ctx.tools.register(definition), `dsh-claude: ${definition.name} presentation`)
   }
+  // `ctx.jobs.start` refuses an owner no attached controller serves. The
+  // shipped presets get theirs from dsh-tool-jobs, which this preset does not
+  // load (Claude Code owns job collection); attach one for this preset's
+  // agents so mirrored tasks (host-jobs.ts) can register. Optional: a Host
+  // without a job registry runs as before.
+  ctx.inject(['jobs'], jobsCtx => {
+    jobsCtx.effect(() => jobsCtx.jobs.attachController('dsh-claude'), 'dsh-claude: job controller')
+  })
 }

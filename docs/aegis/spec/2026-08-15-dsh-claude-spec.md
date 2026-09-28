@@ -308,7 +308,9 @@ Register an active-turn chat-node launcher and a completed-turn tail launcher on
 
 Finished tasks may be collapsed and cleared from the mounted Client view. Clear is deliberately local presentation state: it does not mutate or falsify the canonical sidecar snapshot, and a newly observed settled task remains visible. “View activity” filters only already-redacted sidecar activity by the bounded task id; it never reads Claude transcript paths or exposes the resume identity.
 
-The pinned Agent SDK and DSH public session face expose whole-turn interruption only. The panel must not present a per-task Stop control. Whole-turn cancellation remains the native DSH composer Stop action.
+The panel itself presents no per-task Stop control; whole-turn cancellation remains the native DSH composer Stop action.
+
+Detached tasks are additionally mirrored into the Host job registry (`ctx.jobs`, kind `claude`, owner = the DSH session), so the Host's own session-header background-job list shows them with live output and its Stop control. The plugin registers on the `background_tasks_changed` level signal (ambient tasks excluded), settles on the task notification (or, after a short grace, on the task leaving the live set), and relays the Host's kill to the SDK `stop_task` request, declaring `perTaskStopAffordance` so a turn interrupt spares background work. Live output is read from the `<taskId>.output` path the CLI names in the backgrounding tool result; when none was seen, the notification's `output_file` is drained at settlement. The preset route attaches a job controller for its agents because the Claude preset does not load `dsh-tool-jobs`; a Host without a job registry runs unchanged.
 
 ### 5.4 Context meter
 

@@ -6,6 +6,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
@@ -52,6 +53,7 @@ import { withElectronNodeRunner } from './windows-job-runner.ts'
 import { detectWindowsSystemProxy, withSystemProxy, type ProxyEnv } from './system-proxy.ts'
 import { normalizePlanUsage, probePlanUsage, recordPlanUsage } from './plan-usage.ts'
 import { registerPlanUsageRoute } from './plan-usage-routes.ts'
+import { ClaudeHostJobs } from './host-jobs.ts'
 import { readDefaultPermissionMode, readPermissionSelector, readRenderMode, readSupervisorLimitOverrides, readWorktreeBranchPrefix, registerClaudeGlobalSettingsRoute } from './global-settings.ts'
 
 // The steering contract is published for a plugin that wants to reach a running
@@ -295,6 +297,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // A CLI that dies mid-turn is diagnosed from the log, not from the
     // conversation it was in the middle of.
     logger: { warn: message => { ctx.logger.warn(message) } },
+    hostJobs: new ClaudeHostJobs(() => ctx.get('jobs'), message => { ctx.logger.warn(message) }),
   })
   let resolutionError: unknown
   try {

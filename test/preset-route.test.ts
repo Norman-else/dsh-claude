@@ -5,7 +5,7 @@ import { CLAUDE_CODE_PROVIDER } from '../src/constants.ts'
 
 type RequestListener = (payload: unknown, next: () => Promise<{ provider?: string; model?: string }>) => Promise<{ provider?: string; model?: string }>
 
-function capture(): { ctx: Context; listener: () => RequestListener; registered: () => readonly string[]; provided: () => { name: string; value: unknown } | undefined } {
+function capture(jobs?: { attachController(name: string): () => void }): { ctx: Context; listener: () => RequestListener; registered: () => readonly string[]; provided: () => { name: string; value: unknown } | undefined } {
   let listener: RequestListener = () => { throw new Error('unregistered') }
   const names: string[] = []
   let service: { name: string; value: unknown } | undefined
@@ -15,6 +15,11 @@ function capture(): { ctx: Context; listener: () => RequestListener; registered:
       listener = handler
     },
     effect: (setup: () => unknown) => { setup() },
+    // Optional-service inject: the callback runs only when the Host has it.
+    inject: (names: readonly string[], setup: (scoped: unknown) => void) => {
+      expect(names).toEqual(['jobs'])
+      if (jobs !== undefined) setup({ jobs, effect: (run: () => unknown) => { run() } })
+    },
     provide: (name: string, value: unknown) => { service = { name, value } },
     tools: {
       register: (definition: { name: string }) => {
@@ -64,5 +69,11 @@ describe('Claude preset route', () => {
     expect(service?.name).toBe('claudeCommands')
     expect(typeof (service?.value as { list?: unknown }).list).toBe('function')
     expect((service?.value as { register?: unknown }).register).toBeUndefined()
+  })
+
+  it('attaches a job controller for its agents when the Host has a job registry', () => {
+    const attached: string[] = []
+    apply(capture({ attachController: name => { attached.push(name); return () => undefined } }).ctx)
+    expect(attached).toEqual(['dsh-claude'])
   })
 })

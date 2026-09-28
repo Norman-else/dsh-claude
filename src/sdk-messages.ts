@@ -25,11 +25,13 @@ export type NormalizedSdkMessage =
     usage?: { totalTokens?: number; toolUses?: number; durationMs?: number }
     /** Ambient/housekeeping task: hide from chat rows, keep on the task board. */
     skipTranscript?: boolean
+    /** Where the CLI wrote the settled task's output (task_notification). */
+    outputFile?: string
   }
   | {
     /** Level signal: full live background-task set (REPLACE semantics). */
     kind: 'background-tasks'
-    tasks: readonly { taskId: string; taskType?: string; description: string }[]
+    tasks: readonly { taskId: string; taskType?: string; description: string; ambient?: true }[]
   }
   | {
     /** Context compaction boundary. The CLI compacts locally without running a
@@ -293,6 +295,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const summary = string(message.summary)
     const taskStatus = failed ? 'failed' as const : stopped ? 'stopped' as const : 'completed' as const
     const usage = taskUsageOf(record(message.usage))
+    const outputFile = string(message.output_file)
     return [{
       kind: 'subagent',
       title: summary ?? taskId ?? 'Claude subagent finished',
@@ -302,6 +305,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       taskStatus,
       ...(summary === undefined ? {} : { summary }),
       ...(usage === undefined ? {} : { usage }),
+      ...(outputFile === undefined ? {} : { outputFile }),
     }]
   }
   if (subtype === 'background_tasks_changed') {
@@ -318,6 +322,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
           taskId,
           description,
           ...(taskType === undefined ? {} : { taskType }),
+          ...(entry?.ambient === true ? { ambient: true as const } : {}),
         }]
       }),
     }]

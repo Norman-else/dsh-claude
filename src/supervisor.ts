@@ -38,6 +38,7 @@ import { claudeModelRow, claudeModelValue, recordClaudeModels } from './model-ca
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
 import { captureWorktreeTree } from './worktree-snapshot.ts'
+import type { ClaudeHostJobs } from './host-jobs.ts'
 
 export const CLAUDE_INITIALIZATION_TIMEOUT_MS = 30_000
 export const CLAUDE_INTERRUPT_TIMEOUT_MS = 5_000
@@ -435,6 +436,7 @@ export class ClaudeSupervisor {
   /** Where a process death is reported. The transcript keeps the failure; this
    *  is what makes it findable afterwards. */
   readonly #logger: { warn(message: string): void } | undefined
+  readonly #hostJobs: ClaudeHostJobs | undefined
   readonly #dynamicPresenterNames = new WeakMap<Agent, Set<string>>()
   readonly #contextWindows = new Map<string, number>()
   #disposed = false
@@ -466,6 +468,8 @@ export class ClaudeSupervisor {
     /** Where a process death is reported. The transcript keeps the failure;
      *  this is what makes it findable afterwards. */
     logger?: { warn(message: string): void }
+    /** Mirror of detached tasks into the Host's background-job list. */
+    hostJobs?: ClaudeHostJobs
   }) {
     this.#runtime = dependencies.runtime
     this.#approval = dependencies.approval
@@ -477,6 +481,7 @@ export class ClaudeSupervisor {
     this.#defaultPermissionMode = dependencies.defaultPermissionMode ?? (async () => undefined)
     this.#permissionSelector = dependencies.permissionSelector ?? (async () => 'plugin')
     this.#logger = dependencies.logger
+    this.#hostJobs = dependencies.hostJobs
   }
 
   snapshots(): ClaudeSupervisorSnapshot[] {
@@ -1219,6 +1224,8 @@ export class ClaudeSupervisor {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: PLAN_MODE_HANDOFF_PROMPT },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
+      // The Host job list renders a per-task stop control (see host-jobs.ts).
+      perTaskStopAffordance: true,
       permissionMode,
       allowDangerouslySkipPermissions: true,
       canUseTool,
@@ -1319,6 +1326,7 @@ export class ClaudeSupervisor {
     // must still reach the task board instead of being dropped with turn-less
     // messages below.
     const taskId = message.kind === 'subagent' ? message.taskId : undefined
+    if (message.kind === 'tool-result') this.#hostJobs?.noteOutput(entry.sessionId, message.output)
     if (message.kind === 'subagent' && taskId !== undefined) {
       await this.#trackTask(entry, message, taskId, entry.active?.cursor.turn)
     } else if (message.kind === 'background-tasks') {
@@ -1634,6 +1642,11 @@ export class ClaudeSupervisor {
     if (previous?.backgrounded === true) next.backgrounded = true
     entry.tasks.set(taskId, next)
     const settled = next.status !== 'running'
+    if (next.status !== 'running') {
+      this.#hostJobs?.settled(entry.sessionId, taskId, next.status, message.summary, message.outputFile)
+    } else if (message.summary !== undefined) {
+      this.#hostJobs?.progress(entry.sessionId, taskId, message.summary)
+    }
     await this.#scheduleTasksSnapshot(entry, settled)
     if (settled) await this.#continueAfterTasks(entry)
   }
@@ -1642,12 +1655,15 @@ export class ClaudeSupervisor {
    *  for the backgrounded flag: only the listed tasks are detached). */
   async #trackBackgroundLevel(
     entry: SupervisorEntry,
-    tasks: readonly { taskId: string; taskType?: string; description: string }[],
+    tasks: readonly { taskId: string; taskType?: string; description: string; ambient?: true }[],
     originTurn: number | undefined,
   ): Promise<void> {
     const live = new Set(tasks.map(task => task.taskId))
     let changed = false
     for (const task of tasks) {
+      if (task.ambient !== true) {
+        this.#hostJobs?.started(entry.sessionId, task.taskId, task.description, () => entry.query.stopTask(task.taskId))
+      }
       const existing = entry.tasks.get(task.taskId)
       if (existing === undefined) {
         entry.tasks.set(task.taskId, {
@@ -1666,6 +1682,7 @@ export class ClaudeSupervisor {
     }
     for (const task of entry.tasks.values()) {
       if (task.backgrounded === true && task.status === 'running' && !live.has(task.taskId)) {
+        this.#hostJobs?.removed(entry.sessionId, task.taskId)
         entry.tasks.set(task.taskId, { ...task, status: 'completed' })
         changed = true
       }
@@ -2191,6 +2208,7 @@ export class ClaudeSupervisor {
     if (entry.state === 'disposed') return
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer)
     entry.state = 'disposed'
+    this.#hostJobs?.abandon(entry.sessionId)
     entry.input.discard(abortFailure())
     entry.query.close()
     entry.lifetime.abort()
