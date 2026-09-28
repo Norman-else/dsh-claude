@@ -129,7 +129,15 @@ export function createManagedClaudeSpawner(
       signal: options.signal,
       // Claude Code's native Agent Teams (named in-process teammates, shared
       // task list) are still behind this flag; the plugin renders them.
-      env: appendToolPaths(scrubClaudeSpawnEnv({ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', ...options.env })),
+      // The task tools (TaskCreate / TaskUpdate / TaskList / TaskGet) are off
+      // by default for every model newer than the CLI's legacy list (Opus 4.8+,
+      // Opus 5.x, Fable, Sonnet 5); they feed the Host to-do dock and the team
+      // board, so the plugin opts in. A user's own setting still wins.
+      env: appendToolPaths(scrubClaudeSpawnEnv({
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+        ...options.env,
+      })),
     })
     const managed = new ManagedClaudeProcess(handle)
     observe?.(managed, options)
