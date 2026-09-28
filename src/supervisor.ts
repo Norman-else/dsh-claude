@@ -243,6 +243,8 @@ interface ActiveTurn {
 interface SupervisorEntry {
   sessionId: string
   ownerAgent: Agent
+  /** Set when the plugin ends the process itself, naming the caller's cause. */
+  disposeReason?: string
   cwd: string
   model: string
   thinkingMode: ClaudeThinkingMode | undefined
@@ -398,15 +400,16 @@ function errorSummary(error: unknown): string {
  *  signal is something else ending it, and `killedByPlugin` says whether that
  *  something was this plugin's own teardown. The status is captured by
  *  {@link ManagedClaudeProcess} either way — it was simply never read. */
-function exitStatus(process: ManagedClaudeProcess | undefined): string {
+function exitStatus(process: ManagedClaudeProcess | undefined, reason?: string): string {
   if (process === undefined) return 'no process was running'
   const signal = process.signalCode
   const code = process.exitCode
   const parts: string[] = []
   if (signal !== null) parts.push(`killed by ${signal}`)
   if (code !== null) parts.push(`exit code ${code}`)
-  if (parts.length === 0) parts.push(process.killed ? 'terminated by this plugin' : 'no exit status was reported')
-  else if (process.killed) parts.push('requested by this plugin')
+  const requested = reason === undefined ? 'requested by this plugin' : `requested by this plugin: ${reason}`
+  if (parts.length === 0) parts.push(process.killed ? requested.replace('requested', 'terminated') : 'no exit status was reported')
+  else if (process.killed) parts.push(requested)
   return parts.join(', ')
 }
 
@@ -734,14 +737,14 @@ export class ClaudeSupervisor {
       if (failure === undefined) return
       if (createdForRequest !== undefined) {
         if (this.#entries.get(sessionId) === createdForRequest) this.#entries.delete(sessionId)
-        await this.#disposeEntry(createdForRequest)
+        await this.#disposeEntry(createdForRequest, 'admission cancelled')
         createdForRequest = undefined
       }
       throw failure
     }
     if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
       this.#entries.delete(sessionId)
-      await this.#disposeEntry(entry)
+      await this.#disposeEntry(entry, 'stale process replaced')
       await throwIfUnavailable()
       entry = undefined
     }
@@ -799,7 +802,7 @@ export class ClaudeSupervisor {
       : false
     if (model !== entry.model || (mode !== entry.thinkingMode && !switchedLive)) {
       this.#entries.delete(sessionId)
-      await this.#disposeEntry(entry)
+      await this.#disposeEntry(entry, 'model or effort switch')
       if (createdForRequest === entry) createdForRequest = undefined
       await throwIfUnavailable()
       try {
@@ -875,7 +878,7 @@ export class ClaudeSupervisor {
       active.output.fail(error)
       entry.active = undefined
       if (this.#entries.get(sessionId) === entry) this.#entries.delete(sessionId)
-      await this.#disposeEntry(entry)
+      await this.#disposeEntry(entry, 'turn start failed')
       throw error
     }
     if (signalAborted(request.signal)) {
@@ -956,7 +959,7 @@ export class ClaudeSupervisor {
     let entry = this.#entries.get(sessionId)
     if (entry?.state === 'disposed' || entry?.state === 'disconnected' || entry?.state === 'outcome-unknown') {
       this.#entries.delete(sessionId)
-      await this.#disposeEntry(entry)
+      await this.#disposeEntry(entry, 'stale process replaced')
       if (cancellationSignal.aborted) throw abortFailure()
       entry = undefined
     }
@@ -965,7 +968,7 @@ export class ClaudeSupervisor {
       if (cancellationSignal.aborted) throw abortFailure()
       entry = await this.#createEntry(agent, model, undefined, undefined, cancellationSignal)
       if (cancellationSignal.aborted) {
-        await this.#disposeEntry(entry)
+        await this.#disposeEntry(entry, 'metadata request cancelled')
         throw abortFailure()
       }
       this.#entries.set(sessionId, entry)
@@ -1006,8 +1009,17 @@ export class ClaudeSupervisor {
     try {
       return await withTimeout(operation, timeoutMs, label)
     } catch (error) {
-      if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
-      await this.#disposeEntry(entry)
+      // A turn in flight is the one thing the discard must not take with it:
+      // a metadata refresh that lands while the CLI is busy (hooks, MCP
+      // start-up) times out without meaning the process is dead. Only an
+      // idle process that stopped answering is thrown away; a live turn's
+      // wedge still ends through the composer's own Stop.
+      if (entry.active === undefined) {
+        if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
+        await this.#disposeEntry(entry, 'control request timed out')
+      } else {
+        this.#logger?.warn(`dsh-claude: ${label} timed out during a live turn on session ${entry.sessionId}; keeping the process`)
+      }
       throw error
     }
   }
@@ -1091,7 +1103,7 @@ export class ClaudeSupervisor {
     this.#scheduleLimitReconciliation()
   }
 
-  async disposeSession(sessionId: string): Promise<void> {
+  async disposeSession(sessionId: string, reason = 'session reset'): Promise<void> {
     const pendingAdmissions = this.#cancelTurnAdmissions(
       admission => (admission.request.agent.id as string) === sessionId,
       abortFailure(),
@@ -1104,7 +1116,7 @@ export class ClaudeSupervisor {
     await Promise.allSettled([
       ...pendingAdmissions,
       ...pendingMetadata,
-      ...(entry === undefined ? [] : [this.#disposeEntry(entry)]),
+      ...(entry === undefined ? [] : [this.#disposeEntry(entry, reason)]),
     ])
   }
 
@@ -1122,7 +1134,7 @@ export class ClaudeSupervisor {
     await Promise.allSettled([
       ...pendingAdmissions,
       ...pendingMetadata,
-      ...entries.map(entry => this.#disposeEntry(entry)),
+      ...entries.map(entry => this.#disposeEntry(entry, 'plugin unloaded')),
     ])
   }
 
@@ -1133,7 +1145,7 @@ export class ClaudeSupervisor {
         .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0]
       if (idle === undefined) throw new ClaudeProcessLimitError(this.#config.maxProcesses)
       this.#entries.delete(idle.sessionId)
-      await this.#disposeEntry(idle)
+      await this.#disposeEntry(idle, 'process limit reached')
     }
   }
 
@@ -1144,7 +1156,7 @@ export class ClaudeSupervisor {
         .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0]
       if (idle === undefined) return
       this.#entries.delete(idle.sessionId)
-      await this.#disposeEntry(idle)
+      await this.#disposeEntry(idle, 'process limit lowered')
     }
   }
 
@@ -2179,7 +2191,7 @@ export class ClaudeSupervisor {
       // The active output is already aborted; process cleanup cannot wait for audit availability.
     }
     if (this.#entries.get(entry.sessionId) === entry) this.#entries.delete(entry.sessionId)
-    await this.#disposeEntry(entry)
+    await this.#disposeEntry(entry, 'turn interrupt cleanup')
   }
 
   async #handleDisconnect(entry: SupervisorEntry, error: unknown): Promise<void> {
@@ -2192,7 +2204,7 @@ export class ClaudeSupervisor {
     if (process !== undefined && process.exitCode === null && process.signalCode === null) {
       await process.handle.waitForExit(AbortSignal.timeout(DISCONNECT_EXIT_WAIT_MS)).catch(() => undefined)
     }
-    const status = exitStatus(process)
+    const status = exitStatus(process, entry.disposeReason)
     // Read after the wait: a crashing CLI often writes its last words on the way out.
     const stderr = process?.stderrTail()
     // The transcript is the record, but a process dying mid-turn is the kind of
@@ -2231,7 +2243,7 @@ export class ClaudeSupervisor {
       entry.state = 'disconnected'
     }
     this.#entries.delete(entry.sessionId)
-    await this.#disposeEntry(entry)
+    await this.#disposeEntry(entry, 'process stream ended')
   }
 
   #armIdleTimer(entry: SupervisorEntry): void {
@@ -2239,14 +2251,17 @@ export class ClaudeSupervisor {
     const timer = setTimeout(() => {
       if (entry.active !== undefined || entry.state !== 'idle') return
       this.#entries.delete(entry.sessionId)
-      void this.#disposeEntry(entry)
+      void this.#disposeEntry(entry, 'idle timeout')
     }, this.#config.idleTimeoutMs)
     timer.unref?.()
     entry.idleTimer = timer
   }
 
-  async #disposeEntry(entry: SupervisorEntry): Promise<void> {
+  /** @param reason - why the plugin is ending this process; it travels into the
+   *  turn's failure text, so a kill the plugin asked for names its cause. */
+  async #disposeEntry(entry: SupervisorEntry, reason: string): Promise<void> {
     if (entry.state === 'disposed') return
+    entry.disposeReason = reason
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer)
     entry.state = 'disposed'
     this.#hostJobs?.abandon(entry.sessionId)

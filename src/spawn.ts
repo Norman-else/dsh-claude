@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import type { SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk'
 import {
@@ -23,6 +26,23 @@ export function scrubClaudeSpawnEnv(env: Readonly<Record<string, string | undefi
     safe[key] = value
   }
   return safe
+}
+
+/** Where macOS keeps the tools a user's hooks call (`node`, `pnpm`, …). A
+ *  Desktop app launched from the Dock inherits launchd's PATH, which has none
+ *  of them, so a hook such as `node some-hook.mjs` dies with "command not
+ *  found" inside the CLI. Appended, never prepended: the user's own order wins. */
+export const MACOS_TOOL_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin')]
+
+export function appendToolPaths(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  exists: (dir: string) => boolean = existsSync,
+): NodeJS.ProcessEnv {
+  if (platform !== 'darwin' || env.PATH === undefined) return env
+  const current = env.PATH.split(':').filter(Boolean)
+  const missing = MACOS_TOOL_PATHS.filter(dir => !current.includes(dir) && exists(dir))
+  return missing.length === 0 ? env : { ...env, PATH: [...current, ...missing].join(':') }
 }
 
 export class ManagedClaudeProcess extends EventEmitter implements SpawnedProcess {
@@ -100,7 +120,7 @@ export function createManagedClaudeSpawner(
       signal: options.signal,
       // Claude Code's native Agent Teams (named in-process teammates, shared
       // task list) are still behind this flag; the plugin renders them.
-      env: scrubClaudeSpawnEnv({ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', ...options.env }),
+      env: appendToolPaths(scrubClaudeSpawnEnv({ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', ...options.env })),
     })
     const managed = new ManagedClaudeProcess(handle)
     observe?.(managed, options)

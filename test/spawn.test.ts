@@ -6,6 +6,8 @@ import {
   ManagedClaudeProcess,
   createManagedClaudeSpawner,
   scrubClaudeSpawnEnv,
+  appendToolPaths,
+  MACOS_TOOL_PATHS,
 } from '../src/spawn.ts'
 
 function deferred<T>() {
@@ -97,5 +99,15 @@ describe('managed spawner', () => {
 
   it('scrubs environment keys case-insensitively', () => {
     expect(scrubClaudeSpawnEnv({ password: 'x', Dsh_fact: 'x', PATH: '/bin' })).toEqual({ PATH: '/bin' })
+  })
+
+  it('appends the macOS tool directories a Dock-launched app never inherits', () => {
+    const exists = (dir: string) => dir === '/opt/homebrew/bin'
+    expect(appendToolPaths({ PATH: '/usr/bin:/bin' }, 'darwin', exists)).toEqual({ PATH: '/usr/bin:/bin:/opt/homebrew/bin' })
+    // The user's own order wins, and a directory already there is not repeated.
+    expect(appendToolPaths({ PATH: '/opt/homebrew/bin:/usr/bin' }, 'darwin', exists)).toEqual({ PATH: '/opt/homebrew/bin:/usr/bin' })
+    expect(appendToolPaths({ PATH: '/usr/bin' }, 'linux', () => true)).toEqual({ PATH: '/usr/bin' })
+    expect(appendToolPaths({}, 'darwin', () => true)).toEqual({})
+    expect(MACOS_TOOL_PATHS[0]).toBe('/opt/homebrew/bin')
   })
 })

@@ -422,7 +422,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   ctx.on('agent/disposed', async ({ agent }) => {
     reviewComments.disposeSession(agent.id as string)
-    await supervisor.disposeSession(agent.id as string)
+    await supervisor.disposeSession(agent.id as string, 'agent disposed by the Host')
   })
   // Set once the reconciliation below is wired; the Client's sweep route kicks
   // it so a deleted workspace does not wait out the interval.
@@ -597,7 +597,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       busy: sessionId => supervisor.snapshots().some(item => (
         item.sessionId === sessionId && (item.state === 'running' || item.state === 'interrupting')
       )),
-      reset: sessionId => supervisor.disposeSession(sessionId),
+      reset: sessionId => supervisor.disposeSession(sessionId, 'rewind reset'),
       restoreFiles: async (sessionId, tree) => {
         const agent = webCtx.agents.get(sessionId as never)
         const cwd = agent?.session.header.cwd
