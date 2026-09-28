@@ -429,7 +429,7 @@ describe('Claude Code model catalog', () => {
   it('seeds the selector with the stable aliases before any session reports', async () => {
     // A fresh app launch must not show a one-row menu until someone starts a session.
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset)
-    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'fable', 'sonnet', 'haiku'])
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'opus', 'fable', 'sonnet', 'haiku'])
   })
 
   it('publishes the 1M capacity spelled in a route id through the native DSH model contract', async () => {
@@ -482,6 +482,24 @@ describe('Claude Code model catalog', () => {
     expect(latestClaudeModels().map(row => row.id)).toEqual(['opus', 'opus[1m]', 'claude-opus-4-8'])
   })
 
+  it('advertises the bare alias beside a 1M route the lineup lists alone', () => {
+    // The CLI lineup names Opus only as `opus[1m]`, but the profile default is
+    // `claude/opus` and older sessions persisted `opus`; DSH prints the raw
+    // `claude/opus` for any selection no row carries.
+    recordClaudeModels([
+      { value: 'default', resolvedModel: 'claude-opus-5-5[1m]', displayName: 'Default (recommended)', description: '' },
+      { value: 'opus[1m]', resolvedModel: 'claude-opus-5-5[1m]', displayName: 'Opus (1M context)', description: 'Most capable' },
+      { value: 'sonnet', displayName: 'Sonnet', description: '' },
+    ])
+    expect(latestClaudeModels().map(row => [row.id, row.value, row.name])).toEqual([
+      ['default', 'default', 'Default (recommended)'],
+      ['opus[1m]', 'opus[1m]', 'Opus (1M context)'],
+      ['opus', 'opus', 'Opus'],
+      ['sonnet', 'sonnet', 'Sonnet'],
+    ])
+    expect(claudeModelRow('opus')?.contextWindow).toBeUndefined()
+  })
+
   it('still resolves a concrete id persisted before the selector aliased anything', () => {
     recordClaudeModels([{ value: 'claude-fable-5-1[1m]', displayName: 'Fable', description: '' }])
     // The old session holds the CLI id; dispatch has to keep working on it.
@@ -507,7 +525,7 @@ describe('Claude Code model catalog', () => {
 
   it('falls back to the seed when the probe cannot answer', async () => {
     const adapter = new ClaudeCodeAdapter(supervisorEvents([]), { currentInitiator: () => agent, get: () => agent }, attachmentStore(), claudePreset, undefined, undefined, undefined, async () => { throw new Error('claude: not logged in') })
-    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'fable', 'sonnet', 'haiku'])
+    expect((await adapter.listModels('claude')).map(model => model.id)).toEqual(['default', 'opus[1m]', 'opus', 'fable', 'sonnet', 'haiku'])
   })
 })
 
