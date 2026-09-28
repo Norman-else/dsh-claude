@@ -1326,7 +1326,7 @@ export class ClaudeSupervisor {
     // must still reach the task board instead of being dropped with turn-less
     // messages below.
     const taskId = message.kind === 'subagent' ? message.taskId : undefined
-    if (message.kind === 'tool-result') this.#hostJobs?.noteOutput(entry.sessionId, message.output)
+    if (message.kind === 'tool-result') this.#hostJobs?.noteOutput(entry.sessionId, [message.output, message.content])
     if (message.kind === 'subagent' && taskId !== undefined) {
       await this.#trackTask(entry, message, taskId, entry.active?.cursor.turn)
     } else if (message.kind === 'background-tasks') {

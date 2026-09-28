@@ -46,7 +46,11 @@ describe('ClaudeHostJobs', () => {
     const mirror = new ClaudeHostJobs(() => jobs, () => undefined)
     const path = outputFile('bx48f9')
     writeFileSync(path, 'first line\n')
-    mirror.noteOutput('dsh-1', `Command running in background with ID: bx48f9. Output is being written to: ${path}. You will be notified.`)
+    // The structured tool_use_result carries no path; the block content does.
+    mirror.noteOutput('dsh-1', [
+      { stdout: '', stderr: '', backgroundTaskId: 'bx48f9' },
+      `Command running in background with ID: bx48f9. Output is being written to: ${path}. You will be notified.`,
+    ])
     const stop = vi.fn(async () => undefined)
     mirror.started('dsh-1', 'bx48f9', 'sleep 30 && echo done', stop)
     mirror.started('dsh-1', 'bx48f9', 'sleep 30 && echo done', stop) // level snapshots repeat; one job

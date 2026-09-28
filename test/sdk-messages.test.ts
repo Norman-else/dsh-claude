@@ -43,7 +43,7 @@ describe('Claude SDK message normalization', () => {
       parent_tool_use_id: null,
       tool_use_result: { content: 'file contents' },
       message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'file contents' }] },
-    }))).toEqual([{ kind: 'tool-result', toolUseId: 'tool-1', output: { content: 'file contents' }, isError: false }])
+    }))).toEqual([{ kind: 'tool-result', toolUseId: 'tool-1', output: { content: 'file contents' }, content: 'file contents', isError: false }])
   })
 
   it('ignores replayed and string-content user messages instead of failing the protocol', () => {

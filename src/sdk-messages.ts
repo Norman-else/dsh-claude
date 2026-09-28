@@ -8,7 +8,17 @@ export type NormalizedSdkMessage =
   | { kind: 'assistant-text'; text: string; parentToolUseId?: string }
   | { kind: 'thinking'; text: string; phase: 'updated' | 'completed'; parentToolUseId?: string }
   | { kind: 'tool-call'; toolUseId: string; toolName: string; input: unknown; parentToolUseId?: string }
-  | { kind: 'tool-result'; toolUseId: string; output: unknown; isError: boolean; parentToolUseId?: string }
+  | {
+    kind: 'tool-result'
+    toolUseId: string
+    /** The structured `tool_use_result` when the CLI sent one, else the block content. */
+    output: unknown
+    /** The model-facing block content when `output` is the structured result
+     *  instead (a backgrounded Bash names its output file only here). */
+    content?: unknown
+    isError: boolean
+    parentToolUseId?: string
+  }
   | {
     kind: 'subagent'
     title: string
@@ -186,6 +196,7 @@ function normalizeUser(message: Record<string, unknown>): NormalizedSdkMessage[]
       kind: 'tool-result',
       toolUseId,
       output: message.tool_use_result ?? block.content,
+      ...(message.tool_use_result === undefined ? {} : { content: block.content }),
       isError: block.is_error === true,
       ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
     })
