@@ -78,6 +78,7 @@ describe('managed spawner', () => {
     expect(spec?.argv).toEqual(['/local/claude', '--sdk-url', 'stdio'])
     expect(spec?.cwd).toBe('/workspace')
     expect(spec?.env).toEqual({
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
       HOME: '/Users/test',
       CLAUDE_AGENT_SDK_CLIENT_APP: 'dsh-claude/0.1.0',
     })

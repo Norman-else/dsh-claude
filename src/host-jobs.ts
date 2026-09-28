@@ -26,7 +26,8 @@ export type ClaudeHostJobStatus = 'completed' | 'failed' | 'stopped' | 'killed'
 export type ClaudeHostJobKind = 'bash' | 'subagent' | 'claude'
 
 export function hostJobKind(taskType: string | undefined): ClaudeHostJobKind {
-  return taskType === 'local_bash' ? 'bash' : taskType === 'local_agent' ? 'subagent' : 'claude'
+  if (taskType === 'local_bash') return 'bash'
+  return taskType === 'local_agent' || taskType === 'in_process_teammate' ? 'subagent' : 'claude'
 }
 
 /** The live progress line: the CLI's own summary, else what the task is up to. */

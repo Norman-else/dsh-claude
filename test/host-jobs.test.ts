@@ -134,7 +134,7 @@ describe('ClaudeHostJobs', () => {
   })
 
   it('maps task types onto Host job kinds and composes the progress line', () => {
-    expect(['local_bash', 'local_agent', 'local_workflow', undefined].map(hostJobKind)).toEqual(['bash', 'subagent', 'claude', 'claude'])
+    expect(['local_bash', 'local_agent', 'in_process_teammate', 'local_workflow', undefined].map(hostJobKind)).toEqual(['bash', 'subagent', 'subagent', 'claude', 'claude'])
     expect(hostJobProgress({ summary: 'Reading the router', lastToolName: 'Read' })).toBe('Reading the router')
     expect(hostJobProgress({ lastToolName: 'Read', usage: { toolUses: 12, totalTokens: 8_120 } })).toBe('Read · 12 tools · 8.1k tok')
     expect(hostJobProgress({ usage: { totalTokens: 640 } })).toBe('640 tok')

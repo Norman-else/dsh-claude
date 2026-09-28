@@ -98,7 +98,9 @@ export function createManagedClaudeSpawner(
       },
       graceMs: CLAUDE_PROCESS_GRACE_MS,
       signal: options.signal,
-      env: scrubClaudeSpawnEnv(options.env),
+      // Claude Code's native Agent Teams (named in-process teammates, shared
+      // task list) are still behind this flag; the plugin renders them.
+      env: scrubClaudeSpawnEnv({ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', ...options.env }),
     })
     const managed = new ManagedClaudeProcess(handle)
     observe?.(managed, options)

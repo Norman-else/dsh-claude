@@ -1,0 +1,140 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
+import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../src/events.ts'
+import { createdTaskId, deriveTeam, EMPTY_TEAM } from '../src/client/team.ts'
+import { ClaudeTeamHeaderAction } from '../src/client/ClaudeTeamHeaderAction.tsx'
+import { ClaudeTeammatePanel } from '../src/client/ClaudeTeammatePanel.tsx'
+import { EMPTY_CLAUDE_PROJECTION, type ClaudeClientProjection } from '../src/client/projection.ts'
+import { en, type ClaudeCodeSettingsKey } from '../src/client/locales.ts'
+
+const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string =>
+  en[key].replace(/\{(\w+)\}/gu, (_match, name: string) => String(params?.[name] ?? ''))
+
+let ordinal = 0
+function call(toolUseId: string, toolName: string, input: unknown, parentToolUseId?: string): ClaudeActivityEvent {
+  return {
+    turn: 1, step: 1, ordinal: ordinal++, kind: parentToolUseId === undefined ? 'tool-call' : 'subagent', phase: 'started',
+    toolUseId, toolName, detail: JSON.stringify(input),
+    ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
+  }
+}
+function result(toolUseId: string, output: unknown, parentToolUseId?: string, isError = false): ClaudeActivityEvent {
+  return {
+    turn: 1, step: 1, ordinal: ordinal++, kind: parentToolUseId === undefined ? 'tool-result' : 'subagent', phase: isError ? 'failed' : 'completed',
+    toolUseId, detail: typeof output === 'string' ? output : JSON.stringify(output), isError,
+    ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
+  }
+}
+
+const teammates: ClaudeTaskInfo[] = [
+  { taskId: 'tm-1', toolUseId: 'spawn-1', description: 'Review the diff', status: 'running', taskType: 'in_process_teammate', lastToolName: 'Read', usage: { toolUses: 4 } },
+  { taskId: 'tm-2', toolUseId: 'spawn-2', description: 'Write tests', status: 'completed', taskType: 'in_process_teammate' },
+  { taskId: 'bg-1', description: 'sleep 30', status: 'running', taskType: 'local_bash', backgrounded: true },
+]
+
+function activities(): ClaudeActivityEvent[] {
+  ordinal = 0
+  return [
+    call('spawn-1', 'Agent', { name: 'reviewer', description: 'Review the diff', prompt: 'Review PR 12' }),
+    call('spawn-2', 'Agent', { name: 'tester', description: 'Write tests', prompt: 'Cover the parser' }),
+    call('tc-1', 'TaskCreate', { subject: 'Review parser change', description: 'Look at src/parse.ts', activeForm: 'Reviewing' }),
+    result('tc-1', 'Task #1 created successfully: Review parser change'),
+    call('tc-2', 'TaskCreate', { subject: 'Add parser tests' }, 'spawn-2'),
+    result('tc-2', { id: '2', subject: 'Add parser tests' }, 'spawn-2'),
+    call('tu-1', 'TaskUpdate', { taskId: '1', status: 'in_progress', owner: 'reviewer' }),
+    call('tu-2', 'TaskUpdate', { taskId: 2, status: 'completed', addBlockedBy: ['1'] }, 'spawn-2'),
+    call('msg-1', 'SendMessage', { to: 'reviewer', message: 'Start with the tokenizer', summary: 'tokenizer first' }),
+    call('msg-2', 'SendMessage', { to: 'lead', message: 'Tests are green' }, 'spawn-2'),
+    call('read-1', 'Read', { file_path: '/repo/src/parse.ts' }, 'spawn-1'),
+    result('read-1', { content: 'export function parse() {}' }, 'spawn-1'),
+    call('tc-3', 'TaskCreate', { subject: 'Doomed' }),
+    result('tc-3', 'boom', undefined, true),
+  ]
+}
+
+describe('deriveTeam', () => {
+  it('names teammates from their spawning Agent call and leaves background commands to the job list', () => {
+    const team = deriveTeam(activities(), teammates)
+    expect(team.members).toEqual([
+      expect.objectContaining({ taskId: 'tm-1', name: 'reviewer', role: 'teammate', status: 'running', toolUseId: 'spawn-1', lastToolName: 'Read' }),
+      expect.objectContaining({ taskId: 'tm-2', name: 'tester', status: 'completed' }),
+    ])
+  })
+
+  it('folds TaskCreate results and TaskUpdate patches into one shared board', () => {
+    const team = deriveTeam(activities(), teammates)
+    expect(team.tasks).toEqual([
+      { id: '1', subject: 'Review parser change', description: 'Look at src/parse.ts', status: 'in_progress', owner: 'reviewer', blockedBy: [] },
+      { id: '2', subject: 'Add parser tests', status: 'completed', blockedBy: ['1'] },
+    ])
+  })
+
+  it('attributes mail to the member whose call it ran under', () => {
+    const team = deriveTeam(activities(), teammates)
+    expect(team.messages).toEqual([
+      expect.objectContaining({ from: 'lead', to: 'reviewer', summary: 'tokenizer first', message: 'Start with the tokenizer' }),
+      expect.objectContaining({ from: 'tester', to: 'lead', message: 'Tests are green' }),
+    ])
+  })
+
+  it('keeps an unnamed teammate under its description and a create without a result on the board', () => {
+    ordinal = 0
+    const team = deriveTeam(
+      [call('tc-9', 'TaskCreate', { subject: 'Still pending' })],
+      [{ taskId: 'tm-9', description: 'Summarize the log', status: 'running', taskType: 'in_process_teammate' }],
+    )
+    expect(team.members[0]).toMatchObject({ name: 'Summarize the log' })
+    expect(team.tasks).toEqual([{ id: 'tc-9', subject: 'Still pending', status: 'pending', blockedBy: [] }])
+  })
+
+  it('is empty for a session without a team', () => {
+    ordinal = 0
+    expect(deriveTeam([call('b-1', 'Bash', { command: 'ls' })], [teammates[2]!])).toBe(EMPTY_TEAM)
+  })
+
+  it('reads the created task id from prose or structure', () => {
+    expect(createdTaskId('Task #12 created successfully: x')).toBe('12')
+    expect(createdTaskId(JSON.stringify({ task: { id: 7 } }))).toBe('7')
+    expect(createdTaskId(JSON.stringify({ id: 'abc' }))).toBe('abc')
+    expect(createdTaskId('nothing here')).toBeUndefined()
+  })
+})
+
+function hook(owned: boolean, tasks: readonly ClaudeTaskInfo[], events: readonly ClaudeActivityEvent[]) {
+  const snapshot: ClaudeClientProjection = { ...EMPTY_CLAUDE_PROJECTION, owned, activities: events, tasks: { tasks } }
+  return <S,>(selector: (value: ClaudeClientProjection) => S): S => selector(snapshot)
+}
+
+describe('ClaudeTeamHeaderAction', () => {
+  it('renders nothing without a team and a counted trigger with one', () => {
+    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!], [])} />)).toBe('')
+    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(false, teammates, activities())} />)).toBe('')
+    const markup = renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, teammates, activities())} />)
+    expect(markup).toContain('aria-label="Show team"')
+    expect(markup).toContain('aria-expanded="false"')
+    // Lead plus two teammates; the background command is not a member.
+    expect(markup).toContain('<span>3</span>')
+    expect(markup).toContain('data-state="running"')
+  })
+})
+
+describe('ClaudeTeammatePanel', () => {
+  it('shows the teammate brief, its mail, and the tools it ran', () => {
+    const markup = renderToStaticMarkup(<ClaudeTeammatePanel t={t} closeDetails={vi.fn()} taskId="tm-1" useClaudeProjection={hook(true, teammates, activities())} />)
+    expect(markup).toContain('>reviewer<')
+    expect(markup).toContain('Running')
+    expect(markup).toContain('4 tool calls')
+    expect(markup).toContain('Review the diff')
+    expect(markup).toContain('lead → reviewer · tokenizer first')
+    expect(markup).toContain('Start with the tokenizer')
+    expect(markup).not.toContain('Tests are green')
+    expect(markup).toContain('>Read<')
+    expect(markup).toContain('parse.ts')
+    expect(markup).toContain('aria-label="Close teammate panel"')
+  })
+
+  it('says so when the teammate left the board', () => {
+    const markup = renderToStaticMarkup(<ClaudeTeammatePanel t={t} closeDetails={vi.fn()} taskId="nope" useClaudeProjection={hook(true, teammates, activities())} />)
+    expect(markup).toContain('no longer on the task board')
+  })
+})

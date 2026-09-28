@@ -36,6 +36,7 @@ import { createClaudeDiagnosticsReporter } from './client-diagnostics.ts'
 import { ClaudeRewind, EMPTY_CHAT_VIEW, type ClaudeChatSource, type ClaudeChatView, type ClaudeRewindInjected } from './ClaudeRewind.tsx'
 import { ClaudeHeroRepositoryControls, type ClaudeHeroRepositoryControlsInjected } from './ClaudeHeroRepositoryControls.tsx'
 import { ClaudeDiffHeaderAction, type ClaudeDiffHeaderActionInjected } from './ClaudeDiffHeaderAction.tsx'
+import { ClaudeTeamHeaderAction, type ClaudeTeamHeaderActionInjected } from './ClaudeTeamHeaderAction.tsx'
 import { ClaudeAgentPresetLabel, type ClaudeAgentPresetLabelInjected } from './ClaudeAgentPresetLabel.tsx'
 import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-roster.ts'
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
@@ -313,6 +314,18 @@ ${error.stack ?? ''}`
       }),
     }, ClaudeAgentPresetLabel))
   }
+  // Claude Code's own Agent Team, in the seat the Host gives its team roster:
+  // members, the shared task list, and mail, with a teammate tab per member.
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'claude-team',
+    order: 28,
+    locale: namespace,
+    inject: (sessionId: string): ClaudeTeamHeaderActionInjected => ({
+      t,
+      openTeammate: taskId => { sidebarTabs.open(CLAUDE_TAB_KINDS.teammate, sessionId, { teammate: taskId }) },
+    }),
+  }, ClaudeTeamHeaderAction))
   ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
     name: 'conversation.session.header.utilities',
     id: 'claude-plan',

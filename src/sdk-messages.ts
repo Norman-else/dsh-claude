@@ -27,6 +27,8 @@ export type NormalizedSdkMessage =
     phase: 'started' | 'updated' | 'completed' | 'failed'
     /** Structured task-board fields for task_started/progress/updated/notification. */
     taskId?: string
+    /** The tool call that dispatched the task, when the CLI names it. */
+    toolUseId?: string
     taskStatus?: 'running' | 'completed' | 'failed' | 'stopped' | 'killed'
     description?: string
     subagentType?: string
@@ -241,12 +243,14 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const description = string(message.description)
     const subagentType = string(message.subagent_type)
     const taskType = string(message.task_type)
+    const taskToolUseId = string(message.tool_use_id)
     return [{
       kind: 'subagent',
       title: description ?? taskId ?? 'Claude subagent started',
       phase: 'started',
       detail: message,
       ...(taskId === undefined ? {} : { taskId }),
+      ...(taskToolUseId === undefined ? {} : { toolUseId: taskToolUseId }),
       taskStatus: 'running' as const,
       ...(description === undefined ? {} : { description }),
       ...(subagentType === undefined ? {} : { subagentType }),
@@ -259,6 +263,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const taskId = string(message.task_id)
     const description = string(message.description)
     const summary = string(message.summary)
+    const taskToolUseId = string(message.tool_use_id)
     const subagentType = string(message.subagent_type)
     const lastToolName = string(message.last_tool_name)
     const usage = taskUsageOf(record(message.usage))
@@ -268,6 +273,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       phase: 'updated',
       detail: message,
       ...(taskId === undefined ? {} : { taskId }),
+      ...(taskToolUseId === undefined ? {} : { toolUseId: taskToolUseId }),
       taskStatus: 'running' as const,
       ...(description === undefined ? {} : { description }),
       ...(subagentType === undefined ? {} : { subagentType }),
@@ -280,6 +286,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const patch = record(message.patch)
     const status = string(patch?.status)
     const taskId = string(message.task_id)
+    const taskToolUseId = string(message.tool_use_id)
     const description = string(patch?.description)
     const error = string(patch?.error)
     const taskStatus = status === undefined
@@ -297,6 +304,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       phase: status === 'failed' || status === 'killed' ? 'failed' : status === 'completed' ? 'completed' : 'updated',
       detail: message,
       ...(taskId === undefined ? {} : { taskId }),
+      ...(taskToolUseId === undefined ? {} : { toolUseId: taskToolUseId }),
       ...(taskStatus === undefined ? {} : { taskStatus }),
       ...(description === undefined ? {} : { description }),
       ...(error === undefined ? {} : { summary: error }),
@@ -307,6 +315,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
     const stopped = message.status === 'stopped' || message.status === 'cancelled'
     const taskId = string(message.task_id)
     const summary = string(message.summary)
+    const taskToolUseId = string(message.tool_use_id)
     const taskStatus = failed ? 'failed' as const : stopped ? 'stopped' as const : 'completed' as const
     const usage = taskUsageOf(record(message.usage))
     const outputFile = string(message.output_file)
@@ -316,6 +325,7 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       phase: failed || stopped ? 'failed' : 'completed',
       detail: message,
       ...(taskId === undefined ? {} : { taskId }),
+      ...(taskToolUseId === undefined ? {} : { toolUseId: taskToolUseId }),
       taskStatus,
       ...(summary === undefined ? {} : { summary }),
       ...(usage === undefined ? {} : { usage }),

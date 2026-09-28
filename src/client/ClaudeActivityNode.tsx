@@ -82,7 +82,7 @@ const ACTIVITY_CSS = [
 ].join('')
 
 let cssInjected = false
-function ensureCss(): void {
+export function ensureActivityCss(): void {
   if (cssInjected || typeof document === 'undefined') return
   cssInjected = true
   const element = document.createElement('style')
@@ -457,7 +457,7 @@ export function turnUsageParts(usage: ClaudeUsage, t: Translate): readonly strin
  *  the steps the Host never had a message for. Mounted at the turn's foot, so
  *  it closes the turn under the task badge rather than above it. */
 export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate }) {
-  ensureCss()
+  ensureActivityCss()
   const parts = turnUsageParts(usage, t)
   if (parts.length === 0) return null
   return (
@@ -470,7 +470,7 @@ export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate
 }
 
 export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActivityNodeProps) {
-  ensureCss()
+  ensureActivityCss()
   const marker = node.data
   const activities = useClaudeProjection(value => selectStepActivities(value, marker.turn, marker.step))
   const tasks = useClaudeProjection(value => value.tasks?.tasks ?? EMPTY_TASKS)

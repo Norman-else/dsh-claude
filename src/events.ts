@@ -292,6 +292,8 @@ export interface ClaudeTaskUsage {
 
 export interface ClaudeTaskInfo {
   taskId: string
+  /** The tool call that dispatched the task; joins the task to its call's input. */
+  toolUseId?: string
   description: string
   status: ClaudeTaskStatus
   /** DSH turn during which this task was first observed, when known. */
@@ -330,6 +332,7 @@ export function normalizeTasksEvent(tasks: readonly ClaudeTaskInfo[]): ClaudeTas
       const usage = normalizeTaskUsage(task.usage)
       return {
         taskId: redactText(String(task.taskId), 128),
+        ...(task.toolUseId === undefined ? {} : { toolUseId: redactText(String(task.toolUseId), 128) }),
         description: redactText(String(task.description), MAX_TASK_TEXT_CHARS),
         status: TASK_STATUSES.has(task.status) ? task.status : 'running',
         ...(task.originTurn === undefined ? {} : { originTurn: nonNegativeInteger(task.originTurn) }),

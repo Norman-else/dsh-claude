@@ -407,6 +407,77 @@ function toolDescription(
 }
 
 
+/** The call id a task's own lifecycle pings were dispatched from. */
+function taskParentToolUseId(activities: readonly ClaudeActivityEvent[], taskId: string): string | undefined {
+  for (const activity of activities) {
+    if (activity.taskId !== taskId) continue
+    const detail = inputRecord(activity.detail)
+    const id = detail?.tool_use_id
+    if (typeof id === 'string' && id.length > 0) return id
+  }
+  return undefined
+}
+
+/**
+ * The tools one task ran, in the shape the transcript's tool cards take.
+ *
+ * The task's own activities are lifecycle pings whose detail is the raw
+ * protocol message -- useful to nobody reading a panel. The work is in the
+ * activities addressed to the call that dispatched the task: a subagent's
+ * nested calls carry it as `parentToolUseId`, and a backgrounded command IS
+ * that call. Both are folded here the way {@link transcriptItemsForStep} folds
+ * a step, so one card renderer serves the transcript and the task panel.
+ */
+export function taskTools(
+  activities: readonly ClaudeActivityEvent[],
+  taskId: string,
+  dispatchedBy?: string,
+): readonly ClaudeTranscriptTool[] {
+  const parent = dispatchedBy ?? taskParentToolUseId(activities, taskId)
+  if (parent === undefined) return []
+  const tools = new Map<string, ClaudeTranscriptTool>()
+  const answered = answeredQuestions(activities)
+  const ordered = [...activities].sort((left, right) => left.ordinal - right.ordinal)
+  for (const activity of ordered) {
+    const own = activity.parentToolUseId === parent
+    const isRoot = activity.parentToolUseId === undefined && activity.toolUseId === parent
+    if (!own && !isRoot) continue
+    const toolUseId = activity.toolUseId
+    if (toolUseId === undefined) continue
+    const previous = tools.get(toolUseId)
+    // The opening record is the one that names the tool; everything after it
+    // is that call being answered.
+    if (previous === undefined) {
+      if (activity.toolName === undefined) continue
+      const input = inputRecord(activity.detail)
+      const recorded = activity.toolName === ASK_USER_QUESTION ? answered.get(toolUseId) : undefined
+      tools.set(toolUseId, {
+        toolUseId,
+        toolName: activity.toolName,
+        description: toolDescription(activity.toolName, input, false, recorded),
+        ...(recorded === undefined ? {} : { answers: recorded }),
+        ...(activity.summary === undefined ? {} : { summary: activity.summary }),
+        ...(activity.detail === undefined ? {} : { input: activity.detail }),
+        ...(activity.phase === undefined ? {} : { phase: activity.phase }),
+        ...(activity.isError === undefined ? {} : { isError: activity.isError }),
+        subcalls: [],
+      })
+      continue
+    }
+    const failed = activity.isError === true || activity.phase === 'failed'
+    const answers = cardAnswers(previous, activity.detail, failed)
+    tools.set(toolUseId, {
+      ...previous,
+      description: toolDescription(previous.toolName, inputRecord(previous.input), failed, answers),
+      ...(answers === undefined ? {} : { answers }),
+      ...(activity.detail === undefined ? {} : { output: activity.detail }),
+      ...(activity.phase === undefined ? {} : { phase: activity.phase }),
+      ...(activity.isError === undefined ? {} : { isError: activity.isError }),
+    })
+  }
+  return [...tools.values()]
+}
+
 /** Whether the Host drew this step with DSH's own renderer.
  *
  *  The stamp rides on the records themselves rather than on a Client-side copy

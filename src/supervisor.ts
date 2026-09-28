@@ -1246,8 +1246,11 @@ export class ClaudeSupervisor {
         : thinkingMode === 'off'
           ? { thinking: { type: 'disabled' } as const }
           : thinkingMode === 'ultracode'
-            ? { settings: { ultracode: true } satisfies ClaudeSettings }
+            ? {}
             : { effort: thinkingMode }),
+      // Teammates run inside the CLI process: Desktop has no terminal to put
+      // them in, and the team UI reads them off the task stream.
+      settings: { teammateMode: 'in-process', ...(thinkingMode === 'ultracode' ? { ultracode: true } : {}) } satisfies ClaudeSettings,
     }
     entry.query = this.#queryFactory({ prompt: input, options })
     entry.pump = this.#runDetached(() => this.#pump(entry))
@@ -1641,6 +1644,8 @@ export class ClaudeSupervisor {
     }
     const resolvedOriginTurn = previous?.originTurn ?? originTurn
     if (resolvedOriginTurn !== undefined) next.originTurn = resolvedOriginTurn
+    const toolUseId = message.toolUseId ?? previous?.toolUseId
+    if (toolUseId !== undefined) next.toolUseId = toolUseId
     const subagentType = message.subagentType ?? previous?.subagentType
     if (subagentType !== undefined) next.subagentType = subagentType
     const taskType = message.taskType ?? previous?.taskType
@@ -1659,7 +1664,7 @@ export class ClaudeSupervisor {
     } else if (message.phase === 'started') {
       // Detached work and subagents (long-running even in the foreground) go
       // to the Host job list; a blocking Bash call stays a tool card.
-      if ((message.backgrounded === true || next.taskType === 'local_agent') && message.skipTranscript !== true) {
+      if ((message.backgrounded === true || hostJobKind(next.taskType) === 'subagent') && message.skipTranscript !== true) {
         this.#hostJobs?.started(entry.sessionId, taskId, hostJobKind(next.taskType), next.description, () => entry.query.stopTask(taskId))
       }
     } else {
