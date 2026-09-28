@@ -4,7 +4,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ExecutableRuntime } from '../src/executable.ts'
 import type { ClaudeSupervisor } from '../src/supervisor.ts'
 import { CLAUDE_DOCTOR_PATH } from '../src/constants.ts'
-import { registerClaudeDoctorRoutes } from '../src/doctor-routes.ts'
+import { modelDiagnostics, registerClaudeDoctorRoutes } from '../src/doctor-routes.ts'
+import { recordClaudeModels, resetClaudeModels } from '../src/model-catalog.ts'
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>
 
@@ -96,5 +97,32 @@ describe('Claude Doctor Web route', () => {
       await ctx.captured.handler(request(headers), res)
       expect(res.statusCode).toBe(403)
     }
+  })
+
+  it('names the model selections the selector cannot show', () => {
+    recordClaudeModels([
+      { value: 'opus', displayName: 'Opus 5.5', description: '' },
+      { value: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', description: '' },
+    ])
+    const session = (id: string, provider: string, model: string) => ({ id, session: { requestHeader: () => ({ config: { provider, model } }) } })
+    const ctx = {
+      get: (name: string) => name === 'agentDefaultModel' ? { currentSelection: () => ({ provider: 'claude', model: 'claude-fable-5-1[1m]' }) } : undefined,
+      agents: { list: () => [
+        session('ok', 'claude', 'opus'),
+        session('bumped', 'claude', 'claude-fable-5-2[1m]'),
+        session('unknown', 'claude', 'mystery'),
+        session('other', 'deepseek', 'mystery'),
+      ] },
+    } as unknown as Context
+    expect(modelDiagnostics(ctx)).toEqual({
+      source: 'cli',
+      rows: expect.any(Number),
+      default: { provider: 'claude', model: 'claude-fable-5-1[1m]', listed: false, repairsTo: 'fable[1m]' },
+      stranded: [
+        { sessionId: 'bumped', model: 'claude-fable-5-2[1m]', listed: false, repairsTo: 'fable[1m]' },
+        { sessionId: 'unknown', model: 'mystery', listed: false },
+      ],
+    })
+    resetClaudeModels()
   })
 })

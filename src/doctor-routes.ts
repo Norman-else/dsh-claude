@@ -8,6 +8,8 @@ import { runClaudeDoctor, type ExecutableRuntime } from './executable.ts'
 import type { ClaudeSupervisor, ClaudeSupervisorConfig } from './supervisor.ts'
 import { redactText } from './events.ts'
 import { registerPluginRoute } from './http.ts'
+import { CLAUDE_CODE_PROVIDER_IDS } from './constants.ts'
+import { canonicalClaudeModelId, claudeLineupKnown, latestClaudeModels } from './model-catalog.ts'
 
 export const CLAUDE_DOCTOR_PROBE_TIMEOUT_MS = 15_000
 
@@ -23,6 +25,38 @@ export const claudeBridgeDiagnostics = new WeakMap<Agent, ClaudeBridgeDiagnostic
 
 function safeMessage(error: unknown): string {
   return redactText(error instanceof Error ? error.message : String(error), 1_000)
+}
+
+/** Model selections the selector cannot name: the profile default and each
+ *  live Claude session's persisted model (its latest request header), checked
+ *  against the catalog. A stranded one shows as `claude/<id>` in the composer;
+ *  `repairsTo` is the row the next request will record instead, when any. */
+export function modelDiagnostics(ctx: Context): unknown {
+  try {
+    const listed = new Set(latestClaudeModels().map(row => row.id))
+    const check = (model: string) => {
+      const repairsTo = canonicalClaudeModelId(model)
+      return listed.has(model) ? { model, listed: true } : { model, listed: false, ...(listed.has(repairsTo) ? { repairsTo } : {}) }
+    }
+    const defaults = (ctx.get('agentDefaultModel') as { currentSelection(): { provider: string; model: string } } | undefined)?.currentSelection()
+    const stranded = ctx.agents.list().flatMap(agent => {
+      const config = agent.session.requestHeader()?.config
+      if (config === undefined || !(CLAUDE_CODE_PROVIDER_IDS as readonly string[]).includes(config.provider) || listed.has(config.model)) return []
+      return [{ sessionId: String(agent.id), ...check(config.model) }]
+    })
+    return {
+      source: claudeLineupKnown() ? 'cli' : 'seed',
+      rows: listed.size,
+      ...(defaults === undefined ? {} : {
+        default: (CLAUDE_CODE_PROVIDER_IDS as readonly string[]).includes(defaults.provider)
+          ? { provider: defaults.provider, ...check(defaults.model) }
+          : { provider: defaults.provider, model: defaults.model },
+      }),
+      stranded,
+    }
+  } catch (error) {
+    return { error: safeMessage(error) }
+  }
 }
 
 /** Live command-bridge diagnostics: which agents exist, their presets, and how
@@ -109,6 +143,7 @@ export function registerClaudeDoctorRoutes(
             active: processes.filter(process => process.state === 'running' || process.state === 'starting').length,
           },
           commandBridge: commandDiagnostics(ctx),
+          models: modelDiagnostics(ctx),
         } }
       } catch (error) {
         return { status: 500, value: { error: safeMessage(error) } }

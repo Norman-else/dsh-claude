@@ -3,6 +3,25 @@
 Current procedure reviewed 2026-09-26. Historical appendices explain earlier
 failures; use the procedure below for current installations.
 
+
+## After a Claude Code CLI upgrade
+
+The CLI's `/model` lineup changes between releases (2.1.280 listed Opus only
+as `opus[1m]`, 2.1.283 only as `opus`), and DSH prints `claude/<id>` for any
+persisted selection no catalog row carries. Record the new lineup and run the
+drift check:
+
+```sh
+node --experimental-strip-types scripts/capture-model-lineup.mts ~/.local/bin/claude
+pnpm vitest run test/model-lineup-drift.test.ts
+```
+
+A failure lists the ids an earlier release advertised that the new catalog no
+longer resolves; add the alias to the stable set in `src/model-catalog.ts`
+(or map it) before shipping. On a running Host, the doctor route's `models`
+block names the profile default and every live session whose model the
+selector cannot show, with the row the next request will record instead.
+
 ## Primary target: the official DeepSeek Harness app (0.1.7-rc.2)
 
 The plugin targets the official `@deepseek-ai/dsh-desktop` app (installed at

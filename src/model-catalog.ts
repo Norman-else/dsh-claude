@@ -156,6 +156,11 @@ export function recordClaudeModels(models: readonly ModelInfo[]): void {
 }
 
 /** The lineup to advertise: whatever the CLI last reported, else the seed. */
+/** Whether the catalog is the CLI's reported lineup rather than the seed. */
+export function claudeLineupKnown(): boolean {
+  return latest !== undefined
+}
+
 export function latestClaudeModels(): readonly ClaudeModelRow[] {
   return latest ?? SEED
 }
