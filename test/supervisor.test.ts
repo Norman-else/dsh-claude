@@ -2363,6 +2363,33 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
+  it('records subagent prose once under its parent call and keeps it off the turn text', async () => {
+    const transport = factory()
+    const owner = fakeAgent()
+    const runtime = supervisor(transport.create)
+    const output = await runtime.runTurn({ agent: owner.agent, prompt: 'delegate' })
+    const query = transport.queries[0]!
+    query.push(init())
+    expect(query.options.forwardSubagentText).toBe(true)
+    const nested = (text: string) => ({
+      type: 'assistant',
+      parent_tool_use_id: 'parent-call',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    } as SDKMessage)
+    query.push(nested('Looking at the parser.'))
+    // The CLI re-sends a message's blocks as each one completes.
+    query.push(nested('Looking at the parser.'))
+    query.push(nested('Done reading.'))
+    query.push(delta('Lead answer.'))
+    query.push(result('Lead answer.'))
+    const events = await collect(output)
+    expect(events).toContainEqual({ type: 'complete', text: 'Lead answer.' })
+    const texts = (await projection(runtime)).activities.filter(activity => activity.kind === 'text')
+    expect(texts.filter(activity => activity.parentToolUseId === 'parent-call').map(activity => activity.text)).toEqual(['Looking at the parser.', 'Done reading.'])
+    expect(texts.filter(activity => activity.parentToolUseId === undefined).map(activity => activity.text)).toEqual(['Lead answer.'])
+    await runtime.dispose()
+  })
+
   it('does not mirror subagent-nested tool calls into the native tool channel', async () => {
     const transport = factory()
     const owner = fakeAgent()

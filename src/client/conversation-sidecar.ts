@@ -478,6 +478,43 @@ export function taskTools(
   return [...tools.values()]
 }
 
+/**
+ * One task's conversation as transcript items: the prose it wrote and the
+ * tools it ran, in order, folded the way {@link transcriptItemsForStep} folds
+ * a step. Only records addressed to the dispatching call take part; the
+ * call itself and the task's lifecycle pings do not.
+ */
+export function teammateTranscript(
+  activities: readonly ClaudeActivityEvent[],
+  taskId: string,
+  dispatchedBy?: string,
+): readonly ClaudeTranscriptItem[] {
+  const parent = dispatchedBy ?? taskParentToolUseId(activities, taskId)
+  if (parent === undefined) return []
+  const tools = new Map(taskTools(activities, taskId, parent).map(tool => [tool.toolUseId, tool] as const))
+  const items: ClaudeTranscriptItem[] = []
+  let group: { ordinal: number; tools: ClaudeTranscriptTool[] } | undefined
+  const flush = (): void => {
+    if (group !== undefined && group.tools.length > 0) items.push({ kind: 'tools', ordinal: group.ordinal, tools: group.tools })
+    group = undefined
+  }
+  const own = activities.filter(activity => activity.parentToolUseId === parent).sort((left, right) => left.ordinal - right.ordinal)
+  for (const activity of own) {
+    if (activity.kind === 'text') {
+      flush()
+      if (activity.text !== undefined && activity.text.length > 0) items.push({ kind: 'text', ordinal: activity.ordinal, text: activity.text })
+      continue
+    }
+    if (activity.toolUseId === undefined || activity.toolName === undefined) continue
+    const tool = tools.get(activity.toolUseId)
+    if (tool === undefined) continue
+    group ??= { ordinal: activity.ordinal, tools: [] }
+    group.tools.push(tool)
+  }
+  flush()
+  return items
+}
+
 /** Whether the Host drew this step with DSH's own renderer.
  *
  *  The stamp rides on the records themselves rather than on a Client-side copy
@@ -573,6 +610,8 @@ export function transcriptItemsForStep(
   }
   for (const activity of ordered) {
     if (activity.kind === 'text') {
+      // A subagent's prose belongs to its own transcript (teammateTranscript).
+      if (activity.parentToolUseId !== undefined) continue
       flushGroup()
       // The closing prose the Host now draws as the turn's native answer.
       if (activity.answer === true) continue

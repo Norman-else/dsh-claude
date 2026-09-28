@@ -24,6 +24,10 @@ export interface ClaudeTeamMember {
   description: string
   /** The Agent call that spawned the teammate; its nested calls carry it as parent. */
   toolUseId?: string
+  /** What the Lead asked it to do, from the spawning call. */
+  prompt?: string
+  /** What it reported back when it settled. */
+  summary?: string
   lastToolName?: string
   usage?: ClaudeTaskUsage
 }
@@ -107,6 +111,7 @@ export function deriveTeam(activities: readonly ClaudeActivityEvent[], tasks: re
   }
   const members: ClaudeTeamMember[] = teammates.map(task => {
     const spawn = task.toolUseId === undefined ? undefined : spawnInputs.get(task.toolUseId)
+    const prompt = text(spawn?.prompt)
     return {
       taskId: task.taskId,
       name: text(spawn?.name) ?? task.description,
@@ -114,6 +119,8 @@ export function deriveTeam(activities: readonly ClaudeActivityEvent[], tasks: re
       status: task.status,
       description: text(spawn?.description) ?? task.description,
       ...(task.toolUseId === undefined ? {} : { toolUseId: task.toolUseId }),
+      ...(prompt === undefined ? {} : { prompt }),
+      ...(task.summary === undefined ? {} : { summary: task.summary }),
       ...(task.lastToolName === undefined ? {} : { lastToolName: task.lastToolName }),
       ...(task.usage === undefined ? {} : { usage: task.usage }),
     }

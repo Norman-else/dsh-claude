@@ -1,3 +1,4 @@
+import type { ClaudeTranscriptItem } from './conversation-sidecar.ts'
 import { useMemo, useState } from 'react'
 import {
   DiffBlock,
@@ -478,8 +479,14 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t }: ClaudeActiv
     () => transcriptItemsForStep(activities, marker.turn, marker.step, tasks),
     [activities, marker.step, marker.turn, tasks],
   )
-  const markdownLabels = useClaudeMarkdownLabels(t)
   if (items.length === 0) return null
+  return <ClaudeTranscriptFlow items={items} t={t} />
+}
+
+/** The transcript items of one step or one teammate, drawn as the chat draws them. */
+export function ClaudeTranscriptFlow({ items, t }: { items: readonly ClaudeTranscriptItem[]; t: Translate }) {
+  const markdownLabels = useClaudeMarkdownLabels(t)
+  ensureActivityCss()
   return (
     <div className="dsh-claude-flow">
       {items.map(item => item.kind === 'text'

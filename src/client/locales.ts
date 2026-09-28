@@ -460,10 +460,10 @@ export const zh = {
   teammateOpen: '打开队友 {name}',
   teammateClose: '关闭队友面板',
   teammateGone: '这个队友已不在任务板上',
-  teammateBrief: '任务说明',
+  teammateBrief: '派给它的任务',
   teammateToolUses: '{count} 次工具调用',
-  teammateTools: '工具调用',
-  teammateNoTools: '还没有工具调用',
+  teammateResult: '交回的结果',
+  teammateWorking: '正在工作，还没有输出',
 } as const
 
 export const en = {
@@ -930,8 +930,8 @@ export const en = {
   teammateGone: 'This teammate is no longer on the task board',
   teammateBrief: 'Brief',
   teammateToolUses: '{count} tool calls',
-  teammateTools: 'Tool calls',
-  teammateNoTools: 'No tool calls yet',
+  teammateResult: 'Report',
+  teammateWorking: 'Working, no output yet',
 } as const
 
 export type ClaudeCodeSettingsKey = keyof typeof en

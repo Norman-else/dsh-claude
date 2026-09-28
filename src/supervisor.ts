@@ -203,6 +203,9 @@ export type ClaudeQueryFactory = (params: {
 interface ActiveTurn {
   agent: Agent
   cursor: ClaudeActivityCursor
+  /** Last complete text block recorded per subagent call: the CLI re-sends a
+   *  message's blocks as each one completes, and one copy is enough. */
+  subagentText: Map<string, string>
   /** Whether this turn is produced for DSH's own renderer. Frozen at admission
    *  so every record of the turn carries one answer. */
   native: boolean
@@ -845,6 +848,7 @@ export class ClaudeSupervisor {
       phase: 'primary',
       sawActivity: false,
       sawTextDelta: false,
+      subagentText: new Map(),
       text: '',
       transcriptText: '',
       transcriptTextOrdinal: undefined,
@@ -1226,6 +1230,9 @@ export class ClaudeSupervisor {
       includePartialMessages: true,
       // The Host job list renders a per-task stop control (see host-jobs.ts).
       perTaskStopAffordance: true,
+      // Subagent prose reaches the sidecar under its parent call, so a teammate
+      // tab can draw the conversation, not just the tool cards.
+      forwardSubagentText: true,
       permissionMode,
       allowDangerouslySkipPermissions: true,
       canUseTool,
@@ -1397,7 +1404,17 @@ export class ClaudeSupervisor {
         active.output.push({ type: 'text-delta', text: message.text })
         return
       case 'assistant-text':
-        if (message.parentToolUseId !== undefined) return
+        if (message.parentToolUseId !== undefined) {
+          if (active.subagentText.get(message.parentToolUseId) === message.text) return
+          active.subagentText.set(message.parentToolUseId, message.text)
+          await this.#appendActivity(active, {
+            kind: 'text',
+            phase: 'completed',
+            parentToolUseId: message.parentToolUseId,
+            text: message.text,
+          })
+          return
+        }
         if (!active.sawTextDelta) {
           // Complete assistant text is the fallback when no partial text delta
           // streamed. Mark text-delta seen so that additional complete

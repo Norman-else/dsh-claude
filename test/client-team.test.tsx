@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ClaudeActivityEvent, ClaudeTaskInfo } from '../src/events.ts'
 import { createdTaskId, deriveTeam, EMPTY_TEAM } from '../src/client/team.ts'
+import { teammateTranscript, transcriptItemsForStep } from '../src/client/conversation-sidecar.ts'
 import { ClaudeTeamHeaderAction } from '../src/client/ClaudeTeamHeaderAction.tsx'
 import { ClaudeTeammatePanel } from '../src/client/ClaudeTeammatePanel.tsx'
 import { EMPTY_CLAUDE_PROJECTION, type ClaudeClientProjection } from '../src/client/projection.ts'
@@ -18,6 +19,9 @@ function call(toolUseId: string, toolName: string, input: unknown, parentToolUse
     ...(parentToolUseId === undefined ? {} : { parentToolUseId }),
   }
 }
+function prose(text: string, parentToolUseId?: string): ClaudeActivityEvent {
+  return { turn: 1, step: 1, ordinal: ordinal++, kind: 'text', phase: 'completed', text, ...(parentToolUseId === undefined ? {} : { parentToolUseId }) }
+}
 function result(toolUseId: string, output: unknown, parentToolUseId?: string, isError = false): ClaudeActivityEvent {
   return {
     turn: 1, step: 1, ordinal: ordinal++, kind: parentToolUseId === undefined ? 'tool-result' : 'subagent', phase: isError ? 'failed' : 'completed',
@@ -27,7 +31,7 @@ function result(toolUseId: string, output: unknown, parentToolUseId?: string, is
 }
 
 const teammates: ClaudeTaskInfo[] = [
-  { taskId: 'tm-1', toolUseId: 'spawn-1', description: 'Review the diff', status: 'running', taskType: 'in_process_teammate', lastToolName: 'Read', usage: { toolUses: 4 } },
+  { taskId: 'tm-1', toolUseId: 'spawn-1', description: 'Review the diff', status: 'running', taskType: 'in_process_teammate', lastToolName: 'Read', usage: { toolUses: 4 }, summary: 'Parser looks fine.' },
   { taskId: 'tm-2', toolUseId: 'spawn-2', description: 'Write tests', status: 'completed', taskType: 'local_agent', subagentType: 'general-purpose', backgrounded: true },
   { taskId: 'bg-1', description: 'sleep 30', status: 'running', taskType: 'local_bash', backgrounded: true },
   { taskId: 'sa-1', toolUseId: 'spawn-3', description: 'Anonymous helper', status: 'running', taskType: 'local_agent', backgrounded: true },
@@ -47,8 +51,11 @@ function activities(): ClaudeActivityEvent[] {
     call('tu-2', 'TaskUpdate', { taskId: 2, status: 'completed', addBlockedBy: ['1'] }, 'spawn-2'),
     call('msg-1', 'SendMessage', { to: 'reviewer', message: 'Start with the tokenizer', summary: 'tokenizer first' }),
     call('msg-2', 'SendMessage', { to: 'lead', message: 'Tests are green' }, 'spawn-2'),
+    prose('Reading the parser now.', 'spawn-1'),
     call('read-1', 'Read', { file_path: '/repo/src/parse.ts' }, 'spawn-1'),
     result('read-1', { content: 'export function parse() {}' }, 'spawn-1'),
+    prose('The parser is fine.', 'spawn-1'),
+    prose('Lead prose stays in the main transcript.'),
     call('tc-3', 'TaskCreate', { subject: 'Doomed' }),
     result('tc-3', 'boom', undefined, true),
   ]
@@ -94,6 +101,17 @@ describe('deriveTeam', () => {
     expect(deriveTeam([call('b-1', 'Bash', { command: 'ls' })], [teammates[2]!])).toBe(EMPTY_TEAM)
   })
 
+  it('folds one teammate\'s prose and tools into transcript items and keeps them out of the lead step', () => {
+    const events = activities()
+    expect(teammateTranscript(events, 'tm-1', 'spawn-1')).toEqual([
+      { kind: 'text', ordinal: expect.any(Number), text: 'Reading the parser now.' },
+      { kind: 'tools', ordinal: expect.any(Number), tools: [expect.objectContaining({ toolUseId: 'read-1', toolName: 'Read', phase: 'completed' })] },
+      { kind: 'text', ordinal: expect.any(Number), text: 'The parser is fine.' },
+    ])
+    const lead = transcriptItemsForStep(events, 1, 1)
+    expect(lead.filter(item => item.kind === 'text').map(item => item.kind === 'text' ? item.text : '')).toEqual(['Lead prose stays in the main transcript.'])
+  })
+
   it('reads the created task id from prose or structure', () => {
     expect(createdTaskId('Task #12 created successfully: x')).toBe('12')
     expect(createdTaskId(JSON.stringify({ task: { id: 7 } }))).toBe('7')
@@ -121,17 +139,22 @@ describe('ClaudeTeamHeaderAction', () => {
 })
 
 describe('ClaudeTeammatePanel', () => {
-  it('shows the teammate brief, its mail, and the tools it ran', () => {
+  it('draws the teammate as a conversation: brief, its prose and tools, then its report', () => {
     const markup = renderToStaticMarkup(<ClaudeTeammatePanel t={t} closeDetails={vi.fn()} taskId="tm-1" useClaudeProjection={hook(true, teammates, activities())} />)
     expect(markup).toContain('>reviewer<')
     expect(markup).toContain('Running')
     expect(markup).toContain('4 tool calls')
-    expect(markup).toContain('Review the diff')
-    expect(markup).toContain('lead → reviewer · tokenizer first')
-    expect(markup).toContain('Start with the tokenizer')
+    // The Lead's brief as the opening turn, the report as the closing answer.
+    expect(markup).toContain('Review PR 12')
+    expect(markup).toContain('Parser looks fine.')
+    // Its own prose and tool cards in between, nothing from other members.
+    expect(markup).toContain('Reading the parser now.')
+    expect(markup).toContain('The parser is fine.')
+    // Tool cards fold behind the group row, as they do in the chat.
+    expect(markup).toContain('dsh-claude-tool-group-native')
+    expect(markup).toContain('Used 1 tool')
     expect(markup).not.toContain('Tests are green')
-    expect(markup).toContain('>Read<')
-    expect(markup).toContain('parse.ts')
+    expect(markup).not.toContain('Lead prose stays')
     expect(markup).toContain('aria-label="Close teammate panel"')
   })
 

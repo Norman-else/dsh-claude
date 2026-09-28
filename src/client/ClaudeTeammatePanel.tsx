@@ -5,8 +5,9 @@ import type { ClaudeTaskInfo } from '../events.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import * as styles from './styles.ts'
-import { taskTools } from './conversation-sidecar.ts'
-import { ClaudeTranscriptToolItem, ensureActivityCss } from './ClaudeActivityNode.tsx'
+import { teammateTranscript } from './conversation-sidecar.ts'
+import { ClaudeTranscriptFlow } from './ClaudeActivityNode.tsx'
+import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
 import { deriveTeam, memberStatusKey } from './team.ts'
 
 export interface ClaudeTeammatePanelInjected {
@@ -22,30 +23,32 @@ export interface ClaudeTeammatePanelProps extends ClaudeTeammatePanelInjected {
 
 const EMPTY_TASKS: readonly ClaudeTaskInfo[] = []
 
+/** The Lead's brief reads as the user turn of this conversation, the report
+ *  as its closing answer; between them the flow is the chat's own. */
 const PANEL_CSS = [
-  '.dsh-claude-teammate-meta{display:flex;flex-wrap:wrap;gap:6px 12px;padding:0 0 8px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:17px}',
-  '.dsh-claude-teammate-heading{color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:600;margin:10px 0 4px}',
-  '.dsh-claude-teammate-empty{color:var(--dsw-alias-label-tertiary);font-size:12px}',
-  '.dsh-claude-teammate-message{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover);font-size:12px;line-height:17px;margin-bottom:4px}',
-  '.dsh-claude-teammate-message-head{color:var(--dsw-alias-label-tertiary);font-size:11px}',
-  '.dsh-claude-teammate-message-body{white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.dsh-claude-teammate-meta{display:flex;flex-wrap:wrap;gap:6px 12px;padding:0 0 10px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:17px}',
+  '.dsh-claude-teammate-brief{align-self:flex-end;max-width:85%;margin:0 0 12px auto;padding:8px 12px;border-radius:14px 14px 4px 14px;',
+    'background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:13px;line-height:19px;white-space:pre-wrap;overflow-wrap:anywhere}',
+  '.dsh-claude-teammate-brief-label{display:block;margin-bottom:2px;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  '.dsh-claude-teammate-report{margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))}',
+  '.dsh-claude-teammate-report-label{display:block;margin-bottom:4px;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+  '.dsh-claude-teammate-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;padding:4px 0}',
 ].join('')
 
-/** One teammate's own conversation: what it was asked, what it said to whom,
- *  and the tools it ran, folded the way the transcript folds a step. */
+/** One teammate's conversation: what the Lead asked, what it said and ran, and
+ *  what it reported back, drawn with the chat's own transcript renderer. */
 export function ClaudeTeammatePanel({ t, closeDetails, taskId, useClaudeProjection }: ClaudeTeammatePanelProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   const activities = useClaudeProjection(projection => projection.activities)
   const tasks = useClaudeProjection(projection => projection.tasks?.tasks ?? EMPTY_TASKS)
   const team = useMemo(() => deriveTeam(activities, tasks), [activities, tasks])
   const member = team.members.find(candidate => candidate.taskId === taskId)
-  const tools = useMemo(
-    () => member === undefined ? [] : taskTools(activities, member.taskId, member.toolUseId),
+  const items = useMemo(
+    () => member === undefined ? [] : teammateTranscript(activities, member.taskId, member.toolUseId),
     [activities, member],
   )
+  const markdownLabels = useClaudeMarkdownLabels(t)
   if (!owned) return null
-  ensureActivityCss()
-  const messages = member === undefined ? [] : team.messages.filter(message => message.from === member.name || message.to === member.name)
   return (
     <div className={styles.detailsCardClass} style={styles.tasksPanel}>
       <style data-dsh-claude-teammate-styles>{styles.detailsCardCss}{styles.panelIconButtonCss}{PANEL_CSS}</style>
@@ -63,21 +66,19 @@ export function ClaudeTeammatePanel({ t, closeDetails, taskId, useClaudeProjecti
               {member.usage?.toolUses === undefined ? null : <span>{t('teammateToolUses', { count: member.usage.toolUses })}</span>}
               {member.lastToolName === undefined ? null : <span>{member.lastToolName}</span>}
             </div>
-            <div className="dsh-claude-teammate-message">
-              <span className="dsh-claude-teammate-message-head">{t('teammateBrief')}</span>
-              <span className="dsh-claude-teammate-message-body">{member.description}</span>
+            <div className="dsh-claude-teammate-brief">
+              <span className="dsh-claude-teammate-brief-label">{t('teammateBrief')}</span>
+              {member.prompt ?? member.description}
             </div>
-            <div className="dsh-claude-teammate-heading">{t('teamMessages')}</div>
-            {messages.length === 0 ? <div className="dsh-claude-teammate-empty">{t('teamNoMessages')}</div> : messages.map(message => (
-              <div key={message.ordinal} className="dsh-claude-teammate-message">
-                <span className="dsh-claude-teammate-message-head">{message.from} → {message.to}{message.summary === undefined ? '' : ` · ${message.summary}`}</span>
-                <span className="dsh-claude-teammate-message-body">{message.message}</span>
+            {items.length > 0
+              ? <ClaudeTranscriptFlow items={items} t={t} />
+              : member.status === 'running' ? <div className="dsh-claude-teammate-empty">{t('teammateWorking')}</div> : null}
+            {member.summary === undefined ? null : (
+              <div className="dsh-claude-teammate-report">
+                <span className="dsh-claude-teammate-report-label">{t('teammateResult')}</span>
+                <div className="dsh-claude-transcript-text"><ClaudeMarkdown text={member.summary} labels={markdownLabels} /></div>
               </div>
-            ))}
-            <div className="dsh-claude-teammate-heading">{t('teammateTools')}</div>
-            {tools.length === 0 ? <div className="dsh-claude-teammate-empty">{t('teammateNoTools')}</div> : tools.map(tool => (
-              <ClaudeTranscriptToolItem key={tool.toolUseId} tool={tool} t={t} />
-            ))}
+            )}
           </>
         )}
       </div>
