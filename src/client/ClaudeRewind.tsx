@@ -9,6 +9,7 @@ import {
   rewindHiddenCss,
   sameClaudeRewindSeats,
   type ClaudeRewindSeat,
+  rewindNodeSeq,
 } from './rewind-dom.ts'
 import { rewindSession } from './rewind-api.ts'
 import { useActionToast } from './action-toast.tsx'
@@ -132,7 +133,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
     for (const key of snapshot.chat.order) {
       const node = snapshot.chat.nodes.get(key)
       if (node === undefined) continue
-      if (isRewound(ranges, node.anchorSeq)) {
+      if (isRewound(ranges, rewindNodeSeq(node.kind, node.anchorSeq))) {
         hidden.push(key)
         continue
       }

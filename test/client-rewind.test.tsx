@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ClaudeRewind, rewindMessageText } from '../src/client/ClaudeRewind.tsx'
-import { rewindHiddenCss, sameClaudeRewindSeats } from '../src/client/rewind-dom.ts'
+import { rewindHiddenCss, rewindNodeSeq, sameClaudeRewindSeats } from '../src/client/rewind-dom.ts'
 import { EMPTY_CLAUDE_PROJECTION } from '../src/client/projection.ts'
 
 describe('rewind client', () => {
@@ -16,6 +16,11 @@ describe('rewind client', () => {
     expect(rewindHiddenCss(['input-message:a', 'claude-activity-step:b']))
       .toBe('[data-chat-flow-key="input-message:a"],[data-chat-flow-key="claude-activity-step:b"]{display:none}')
     expect(rewindHiddenCss(['bad"key'])).toBe('')
+  })
+
+  it('counts a turn\'s process row with the turn/start it sits a tenth before', () => {
+    expect(rewindNodeSeq('turn-process', 147.9)).toBe(148)
+    expect(rewindNodeSeq('user', 151)).toBe(151)
   })
 
   it('compares seats by key and host identity', () => {

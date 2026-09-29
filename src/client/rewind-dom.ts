@@ -67,3 +67,10 @@ export function rewindHiddenCss(keys: readonly string[]): string {
     .map(key => `[data-chat-flow-key="${key}"]`)
   return selectors.length === 0 ? '' : `${selectors.join(',')}{display:none}`
 }
+
+/** The log seq a chat node stands for. The Host seats a turn's process row
+ *  ("Analysis completed") a tenth before its turn/start, so by its raw anchor
+ *  it would escape a rewind range that begins at that turn/start. */
+export function rewindNodeSeq(kind: string, anchorSeq: number): number {
+  return kind === 'turn-process' ? Math.ceil(anchorSeq) : anchorSeq
+}
