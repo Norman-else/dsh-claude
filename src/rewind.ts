@@ -110,14 +110,28 @@ export function recordRewindSnapshot(
   return { ...state, snapshots }
 }
 
-/** The turn a surface seq belongs to: the first turn opened at or after it.
- *  A message accepted but never run belongs to no logged turn, so nothing
- *  Claude holds is discarded and every anchor stays valid. */
-export function turnAtOrAfter(events: readonly SessionEvent[], seq: number): number | undefined {
+/** The turn a surface seq belongs to, and the seq its rows start at.
+ *
+ *  The Host opens a turn before it writes the message that drives it
+ *  (`turn/start`, `step/start`, then `user/message`), so a message normally
+ *  sits inside an already-open turn: that turn is the one it belongs to, and
+ *  its head rows must go with it. A message between turns belongs to the
+ *  first turn opened after it; one accepted but never run belongs to no
+ *  logged turn, so nothing Claude holds is discarded. */
+function owningTurn(events: readonly SessionEvent[], seq: number): { turn: number; start: number } | undefined {
+  let open: { turn: number; start: number } | undefined
   for (const event of events) {
-    if (event.seq >= seq && event.type === 'turn/start') return event.data.turn
+    if (event.seq > seq) {
+      if (open !== undefined) return open
+      if (event.type === 'turn/start') return { turn: event.data.turn, start: event.seq }
+    } else if (event.type === 'turn/start') open = { turn: event.data.turn, start: event.seq }
+    else if (event.type === 'turn/end') open = undefined
   }
-  return undefined
+  return open
+}
+
+export function turnAtOrAfter(events: readonly SessionEvent[], seq: number): number | undefined {
+  return owningTurn(events, seq)?.turn
 }
 
 /** The working tree a rewind at `seq` restores: the snapshot of the first turn
@@ -143,11 +157,12 @@ export function planRewind(
 ): ClaudeRewindState | undefined {
   const last = events.at(-1)?.seq
   if (last === undefined || seq > last) return undefined
-  const turn = turnAtOrAfter(events, seq) ?? Number.MAX_SAFE_INTEGER
+  const owner = owningTurn(events, seq)
+  const turn = owner?.turn ?? Number.MAX_SAFE_INTEGER
   const anchors = state.anchors.filter(anchor => anchor.turn < turn)
   const kept = anchors.at(-1)
   return {
-    ranges: mergeRewindRanges(state.ranges, { start: seq, end: last }),
+    ranges: mergeRewindRanges(state.ranges, { start: Math.min(seq, owner?.start ?? seq), end: last }),
     anchors,
     snapshots: state.snapshots.filter(item => item.turn < turn),
     pending: kept === undefined ? { fresh: true } : { resumeAt: kept.uuid },

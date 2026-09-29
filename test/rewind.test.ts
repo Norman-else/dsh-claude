@@ -54,6 +54,29 @@ describe('rewind planning', () => {
     expect(planRewind(state, events, 4)?.pending).toEqual({ resumeAt: 'a' })
   })
 
+  it('takes the turn a message opened with it, head rows and anchor', () => {
+    // The Host's own order: the turn opens before the message that drives it.
+    const events = [
+      { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } },
+      { type: 'step/start', seq: 2, time: 2, data: { turn: 1, step: 1 } },
+      { type: 'user/message', seq: 3, time: 3, data: {} },
+      { type: 'turn/end', seq: 4, time: 4, data: { turn: 1 } },
+      { type: 'turn/start', seq: 5, time: 5, data: { turn: 2 } },
+      { type: 'step/start', seq: 6, time: 6, data: { turn: 2, step: 1 } },
+      { type: 'user/message', seq: 7, time: 7, data: {} },
+      { type: 'turn/end', seq: 8, time: 8, data: { turn: 2 } },
+    ] as unknown as SessionEvent[]
+    const state = recordRewindSnapshot(
+      recordRewindAnchor(recordRewindAnchor(EMPTY_REWIND_STATE, { turn: 1, uuid: 'a' }), { turn: 2, uuid: 'b' }),
+      { turn: 2, tree: 'tree-2' },
+    )
+    const planned = planRewind(state, events, 7)
+    expect(planned?.ranges).toEqual([{ start: 5, end: 8 }])
+    expect(planned?.pending).toEqual({ resumeAt: 'a' })
+    expect(planned?.anchors).toEqual([{ turn: 1, uuid: 'a' }])
+    expect(rewindRestoreTree(state, events, 7)).toBe('tree-2')
+  })
+
   it('refuses a seq the log does not reach', () => {
     expect(planRewind(EMPTY_REWIND_STATE, log(), 99)).toBeUndefined()
     expect(planRewind(EMPTY_REWIND_STATE, [], 1)).toBeUndefined()
