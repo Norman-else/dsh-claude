@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, IconListPenOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconListPenOutlineRegular, IconTrashOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClaudePromptView } from '../prompts.ts'
 import type { ClaudeClientProjection } from './projection.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 import { PluginRequestError } from './plugin-transport.ts'
-import { defaultPromptName, saveClaudePrompt, suggestClaudePromptName } from './prompt-api.ts'
+import { claudePrompts, defaultPromptName, deleteClaudePrompt, invalidateClaudePrompts, saveClaudePrompt, suggestClaudePromptName } from './prompt-api.ts'
 import * as styles from './styles.ts'
 
 export interface ClaudePromptSaveActionInjected {
@@ -23,6 +23,16 @@ export interface ClaudePromptSaveActionProps extends ClaudePromptSaveActionInjec
   savePrompt?: (name: string, body: string) => Promise<ClaudePromptView>
   /** Seam for tests; defaults to the host route that asks Claude for a name. */
   suggestName?: (draft: string, cancel?: AbortSignal) => Promise<string | undefined>
+  /** Seam for tests; defaults to a fresh read of the prompt directory. */
+  loadPrompts?: () => Promise<readonly ClaudePromptView[]>
+  /** Seam for tests; defaults to the host route that deletes the prompt file. */
+  deletePrompt?: (name: string) => Promise<void>
+}
+
+function freshPrompts(): Promise<readonly ClaudePromptView[]> {
+  // The menu's five-second cache could still hold a file removed outside DSH.
+  invalidateClaudePrompts()
+  return claudePrompts()
 }
 
 
@@ -101,6 +111,14 @@ type Panel =
       readonly failure?: string
     }
   | { readonly kind: 'saved'; readonly prompt: ClaudePromptView }
+  | {
+      readonly kind: 'manage'
+      /** Undefined while the directory is being read. */
+      readonly prompts?: readonly ClaudePromptView[] | undefined
+      /** The row asking "delete this?" — a deleted file is not coming back. */
+      readonly confirming?: string | undefined
+      readonly failure?: string | undefined
+    }
 
 /**
  * Keep the draft you just wrote, from the composer's own tool row.
@@ -115,9 +133,13 @@ type Panel =
  * nothing and is there instantly, and a Claude-written name replaces it when
  * one arrives. That ordering is the whole naming design: the suggestion is an
  * improvement on a working answer, never something the user waits for.
+ *
+ * With no draft there is nothing to keep, so the same control opens the list
+ * of saved prompts instead, where each can be deleted.
  */
 export function ClaudePromptSaveAction({
   t, useClaudeProjection, useInput, savePrompt = saveClaudePrompt, suggestName = suggestClaudePromptName,
+  loadPrompts = freshPrompts, deletePrompt = deleteClaudePrompt,
 }: ClaudePromptSaveActionProps) {
   const owned = useClaudeProjection(projection => projection.owned)
   const anchor = useRef<HTMLSpanElement>(null)
@@ -137,7 +159,30 @@ export function ClaudePromptSaveAction({
   // entry, just with nothing to offer.
   const draft = useInput(state => state.draft)
   if (!owned) return null
-  const label = t('promptSave')
+  const managing = draft.trim() === ''
+  const label = managing ? t('promptManage') : t('promptSave')
+  const openManage = (): void => {
+    setPanel({ kind: 'manage' })
+    void loadPrompts().then((prompts) => {
+      setPanel(current => current?.kind === 'manage' ? { ...current, prompts } : current)
+    })
+  }
+  const remove = (name: string): void => {
+    if (saving) return
+    setSaving(true)
+    deletePrompt(name).then(() => {
+      setPanel(current => current?.kind !== 'manage' ? current : {
+        kind: 'manage',
+        prompts: current.prompts?.filter(prompt => prompt.name !== name),
+      })
+    }, (error: unknown) => {
+      setPanel(current => current?.kind !== 'manage' ? current : {
+        ...current,
+        confirming: undefined,
+        failure: t('promptDeleteFailed', { message: error instanceof Error ? error.message : String(error) }),
+      })
+    }).finally(() => { setSaving(false) })
+  }
   const open = (): void => {
     setPanel({ kind: 'naming', name: defaultPromptName(draft), touched: false, suggesting: true })
     const attempt = new AbortController()
@@ -180,15 +225,50 @@ export function ClaudePromptSaveAction({
           aria-label={label}
           aria-haspopup="dialog"
           aria-expanded={panel !== undefined}
-          // Nothing written, nothing to keep — the control says so by being
-          // unavailable rather than by failing once pressed.
-          disabled={draft.trim() === ''}
-          onClick={() => { if (panel === undefined) open(); else close() }}
+          onClick={() => { if (panel !== undefined) close(); else if (managing) openManage(); else open() }}
         ><IconListPenOutlineRegular size={14} /></button>
       </Tooltip>
       {panel === undefined || typeof document === 'undefined' ? null : createPortal(
         <div ref={panelRef} style={{ ...styles.promptSaveCard, ...position }} role="dialog" aria-label={label}>
-          {panel.kind === 'saved' ? (
+          {panel.kind === 'manage' ? (
+            <>
+              <span style={styles.promptSaveHeading}>{label}</span>
+              {panel.prompts === undefined
+                ? <span role="status" style={styles.repositoryChecksHint}>{t('promptManageLoading')}</span>
+                : panel.prompts.length === 0
+                  ? <span style={styles.repositoryChecksHint}>{t('promptManageEmpty')}</span>
+                  : (
+                    <ul style={styles.promptManageList}>
+                      {panel.prompts.map(prompt => (
+                        <li key={prompt.name} style={styles.promptManageRow}>
+                          {panel.confirming === prompt.name ? (
+                            <>
+                              <span style={styles.promptManageName}>{t('promptDeleteConfirm', { name: prompt.name })}</span>
+                              <Button variant="ghost" size="sm" disabled={saving} onClick={() => setPanel({ ...panel, confirming: undefined })}>{t('promptSaveCancel')}</Button>
+                              <Button variant="primary" size="sm" disabled={saving} onClick={() => remove(prompt.name)}>{t('promptDelete')}</Button>
+                            </>
+                          ) : (
+                            <>
+                              <span style={styles.promptManageName} title={prompt.location}>{prompt.name}</span>
+                              <button
+                                type="button"
+                                className={styles.promptSaveTriggerClass}
+                                aria-label={t('promptDeleteNamed', { name: prompt.name })}
+                                disabled={saving}
+                                onClick={() => setPanel({ ...panel, confirming: prompt.name, failure: undefined })}
+                              ><IconTrashOutlineRegular size={14} /></button>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              {panel.failure === undefined ? null : <span style={styles.promptSaveError}>{panel.failure}</span>}
+              <span style={styles.promptSaveActions}>
+                <Button variant="primary" size="sm" onClick={close}>{t('promptSaveDone')}</Button>
+              </span>
+            </>
+          ) : panel.kind === 'saved' ? (
             <>
               <span style={styles.promptSaveHeading}>{t('promptSaved', { name: panel.prompt.name })}</span>
               <span style={styles.promptSaveLocation}>{panel.prompt.location}</span>

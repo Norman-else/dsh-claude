@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { mkdir, opendir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, opendir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -87,7 +87,7 @@ export async function readClaudePrompts(directory: string): Promise<readonly Cla
   return prompts.sort((left, right) => left.name.localeCompare(right.name))
 }
 
-export type ClaudePromptWriteCode = 'invalid-name' | 'invalid-body' | 'name-taken'
+export type ClaudePromptWriteCode = 'invalid-name' | 'invalid-body' | 'name-taken' | 'not-found'
 
 export class ClaudePromptWriteError extends Error {
   readonly code: ClaudePromptWriteCode
@@ -127,6 +127,22 @@ export async function writeClaudePrompt(directory: string, name: unknown, body: 
   return { name, description: summarize(text), body: text, location: displayPath(file) }
 }
 
+
+/** Delete one prompt by the name the menu shows. The same `PROMPT_NAME` guard
+ *  as saving is what keeps the unlink inside `directory`. */
+export async function deleteClaudePrompt(directory: string, name: unknown): Promise<void> {
+  if (typeof name !== 'string' || !PROMPT_NAME.test(name)) {
+    throw new ClaudePromptWriteError('invalid-name', 'The prompt name is invalid.')
+  }
+  try {
+    await unlink(join(directory, `${name}.md`))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new ClaudePromptWriteError('not-found', 'No prompt with that name exists.')
+    }
+    throw error
+  }
+}
 
 const MAX_NAME_DRAFT_CHARS = 4_000
 const MAX_NAME_OUTPUT_BYTES = 4 * 1024
@@ -304,16 +320,28 @@ export class PromptAssistService {
   }
 }
 
-/** List the user's prompt snippets, and save the composer draft as a new one. */
+/** List the user's prompt snippets, save the composer draft as a new one, or
+ *  delete one by `?name=`. */
 export function registerClaudePromptsRoute(ctx: Context, directory: string = claudePromptsDir()): void {
   registerPluginRoute(ctx, {
     mode: 'unary',
     kind: 'exact',
     path: CLAUDE_PROMPTS_PATH,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'DELETE'],
     budget: 'fast',
     handler: async (io) => {
       if (io.method === 'GET') return { status: 200, value: { prompts: await readClaudePrompts(directory) } }
+      if (io.method === 'DELETE') {
+        try {
+          await deleteClaudePrompt(directory, io.url.searchParams.get('name') ?? undefined)
+          return { status: 200, value: { deleted: true } }
+        } catch (error) {
+          if (error instanceof ClaudePromptWriteError) {
+            return { status: error.code === 'not-found' ? 404 : 400, value: { error: error.code, message: error.message } }
+          }
+          return { status: 500, value: { error: 'prompt-delete-failed', message: 'The prompt could not be deleted.' } }
+        }
+      }
       const payload = await io.body<{ name?: unknown; body?: unknown }>(MAX_REQUEST_BYTES)
       try {
         const prompt = await writeClaudePrompt(directory, payload.name, payload.body)

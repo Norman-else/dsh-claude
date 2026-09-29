@@ -26,11 +26,13 @@ function saved(name: string, body: string): ClaudePromptView {
   return { name, description: body, body, location: `~/.claude/prompts/${name}.md` }
 }
 
-function mount({ draft, owned = true, savePrompt, suggestName }: {
+function mount({ draft, owned = true, savePrompt, suggestName, loadPrompts, deletePrompt }: {
   draft?: string
   owned?: boolean
   savePrompt?: (name: string, body: string) => Promise<ClaudePromptView>
   suggestName?: (draft: string, cancel?: AbortSignal) => Promise<string | undefined>
+  loadPrompts?: () => Promise<readonly ClaudePromptView[]>
+  deletePrompt?: (name: string) => Promise<void>
 }): void {
   const snapshot: ClaudeClientProjection = { ...EMPTY_CLAUDE_PROJECTION, owned }
   const container = document.createElement('div')
@@ -43,6 +45,8 @@ function mount({ draft, owned = true, savePrompt, suggestName }: {
       useInput={<S,>(selector: (value: { readonly draft: string }) => S): S => selector({ draft: draft ?? '' })}
       savePrompt={savePrompt ?? (async (name, body) => saved(name, body))}
       suggestName={suggestName ?? (async () => undefined)}
+      loadPrompts={loadPrompts ?? (async () => [])}
+      deletePrompt={deletePrompt ?? (async () => {})}
     />)
   })
 }
@@ -87,11 +91,10 @@ function submit(): void {
 }
 
 describe('Saving the draft from the composer tool row', () => {
-  it('is one tool-row control, unavailable until there is a draft to keep', () => {
-    mount({ draft: '   \n ' })
+  it('is one tool-row control that docks nothing above the composer', () => {
+    mount({ draft: 'a draft' })
 
-    expect(trigger()?.disabled).toBe(true)
-    // Nothing is docked above the composer, so nothing moved to make room.
+    expect(trigger()?.disabled).toBe(false)
     expect(card()).toBeNull()
   })
 
@@ -233,5 +236,40 @@ describe('Saving the draft from the composer tool row', () => {
     await act(async () => {})
 
     expect(card()?.textContent).toContain('Could not save: disk is full')
+  })
+})
+
+describe('Managing saved prompts when there is no draft', () => {
+  function manageTrigger(): HTMLButtonElement | null {
+    return document.querySelector(`button[aria-label="${en.promptManage}"]`)
+  }
+
+  it('lists the saved prompts and deletes one only after it is confirmed', async () => {
+    const deletePrompt = vi.fn(async () => {})
+    mount({ draft: '   \n ', loadPrompts: async () => [saved('keep', 'a'), saved('drop', 'b')], deletePrompt })
+
+    click(manageTrigger())
+    await act(async () => {})
+    click(document.querySelector('button[aria-label="Delete \\"drop\\""]'))
+    expect(deletePrompt).not.toHaveBeenCalled()
+    click(button(en.promptDelete))
+    await act(async () => {})
+
+    expect(deletePrompt).toHaveBeenCalledWith('drop')
+    expect(card()?.textContent).toContain('keep')
+    expect(card()?.textContent).not.toContain('drop')
+  })
+
+  it('keeps the row and reports a failed delete', async () => {
+    mount({ loadPrompts: async () => [saved('drop', 'b')], deletePrompt: async () => { throw new Error('busy') } })
+
+    click(manageTrigger())
+    await act(async () => {})
+    click(document.querySelector('button[aria-label="Delete \\"drop\\""]'))
+    click(button(en.promptDelete))
+    await act(async () => {})
+
+    expect(card()?.textContent).toContain('Could not delete: busy')
+    expect(card()?.textContent).toContain('drop')
   })
 })

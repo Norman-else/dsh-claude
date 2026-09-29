@@ -2458,8 +2458,6 @@ export const promptSaveTriggerCss = `
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
 }
-/* With no draft there is nothing to keep, so the control drops its seat
- * entirely rather than sitting there as a filled-but-dead circle. */
 .${promptSaveTriggerClass}:disabled {
   cursor: default;
   background: transparent;
@@ -2552,6 +2550,31 @@ export const promptSaveLocation: CSSProperties = {
   padding: '10px 12px',
   borderRadius: 8,
   background: 'var(--dsw-alias-bg-layer-2)',
+}
+
+export const promptManageList: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  margin: 0,
+  padding: 0,
+  listStyle: 'none',
+}
+
+export const promptManageRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  minHeight: 28,
+}
+
+export const promptManageName: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontSize: 13,
 }
 
 export const promptSaveError: CSSProperties = {

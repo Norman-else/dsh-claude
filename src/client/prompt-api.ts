@@ -38,6 +38,15 @@ export async function saveClaudePrompt(name: string, body: string): Promise<Clau
   return saved.prompt
 }
 
+/** Delete one snippet by name. A name already gone answers `not-found`. */
+export async function deleteClaudePrompt(name: string): Promise<void> {
+  try {
+    await pluginWrite(CLAUDE_PROMPTS_PATH, 'fast', undefined, { method: 'DELETE', query: { name } })
+  } finally {
+    invalidateClaudePrompts()
+  }
+}
+
 /** Ask the host to name a draft with Claude's cheapest model. Answers
  *  undefined whenever no name could be had — the caller already holds the
  *  locally derived one, so a failure here is never worth reporting. */

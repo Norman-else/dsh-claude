@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { ClaudePromptWriteError, displayPath, promptNamePrompt, promptRefinePrompt, readClaudePrompts, refinedPrompt, suggestedName, writeClaudePrompt } from '../src/prompts.ts'
+import { ClaudePromptWriteError, deleteClaudePrompt, displayPath, promptNamePrompt, promptRefinePrompt, readClaudePrompts, refinedPrompt, suggestedName, writeClaudePrompt } from '../src/prompts.ts'
 
 const roots: string[] = []
 
@@ -109,6 +109,16 @@ describe('Saving a prompt snippet', () => {
     await expect(clobber).rejects.toBeInstanceOf(ClaudePromptWriteError)
     await expect(clobber).rejects.toMatchObject({ code: 'name-taken' })
     await expect(readFile(join(dir, 'review.md'), 'utf8')).resolves.toBe('the original text\n')
+  })
+
+  it('deletes by name, refusing a name that could step outside the directory', async () => {
+    const dir = await fixture()
+    await writeClaudePrompt(dir, 'review', 'text')
+
+    await expect(deleteClaudePrompt(dir, '../review')).rejects.toMatchObject({ code: 'invalid-name' })
+    await expect(deleteClaudePrompt(dir, 'missing')).rejects.toMatchObject({ code: 'not-found' })
+    await deleteClaudePrompt(dir, 'review')
+    await expect(readClaudePrompts(dir)).resolves.toEqual([])
   })
 })
 
