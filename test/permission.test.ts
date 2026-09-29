@@ -236,7 +236,9 @@ describe('DSH approval bridge', () => {
     // Claude is told what to change, not merely that it was refused.
     expect((result as { message: string }).message).toContain('add a rollback step')
     expect((result as { message: string }).message).toContain('> # Plan')
-    expect(state.events.at(-1)?.data).toMatchObject({ phase: 'denied', summary: 'Sent back for changes in DeepSeek Harness' })
+    expect(state.events.at(-2)?.data).toMatchObject({ phase: 'denied', summary: 'Sent back for changes in DeepSeek Harness' })
+    // The reader's own notes land in the chat, not only in Claude's message.
+    expect(state.events.at(-1)?.data).toMatchObject({ kind: 'steering', title: 'Plan sent back for changes', summary: '> # Plan\nadd a rollback step' })
     // The lifted policy goes back even though the dialog never answered.
     expect(policies(state.sessionEvents)).toEqual(['never', 'ask', 'never'])
   })

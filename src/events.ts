@@ -260,7 +260,8 @@ export function normalizeActivity(
   if (activity.summary !== undefined) {
     normalized.summary = redactText(
       typeof activity.summary === 'string' ? activity.summary : safeDetail(activity.summary) ?? '',
-      activity.kind === 'thinking' ? MAX_THINKING_CHARS : MAX_SUMMARY_CHARS,
+      // A steered message or plan note is the reader's own prose, read whole.
+      activity.kind === 'thinking' || activity.kind === 'steering' ? MAX_THINKING_CHARS : MAX_SUMMARY_CHARS,
     )
   }
   const detail = safeDetail(activity.detail)

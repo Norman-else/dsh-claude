@@ -60,6 +60,9 @@ export const CLAUDE_REWIND_PATH = '/plugins/dsh-claude/rewind'
 export const CLAUDE_BACKGROUND_TASK_PATH = '/plugins/dsh-claude/background-task'
 export const CLAUDE_PERMISSION_MODE_PATH = '/plugins/dsh-claude/permission-mode'
 export const CLAUDE_PLAN_FEEDBACK_PATH = '/plugins/dsh-claude/plan/feedback'
+/** Title of the transcript row that shows the reviewer's own plan notes; the
+ *  renderer keys its label on it. */
+export const PLAN_FEEDBACK_TITLE = 'Plan sent back for changes'
 export const CLAUDE_PROMPTS_PATH = '/plugins/dsh-claude/prompts'
 export const CLAUDE_PROMPT_NAME_PATH = '/plugins/dsh-claude/prompts/name'
 export const CLAUDE_PROMPT_REFINE_PATH = '/plugins/dsh-claude/prompts/refine'

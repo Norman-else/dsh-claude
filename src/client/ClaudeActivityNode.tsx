@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
+import { PLAN_FEEDBACK_TITLE } from '../constants.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
 import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
@@ -137,7 +138,7 @@ function ActivityRow({ row, t }: { row: ClaudeActivityChatData; t: Translate }) 
       titleClassName="dsh-claude-flow-title"
       chevronClassName="dsh-claude-flow-chevron"
       icon={icon}
-      title={activity.kind === 'thinking' ? t('thinking') : activity.kind === 'steering' ? t('steeredMessage') : title(activity)}
+      title={activity.kind === 'thinking' ? t('thinking') : activity.kind === 'steering' ? t(activity.title === PLAN_FEEDBACK_TITLE ? 'planFeedbackMessage' : 'steeredMessage') : title(activity)}
       open={open}
       expandable={expandable}
       expandOnRowClick

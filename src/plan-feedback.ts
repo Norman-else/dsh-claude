@@ -36,6 +36,14 @@ export function planNotesOf(value: unknown): readonly PlanNote[] {
   })
 }
 
+/** The notes as the reviewer wrote them, for the transcript: the quoted
+ *  passage then what they said about it, one note after another. */
+export function planNotesText(notes: readonly PlanNote[]): string {
+  return notes.map(note => note.quote === undefined
+    ? note.text
+    : `${note.quote.split('\n').map(line => `> ${line}`).join('\n')}\n${note.text}`).join('\n\n')
+}
+
 /** What Claude is told when the reviewer asks for changes.
  *
  *  Addressed to Claude rather than logged at it: a rejection it cannot act on

@@ -8,7 +8,8 @@ import {
   type ClaudeActivityCursor,
 } from './events.ts'
 import type { UserQuestionBridge } from './user-question.ts'
-import { planFeedbackMessage, type PlanFeedbackGate } from './plan-feedback.ts'
+import { PLAN_FEEDBACK_TITLE } from './constants.ts'
+import { planFeedbackMessage, planNotesText, type PlanFeedbackGate } from './plan-feedback.ts'
 
 export type ApprovalRequester = Pick<ApprovalService, 'request'>
 
@@ -269,6 +270,15 @@ export function createPermissionBridge(
           title: options.displayName ?? toolName,
           summary: 'Sent back for changes in DeepSeek Harness',
           text: message,
+        })
+        // The notes were typed in the Plan panel, so without this the chat
+        // only ever shows the plan call failing. Drawn like a steered message:
+        // it is the reader's own words reaching the running turn.
+        await active.appendActivity({
+          kind: 'steering',
+          phase: 'completed',
+          title: PLAN_FEEDBACK_TITLE,
+          summary: planNotesText(answer.revisions),
         })
         return {
           behavior: 'deny',
