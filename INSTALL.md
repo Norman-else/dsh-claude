@@ -85,7 +85,7 @@ own working directory (`process.cwd()`), not a borrowed session process.
 5. Test a user question and plan review; both must remain available under Full access.
 6. Stop a running turn, then send another prompt; confirm cleanup and continuity.
 7. Restart Desktop and continue the same conversation to verify resume.
-8. Open diff, plan, tasks, and overview tabs in the right sidebar; exercise
+8. Open diff, plan, and tasks tabs in the right sidebar; exercise
    fullscreen and close. Check command completion, prompt controls, and queue UI.
 9. In a disposable repository, verify worktree creation and naming. Preserve
    needed changes before deleting its workspace: managed-worktree reconciliation

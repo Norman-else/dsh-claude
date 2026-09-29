@@ -5,18 +5,14 @@ import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
-  latestClaudeContextUsage,
   latestClaudeSessionBinding,
   latestClaudeTasks,
   normalizeActivity,
-  normalizeContextUsage,
   normalizeTasksEvent,
   redactText,
   type ClaudeActivityEvent,
   type ClaudeActivityInput,
   type ClaudeActivityKind,
-  type ClaudeContextUsageEvent,
-  type ClaudeContextUsageInput,
   type ClaudeSessionBoundEvent,
   type ClaudeTaskInfo,
   type ClaudeTasksEvent,
@@ -48,7 +44,6 @@ export interface ClaudeSidecarProjection {
   readonly revision: number
   readonly binding?: ClaudeSessionBoundEvent
   readonly activities: readonly ClaudeActivityEvent[]
-  readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
   readonly rewind?: ClaudeRewindState
   /** The Claude permission mode the user picked in this plugin's selector;
@@ -66,7 +61,6 @@ export interface ClaudeSidecarProjection {
 export type ClaudeSidecarDelta =
   | { kind: 'text'; turn: number; step: number; ordinal: number; append?: string; text?: string; renderer?: ClaudeRenderMode; answer?: true }
   | { kind: 'activity'; activity: ClaudeActivityEvent }
-  | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
   | { kind: 'tasks'; value: ClaudeTasksEvent }
   | { kind: 'promptSuggestion'; value?: string }
   | { kind: 'sync' }
@@ -138,12 +132,6 @@ function activity(value: unknown): ClaudeActivityEvent | undefined {
     || !ACTIVITY_KINDS.has(input.kind)
     || (input.phase !== undefined && (typeof input.phase !== 'string' || !ACTIVITY_PHASES.has(input.phase)))) return undefined
   return normalizeActivity(input as unknown as ClaudeActivityEvent)
-}
-
-function contextUsage(value: unknown): ClaudeContextUsageEvent | undefined {
-  const input = record(value)
-  if (input === undefined || !Array.isArray(input.categories)) return undefined
-  return normalizeContextUsage(input as unknown as ClaudeContextUsageInput)
 }
 
 function rewind(value: unknown): ClaudeRewindState | undefined {
@@ -218,7 +206,6 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   }
   retained.sort(compareActivity)
   const parsedBinding = input.binding === undefined ? undefined : binding(input.binding)
-  const parsedUsage = input.contextUsage === undefined ? undefined : contextUsage(input.contextUsage)
   const parsedTasks = input.tasks === undefined ? undefined : tasks(input.tasks)
   const parsedRewind = input.rewind === undefined ? undefined : rewind(input.rewind)
   if (input.permissionMode !== undefined && !isClaudePermissionMode(input.permissionMode)) {
@@ -228,7 +215,6 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     throw new Error('dsh-claude: invalid sidecar prompt suggestion')
   }
   if ((input.binding !== undefined && parsedBinding === undefined)
-    || (input.contextUsage !== undefined && parsedUsage === undefined)
     || (input.tasks !== undefined && parsedTasks === undefined)
     || (input.rewind !== undefined && parsedRewind === undefined)) {
     throw new Error('dsh-claude: invalid sidecar projection')
@@ -238,7 +224,6 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     revision: input.revision,
     activities: retained,
     ...(parsedBinding === undefined ? {} : { binding: parsedBinding }),
-    ...(parsedUsage === undefined ? {} : { contextUsage: parsedUsage }),
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
     ...(parsedRewind === undefined ? {} : { rewind: parsedRewind }),
     ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
@@ -502,11 +487,6 @@ export class ClaudeSidecarRepository {
     }), false, { kind: 'activity', activity: normalized })
   }
 
-  writeContextUsage(sessionId: string, value: ClaudeContextUsageInput): Promise<ClaudeSidecarProjection> {
-    const normalized = normalizeContextUsage(value)
-    return this.#update(sessionId, current => ({ ...current, contextUsage: normalized }), false, { kind: 'contextUsage', value: normalized })
-  }
-
   /** Record the mode the selector picked. No delta: the projection carries
    *  it as metadata, which the carrier refreshes on its own cadence. */
   writePermissionMode(sessionId: string, mode: ClaudePermissionMode): Promise<ClaudeSidecarProjection> {
@@ -578,13 +558,11 @@ export class ClaudeSidecarRepository {
       .map(event => activity(event.data))
       .filter((item): item is ClaudeActivityEvent => item !== undefined)
     const importedBinding = latestClaudeSessionBinding(events)
-    const importedUsage = latestClaudeContextUsage(events)
     const importedTasks = latestClaudeTasks(events)
     return this.#update(sessionId, current => ({
       ...current,
       activities: mergeActivities(importedActivities, current.activities),
       ...(current.binding !== undefined || importedBinding === undefined ? {} : { binding: normalizeBinding(importedBinding) }),
-      ...(current.contextUsage !== undefined || importedUsage === undefined ? {} : { contextUsage: normalizeContextUsage(importedUsage) }),
       ...(current.tasks !== undefined || importedTasks === undefined ? {} : { tasks: normalizeTasksEvent(importedTasks.tasks) }),
     }), true, { kind: 'sync' })
   }

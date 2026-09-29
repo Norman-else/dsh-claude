@@ -402,10 +402,10 @@ describe('Claude supervisor', () => {
       seq: owner.events.length,
       time: Date.now(),
     })
-    await runtime.contextUsage(owner.agent)
+    await runtime.supportedCommands(owner.agent)
     expect(query.setPermissionMode).toHaveBeenCalledWith('bypassPermissions')
     expect(query.setPermissionMode.mock.invocationCallOrder[0])
-      .toBeLessThan(query.getContextUsage.mock.invocationCallOrder.at(-1)!)
+      .toBeLessThan(query.supportedCommands.mock.invocationCallOrder.at(-1)!)
     await runtime.dispose()
   })
 
@@ -426,8 +426,8 @@ describe('Claude supervisor', () => {
       time: Date.now(),
     })
     query.setPermissionMode.mockRejectedValueOnce(new Error('switch failed'))
-    await expect(runtime.contextUsage(owner.agent)).rejects.toThrow('switch failed')
-    expect(query.getContextUsage).not.toHaveBeenCalled()
+    await expect(runtime.supportedCommands(owner.agent)).rejects.toThrow('switch failed')
+    expect(query.supportedCommands).toHaveBeenCalledTimes(1)
     await runtime.dispose()
   })
 
@@ -440,8 +440,8 @@ describe('Claude supervisor', () => {
       await runtime.supportedCommands(owner.agent)
       const query = transport.queries[0]!
 
-      query.getContextUsage.mockReturnValueOnce(new Promise<never>(() => {}))
-      const wedged = runtime.contextUsage(owner.agent)
+      query.supportedCommands.mockReturnValueOnce(new Promise<never>(() => {}))
+      const wedged = runtime.supportedCommands(owner.agent)
       const settled = expect(wedged).rejects.toThrow('timed out')
       await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
       await settled
@@ -468,8 +468,8 @@ describe('Claude supervisor', () => {
 
       // Bounding the request is only half the cure: keeping the wedged entry
       // makes every later request on the same model time out on it again.
-      query.getContextUsage.mockReturnValueOnce(new Promise<never>(() => {}))
-      const wedged = runtime.contextUsage(owner.agent)
+      query.supportedCommands.mockReturnValueOnce(new Promise<never>(() => {}))
+      const wedged = runtime.supportedCommands(owner.agent)
       const settled = expect(wedged).rejects.toThrow('timed out')
       await vi.advanceTimersByTimeAsync(CLAUDE_METADATA_TIMEOUT_MS)
       await settled
@@ -479,7 +479,7 @@ describe('Claude supervisor', () => {
       expect(transport.queries).toHaveLength(2)
       // Same model, so nothing would have forced a switch: only the discard
       // keeps the dead query from serving the next read.
-      expect(query.supportedCommands).toHaveBeenCalledTimes(1)
+      expect(query.supportedCommands).toHaveBeenCalledTimes(2)
       await runtime.dispose()
     } finally {
       vi.useRealTimers()
@@ -501,30 +501,13 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('reads authoritative context usage from the owned Query', async () => {
-    const transport = factory()
-    const owner = fakeAgent()
-    const runtime = supervisor(transport.create)
-    const usage = runtime.contextUsage(owner.agent)
-    await vi.waitFor(() => expect(transport.queries).toHaveLength(1))
-    transport.queries[0]!.push(init())
-    await expect(usage).resolves.toMatchObject({
-      totalTokens: 120,
-      maxTokens: 200_000,
-      model: 'claude-test',
-    })
-    expect(runtime.contextWindow('default')).toBe(200_000)
-    expect(runtime.contextWindow('claude-test')).toBe(200_000)
-    expect(transport.queries[0]?.getContextUsage).toHaveBeenCalledTimes(1)
-    await runtime.dispose()
-  })
 
   it('rejects metadata reads while the session has an active turn', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
     const output = await runtime.runTurn({ agent: owner.agent, prompt: 'hello' })
-    await expect(runtime.contextUsage(owner.agent)).rejects.toBeInstanceOf(ClaudeTurnBusyError)
+    await expect(runtime.supportedCommands(owner.agent)).rejects.toBeInstanceOf(ClaudeTurnBusyError)
     transport.queries[0]!.push(init())
     transport.queries[0]!.push(result())
     await collect(output)
@@ -1060,10 +1043,9 @@ describe('Claude supervisor', () => {
     await collect(first)
 
     await runtime.supportedCommands(owner.agent)
-    await runtime.contextUsage(owner.agent)
     expect(query.setModel).not.toHaveBeenCalled()
     expect(runtime.snapshots()[0]?.model).toBe('fable')
-    expect(runtime.contextWindow('fable')).toBe(200_000)
+    await vi.waitFor(() => expect(runtime.contextWindow('fable')).toBe(200_000))
     await runtime.dispose()
   })
 

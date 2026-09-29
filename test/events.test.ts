@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   boundText,
-  latestClaudeContextUsage,
   latestClaudeSessionBinding,
   latestClaudeTasks,
   normalizeActivity,
-  normalizeContextUsage,
   normalizeTasksEvent,
   redactText,
   redactValue,
@@ -147,30 +145,6 @@ describe('event normalization', () => {
     expect(boundText('hello', 10)).toBe('hello')
   })
 
-  it('whitelists and bounds aggregate context usage fields', () => {
-    const normalized = normalizeContextUsage({
-      model: 'claude-opus',
-      totalTokens: 131_400.9,
-      maxTokens: 272_000,
-      percentage: 148,
-      categories: [
-        { name: 'System prompt', tokens: 3_400.8, color: '#94a3b8' },
-        { name: 'Tools', tokens: -4, color: 'url(javascript:alert(1))', isDeferred: true },
-      ],
-    })
-    expect(normalized).toEqual({
-      model: 'claude-opus',
-      totalTokens: 131_400,
-      maxTokens: 272_000,
-      percentage: 100,
-      categories: [
-        { name: 'System prompt', tokens: 3_400, color: '#94a3b8' },
-        { name: 'Tools', tokens: 0, color: '#8b95a5', isDeferred: true },
-      ],
-    })
-    expect(normalized).not.toHaveProperty('memoryFiles')
-    expect(normalized).not.toHaveProperty('mcpTools')
-  })
 })
 
 describe('legacy event folds', () => {
@@ -188,15 +162,6 @@ describe('legacy event folds', () => {
     expect(latestClaudeSessionBinding([event('turn/start', {})])).toBeUndefined()
   })
 
-  it('chooses the newest aggregate context sample', () => {
-    const first = { model: 'a', totalTokens: 10, maxTokens: 100, percentage: 10, categories: [] }
-    const second = { model: 'b', totalTokens: 20, maxTokens: 100, percentage: 20, categories: [] }
-    expect(latestClaudeContextUsage([
-      event('claude-code/context-usage', first),
-      event('turn/start', {}),
-      event('claude-code/context-usage', second),
-    ])).toEqual(second)
-  })
 
   it('chooses the newest task board snapshot', () => {
     const first = { tasks: [] }

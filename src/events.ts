@@ -1,7 +1,6 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   CLAUDE_ACTIVITY_EVENT,
-  CLAUDE_CONTEXT_USAGE_EVENT,
   CLAUDE_SESSION_BOUND_EVENT,
   CLAUDE_TASKS_EVENT,
   isClaudeRenderMode,
@@ -85,39 +84,10 @@ export interface ClaudeActivityEvent {
   answer?: true
 }
 
-export interface ClaudeContextUsageCategory {
-  name: string
-  tokens: number
-  color: string
-  isDeferred?: boolean
-}
-
-export interface ClaudeContextUsageEvent {
-  model: string
-  totalTokens: number
-  maxTokens: number
-  percentage: number
-  categories: readonly ClaudeContextUsageCategory[]
-}
-
-export interface ClaudeContextUsageInput {
-  model: unknown
-  totalTokens: unknown
-  maxTokens: unknown
-  percentage: unknown
-  categories: readonly {
-    name?: unknown
-    tokens?: unknown
-    color?: unknown
-    isDeferred?: unknown
-  }[]
-}
-
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     'claude-code/session-bound': ClaudeSessionBoundEvent
     'claude-code/activity': ClaudeActivityEvent
-    'claude-code/context-usage': ClaudeContextUsageEvent
     'claude-code/tasks': ClaudeTasksEvent
   }
 }
@@ -274,41 +244,11 @@ export function normalizeActivity(
   return normalized
 }
 
-const MAX_CONTEXT_CATEGORIES = 24
-const FALLBACK_CONTEXT_COLOR = '#8b95a5'
-const SAFE_CONTEXT_COLOR = /^#[0-9a-f]{3,8}$/iu
 
 function nonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, Math.floor(value))
     : 0
-}
-
-export function normalizeContextUsage(input: ClaudeContextUsageInput): ClaudeContextUsageEvent {
-  return {
-    model: redactText(typeof input.model === 'string' ? input.model : 'unknown', 128),
-    totalTokens: nonNegativeInteger(input.totalTokens),
-    maxTokens: nonNegativeInteger(input.maxTokens),
-    percentage: Math.min(100, nonNegativeInteger(input.percentage)),
-    categories: input.categories.slice(0, MAX_CONTEXT_CATEGORIES).map(category => ({
-      name: redactText(typeof category.name === 'string' ? category.name : 'Unknown', 128),
-      tokens: nonNegativeInteger(category.tokens),
-      color: typeof category.color === 'string' && SAFE_CONTEXT_COLOR.test(category.color)
-        ? category.color
-        : FALLBACK_CONTEXT_COLOR,
-      ...(category.isDeferred === true ? { isDeferred: true } : {}),
-    })),
-  }
-}
-
-export function latestClaudeContextUsage(
-  events: readonly SessionEvent[],
-): ClaudeContextUsageEvent | undefined {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.type === CLAUDE_CONTEXT_USAGE_EVENT) return event.data as ClaudeContextUsageEvent
-  }
-  return undefined
 }
 
 export type ClaudeTaskStatus = 'running' | 'completed' | 'failed' | 'stopped' | 'killed'

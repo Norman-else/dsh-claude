@@ -1,6 +1,5 @@
-import { CLAUDE_REPOSITORY_FILE_PATH, CLAUDE_REPOSITORY_SETUP_PATH, CLAUDE_REPOSITORY_STATUS_PATH } from '../constants.ts'
+import { CLAUDE_REPOSITORY_FILE_PATH, CLAUDE_REPOSITORY_SETUP_PATH } from '../constants.ts'
 import type { RepositoryBranchList, RepositoryCleanupResult, RepositorySetupResult, RepositorySetupStage } from '../repository-setup.ts'
-import type { RepositoryStatus } from '../repository-status.ts'
 import { PluginRequestError, pluginNdjson, pluginRead, pluginWrite } from './plugin-transport.ts'
 
 export type RepositoryPreparationStage = RepositorySetupStage
@@ -154,10 +153,4 @@ export async function loadRepositoryFileLines(cwd: string, path: string, from: n
   })
   if (!Array.isArray(body.lines) || typeof body.total !== 'number') throw new Error('Invalid repository file response.')
   return { lines: body.lines.map(String), total: body.total }
-}
-
-export async function loadRepositoryStatusFor(cwd: string, signal?: AbortSignal): Promise<RepositoryStatus> {
-  const body = await pluginRead<Record<string, unknown>>(CLAUDE_REPOSITORY_STATUS_PATH, 'git', signal, { query: { cwd } })
-  if (typeof body.status !== 'string' || typeof body.cwd !== 'string') throw new Error('Invalid repository status response.')
-  return body as unknown as RepositoryStatus
 }

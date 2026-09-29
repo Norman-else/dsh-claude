@@ -21,8 +21,6 @@ export interface ClaudeRepositoryStatusInjected {
   openDiff: (root?: string) => void
   /** Submit the composer, seeding the given draft text when it is empty. */
   submitPrompt?: (draft: string, mode?: 'append' | 'idle') => boolean
-  /** Open the cross-session pull request overview panel. */
-  openOverview?: () => void
   /** Delete the DSH workspace owning this session (after its worktree is gone). */
   deleteWorkspace?: () => Promise<void>
 }
@@ -825,7 +823,7 @@ export function LinkedRepositoryBar({ sessionId, repository, running, t, openDif
   )
 }
 
-export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt, openOverview, deleteWorkspace }: ClaudeRepositoryStatusProps) {
+export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjection, t, openDiff, submitPrompt, deleteWorkspace }: ClaudeRepositoryStatusProps) {
   const blank = useSessions(value => value.byId[sessionId]?.blank === true)
   const running = useSessions(value => value.byId[sessionId]?.running === true)
   const projection = useClaudeProjection(value => value)
@@ -857,9 +855,7 @@ export function ClaudeRepositoryStatus({ sessionId, useSessions, useClaudeProjec
       {toast}
       {linked}
       <div style={{ ...styles.repositoryBar, ...(merged ? styles.repositoryBarMerged : {}) }}>
-        {openOverview === undefined
-          ? <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
-          : <button type="button" style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}), ...styles.repositoryPrIconButton }} aria-label={t('overviewOpen')} title={t('overviewOpen')} onClick={openOverview}><PullRequestIcon merged={merged} /></button>}
+        <span style={{ ...styles.repositoryPrIcon, ...(merged ? styles.repositoryPrIconMerged : {}) }}><PullRequestIcon merged={merged} /></span>
         <PullRequestLink repository={repository} t={t} />
         {repository.remote === undefined ? null : (
           <Tooltip label={repository.remote} side="top" delayMs={250} maxWidth={420}>

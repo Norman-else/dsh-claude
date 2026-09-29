@@ -1,5 +1,5 @@
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ClaudeActivityEvent, ClaudeContextUsageEvent, ClaudeTasksEvent } from '../events.ts'
+import type { ClaudeActivityEvent, ClaudeTasksEvent } from '../events.ts'
 import type { ClaudeCommandView } from '../command-bridge.ts'
 import type { RepositoryStatus } from '../repository-status.ts'
 import type { ReviewComment } from '../review-comments.ts'
@@ -15,7 +15,6 @@ export interface ClaudeClientProjection {
   readonly owned: boolean
   readonly commands: readonly ClaudeCommandView[]
   readonly activities: readonly ClaudeActivityEvent[]
-  readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
   /** Claude Code's guess at the next prompt, shown as composer ghost text. */
   readonly promptSuggestion?: string
@@ -171,9 +170,6 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
       || !nonNegativeInteger(activity.ordinal)
       || typeof activity.kind !== 'string') throw new Error('invalid Claude sidecar activity')
   }
-  if (input.contextUsage !== undefined && record(input.contextUsage) === undefined) {
-    throw new Error('invalid Claude context projection')
-  }
   const tasks = input.tasks === undefined ? undefined : record(input.tasks)
   if (tasks !== undefined && !Array.isArray(tasks.tasks)) throw new Error('invalid Claude tasks projection')
   if (input.repository !== undefined && !validateRepository(input.repository)) {
@@ -285,7 +281,6 @@ export function createClaudeProjectionSource(
   let seq: number | undefined
   let owned = false
   let commands: readonly ClaudeCommandView[] = []
-  let contextUsage: ClaudeContextUsageEvent | undefined
   let tasks: ClaudeTasksEvent | undefined
   let promptSuggestion: string | undefined
   let repository: RepositoryStatus | undefined
@@ -371,7 +366,6 @@ export function createClaudeProjectionSource(
       owned,
       commands,
       activities,
-      ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(tasks === undefined ? {} : { tasks }),
       ...(promptSuggestion === undefined ? {} : { promptSuggestion }),
       ...(repository === undefined ? {} : { repository }),
@@ -493,7 +487,6 @@ export function createClaudeProjectionSource(
           revision = next.revision
           owned = next.owned
           commands = next.commands
-          contextUsage = next.contextUsage
           tasks = next.tasks
           promptSuggestion = next.promptSuggestion
           repository = next.repository
@@ -519,11 +512,6 @@ export function createClaudeProjectionSource(
         case 'activity':
           validateEnvelopeFragment({ activities: [event.activity] })
           upsertActivity(event.activity as ClaudeActivityEvent)
-          revision += 1
-          break
-        case 'contextUsage':
-          validateEnvelopeFragment({ contextUsage: event.value })
-          contextUsage = event.value as ClaudeContextUsageEvent
           revision += 1
           break
         case 'tasks':

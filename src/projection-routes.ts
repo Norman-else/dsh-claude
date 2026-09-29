@@ -68,7 +68,6 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     owned: meta.owned,
     commands: meta.commands,
     activities: projection.activities,
-    ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
     ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
     ...(projection.promptSuggestion === undefined ? {} : { promptSuggestion: projection.promptSuggestion }),
     ...(meta.repository === undefined ? {} : { repository: meta.repository }),
@@ -220,9 +219,6 @@ export function registerClaudeProjectionRoute(
           return
         case 'activity':
           writeLine({ type: 'activity', session: sessionId, activity: delta.activity, seq: delta.seq })
-          return
-        case 'contextUsage':
-          writeLine({ type: 'contextUsage', session: sessionId, value: delta.value, seq: delta.seq })
           return
         case 'tasks':
           writeLine({ type: 'tasks', session: sessionId, value: delta.value, seq: delta.seq })

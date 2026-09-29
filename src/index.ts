@@ -30,7 +30,6 @@ import { registerRepositoryActionRoute } from './repository-action-routes.ts'
 import { PromptAssistService, registerClaudePromptNameRoute, registerClaudePromptRefineRoute, registerClaudePromptsRoute } from './prompts.ts'
 import { PullRequestFeedbackService } from './pr-feedback.ts'
 import { registerPullRequestFeedbackRoute } from './pr-feedback-routes.ts'
-import { registerRepositoryStatusRoute } from './repository-status-routes.ts'
 import { registerRepositoryFileRoute } from './repository-file-routes.ts'
 import { JiraService } from './jira.ts'
 import { registerJiraRoute } from './jira-routes.ts'
@@ -93,7 +92,6 @@ export function mountClaudeMetadata(
   supervisor: ClaudeSupervisor,
   agent: Agent,
   model: string,
-  sidecar: ClaudeSidecarRepository,
   publishCommands: (commands: readonly ClaudeCommandView[]) => void = () => {},
   // IMPORTANT: call through the injected agentPresets SERVICE, never an
   // imported serviceForAgent() — a linked plugin resolves peer packages from
@@ -195,14 +193,6 @@ export function mountClaudeMetadata(
           scopeRetries += 1
           scheduleRetry('command scope', scopeRetries)
         }
-      }
-
-      if (stopped) return
-      try {
-        const usage = await supervisor.contextUsage(agent, model)
-        if (!stopped) await sidecar.writeContextUsage(agent.id as string, usage)
-      } catch (error) {
-        if (!deferrable(error)) warn('context usage', error)
       }
 
       if (stopped) return
@@ -375,7 +365,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           supervisor,
           agent,
           supervisorConfig.defaultModel,
-          sidecar,
           commands => {
             if (commands.length === 0) commandCatalogs.delete(sessionId)
             else commandCatalogs.set(sessionId, commands)
@@ -528,7 +517,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       repositoryStatus.invalidate(path)
       if (branch !== undefined) cleanedLinked.add(`${path}\0${branch}`)
     })
-    registerRepositoryStatusRoute(webCtx, repositoryStatus)
     registerRepositoryFileRoute(webCtx, repositoryStatus)
     registerJiraRoute(webCtx, new JiraService())
     const repositoryActions = new RepositoryActionService(subprocess, supervisorConfig.executablePath, cwd => repositoryStatus.invalidate(cwd))

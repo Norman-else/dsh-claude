@@ -4,7 +4,6 @@ import { CLAUDE_CODE_PRESET_ID } from '../src/constants.ts'
 import { mountClaudeMetadata } from '../src/index.ts'
 import { ClaudeProcessLimitError, ClaudeTurnBusyError } from '../src/supervisor.ts'
 import type { ClaudeAgentCommandService } from '../src/command-bridge.ts'
-import { ClaudeSidecarRepository } from '../src/sidecar.ts'
 import { latestPlanUsage, resetPlanUsage } from '../src/plan-usage.ts'
 
 function createHostContext() {
@@ -56,28 +55,17 @@ describe('metadata bridge', () => {
         description: 'Deploy through CI',
         argumentHint: '<env>',
       }]),
-      contextUsage: vi.fn(async () => ({
-        model: 'claude-test',
-        totalTokens: 1,
-        maxTokens: 200_000,
-        percentage: 0.5,
-        categories: [],
-      })),
       planUsage: vi.fn(async () => ({
         subscription_type: 'max',
         rate_limits_available: true,
         rate_limits: { five_hour: { utilization: 33, resets_at: '2026-08-27T12:00:00Z' } },
       })),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
-    const sidecar = {
-      writeContextUsage: vi.fn(async () => undefined),
-    } as unknown as ClaudeSidecarRepository
     const dispose = mountClaudeMetadata(
       host,
       supervisor,
       catalogAgent,
       'default',
-      sidecar,
       published,
       () => service,
     )
@@ -103,20 +91,17 @@ describe('metadata bridge', () => {
       const { agent } = createAgent()
       const supervisor = {
         supportedCommands: vi.fn(async () => { throw new ClaudeTurnBusyError('agent-1') }),
-        contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
         planUsage: vi.fn(async () => ({})),
       } as unknown as Parameters<typeof mountClaudeMetadata>[1]
-      const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
-      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', vi.fn(), () => ({ list: () => [] }))
       await vi.advanceTimersByTimeAsync(0)
       expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
       // Well past every retry the catalog schedule would have made.
       await vi.advanceTimersByTimeAsync(120_000)
       expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
       expect(host.logger.warn).not.toHaveBeenCalled()
-      // The refreshes behind the catalog would fail the same way; the next idle
-      // pass does all three.
-      expect(supervisor.contextUsage).not.toHaveBeenCalled()
+      // The refresh behind the catalog would fail the same way; the next idle
+      // pass does both.
       expect(supervisor.planUsage).not.toHaveBeenCalled()
       await dispose?.()
     } finally {
@@ -138,11 +123,9 @@ describe('metadata bridge', () => {
           if (calls === 1) throw new ClaudeProcessLimitError(4)
           return []
         }),
-        contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
         planUsage: vi.fn(async () => ({})),
       } as unknown as Parameters<typeof mountClaudeMetadata>[1]
-      const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
-      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+      const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', vi.fn(), () => ({ list: () => [] }))
       await vi.advanceTimersByTimeAsync(0)
       expect(supervisor.supportedCommands).toHaveBeenCalledTimes(1)
       await vi.advanceTimersByTimeAsync(30_000)
@@ -159,11 +142,9 @@ describe('metadata bridge', () => {
     const { agent } = createAgent()
     const supervisor = {
       supportedCommands: vi.fn(async () => { throw new Error('CLI exploded') }),
-      contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0, categories: [] })),
       planUsage: vi.fn(async () => ({})),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
-    const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
-    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', vi.fn(), () => ({ list: () => [] }))
     await vi.waitFor(() => expect(host.logger.warn).toHaveBeenCalled())
     expect(String(host.logger.warn.mock.calls[0]?.[0])).toContain('command catalog refresh failed')
     await dispose?.()
@@ -175,15 +156,13 @@ describe('metadata bridge', () => {
     const { agent } = createAgent()
     const supervisor = {
       supportedCommands: vi.fn(async () => []),
-      contextUsage: vi.fn(async () => ({ model: 'claude-test', totalTokens: 1, maxTokens: 200_000, percentage: 0.5, categories: [] })),
       planUsage: vi.fn(async () => ({
         subscription_type: 'max',
         rate_limits_available: true,
         rate_limits: { five_hour: { utilization: 33, resets_at: '2026-08-27T12:00:00Z' } },
       })),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
-    const sidecar = { writeContextUsage: vi.fn(async () => undefined) } as unknown as ClaudeSidecarRepository
-    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', sidecar, vi.fn(), () => ({ list: () => [] }))
+    const dispose = mountClaudeMetadata(host, supervisor, agent, 'default', vi.fn(), () => ({ list: () => [] }))
 
     await vi.waitFor(() => expect(latestPlanUsage()?.windows).toEqual([
       { id: 'five_hour', utilization: 33, resetsAt: '2026-08-27T12:00:00Z' },
@@ -206,13 +185,6 @@ describe('metadata bridge', () => {
         description: 'Review current changes',
         argumentHint: '<path>',
       }]),
-      contextUsage: vi.fn(async () => ({
-        model: 'claude-test',
-        totalTokens: 1,
-        maxTokens: 200_000,
-        percentage: 0.5,
-        categories: [],
-      })),
       planUsage: vi.fn(async () => ({
         subscription_type: 'max',
         rate_limits_available: true,
@@ -220,15 +192,11 @@ describe('metadata bridge', () => {
       })),
     } as unknown as Parameters<typeof mountClaudeMetadata>[1]
 
-    const sidecar = {
-      writeContextUsage: vi.fn(async () => undefined),
-    } as unknown as ClaudeSidecarRepository
     const dispose = mountClaudeMetadata(
       host,
       supervisor,
       agent,
       'default',
-      sidecar,
       published,
       resolveCommands,
     )
@@ -251,6 +219,6 @@ describe('metadata bridge', () => {
 
     expect(supervisor.supportedCommands).toHaveBeenCalled()
     expect(published).toHaveBeenLastCalledWith([])
-    expect((supervisor.contextUsage as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1)
+    expect((supervisor.planUsage as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1)
   })
 })

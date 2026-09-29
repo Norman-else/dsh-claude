@@ -519,14 +519,6 @@ export class ClaudeSupervisor {
     return this.#runMetadata(agent, model, query => query.supportedCommands())
   }
 
-  async contextUsage(agent: Agent, model = this.#config.defaultModel): Promise<SDKControlGetContextUsageResponse> {
-    return this.#runMetadata(agent, model, async (query, entry) => {
-      const usage = await query.getContextUsage()
-      this.#recordContextWindow(entry.model, usage)
-      return usage
-    })
-  }
-
   /** Cache a window under both the selector id the caller asked for and the
    *  concrete model the CLI reports, so either name resolves it later. */
   #recordContextWindow(model: string, usage: SDKControlGetContextUsageResponse): void {
@@ -805,7 +797,7 @@ export class ClaudeSupervisor {
     // start-time shape the SDK will not take later, and a live setModel is not
     // enough for the model either: the CLI freezes its system prompt (including
     // the "you are powered by" line) at the first context-usage request, which
-    // the metadata refresh issues on every new process, so a switched session
+    // the context-window probe issues after a process's first turn, so a switched session
     // answers as the old model. Those rebuild the query; the persisted Claude
     // session binding keeps the context.
     // A changed model rebuilds the process regardless, so the control request

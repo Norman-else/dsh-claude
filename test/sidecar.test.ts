@@ -208,9 +208,9 @@ describe('Claude sidecar repository', () => {
     const store = new ClaudeSidecarRepository({ root, legacyRoot })
 
     await expect(store.read(sessionId)).resolves.toMatchObject({ revision: 2, binding: { claudeSessionId: 'legacy' } })
-    await store.writeContextUsage(sessionId, { model: 'default', totalTokens: 10, maxTokens: 100, percentage: 10, categories: [] })
+    await store.writeTasks(sessionId, [{ taskId: 't', description: 'work', status: 'running' }])
     await expect(readFile(join(root, file), 'utf8')).resolves.toContain('legacy')
-    await expect(readFile(join(legacyRoot, file), 'utf8')).resolves.not.toContain('contextUsage')
+    await expect(readFile(join(legacyRoot, file), 'utf8')).resolves.not.toContain('"tasks"')
   })
 
   it('imports readable legacy events idempotently without replacing newer sidecar state', async () => {
@@ -226,10 +226,12 @@ describe('Claude sidecar repository', () => {
     expect(second).toEqual(first)
 
     await store.writeBinding('session', { claudeSessionId: 'new', cwd: '/workspace' })
-    await store.writeContextUsage('session', { model: 'new', totalTokens: 20, maxTokens: 100, percentage: 20, categories: [] })
+    await store.writeTasks('session', [{ taskId: 'new', description: 'new', status: 'running' }])
     const current = await store.importLegacy('session', legacy)
     expect(current.binding?.claudeSessionId).toBe('new')
-    expect(current.contextUsage?.model).toBe('new')
+    expect(current.tasks?.tasks.map(task => task.taskId)).toEqual(['new'])
+    // Context usage samples are no longer collected; old ones are dropped.
+    expect(current).not.toHaveProperty('contextUsage')
     expect(current.activities).toHaveLength(1)
   })
 
@@ -270,14 +272,13 @@ describe('Claude sidecar repository', () => {
     }
   })
 
-  it('notifies subscribers of durable activity, task, and usage writes', async () => {
+  it('notifies subscribers of durable activity and task writes', async () => {
     const store = await repository()
     const kinds: string[] = []
     const unsubscribe = store.subscribe('session', delta => kinds.push(delta.kind))
     await store.appendActivity('session', { turn: 1, step: 1, ordinal: 0, kind: 'status', title: 'started' })
     await store.writeTasks('session', [{ taskId: 't', description: 'work', status: 'running' }])
-    await store.writeContextUsage('session', { model: 'default', totalTokens: 1, maxTokens: 10, percentage: 10, categories: [] })
-    expect(kinds).toEqual(['activity', 'tasks', 'contextUsage'])
+    expect(kinds).toEqual(['activity', 'tasks'])
     unsubscribe()
   })
 

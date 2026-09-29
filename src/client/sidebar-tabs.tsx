@@ -4,7 +4,6 @@ import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeDiffPanel, type ClaudeDiffPanelInjected, type ClaudeDiffPanelProps } from './ClaudeDiffPanel.tsx'
 import { ClaudePlanPanel, type ClaudePlanPanelInjected, type ClaudePlanPanelProps } from './ClaudePlanPanel.tsx'
-import { ClaudePullRequestsPanel, type ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { ClaudeTeammatePanel, type ClaudeTeammatePanelInjected, type ClaudeTeammatePanelProps } from './ClaudeTeammatePanel.tsx'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
 
@@ -28,7 +27,6 @@ import type { ClaudeCodeSettingsKey } from './locales.ts'
 export const CLAUDE_TAB_KINDS = {
   diff: 'claude-diff',
   plan: 'claude-plan',
-  overview: 'claude-overview',
   teammate: 'claude-teammate',
 } as const
 
@@ -68,9 +66,6 @@ export interface ClaudeSidebarTabOptions {
   namespace: 'settings.claude-code'
   /** Per-session extras for the diff body; the rest comes from the tab. */
   diffFace: (sessionId: string) => Pick<ClaudeDiffPanelInjected, 'submitPrompt'>
-  /** Per-session extras for the overview body, or nothing when the session
-   *  list is not available and the body should stay empty. */
-  overviewFace: (sessionId: string) => Omit<ClaudePullRequestsPanelInjected, 'closeDetails'> | undefined
 }
 
 /** Which tab (if any) each kind currently occupies, per session. */
@@ -154,16 +149,7 @@ export function ClaudeTeammateTab({ useTabInfo, noteTab, ...panel }: TabBodyProp
   return <ClaudeTeammatePanel {...panel} closeDetails={closeDetails} taskId={params.teammate ?? ''} />
 }
 
-export function ClaudeOverviewTab({ useTabInfo, noteTab, face }: ClaudeTabFace & {
-  useTabInfo: UseSidebarRightTabInfo
-  face: Omit<ClaudePullRequestsPanelInjected, 'closeDetails'> | undefined
-}) {
-  const { closeDetails } = useClaudeTab(useTabInfo, noteTab)
-  if (face === undefined) return null
-  return <ClaudePullRequestsPanel {...face} closeDetails={closeDetails} />
-}
-
-/** Declare the four tab types and their bodies; returns the per-session
+/** Declare the three tab types and their bodies; returns the per-session
  *  open / close / toggle face the rest of the client drives them through. */
 export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSidebarTabOptions): ClaudeSidebarTabs {
   const { t, namespace } = options
@@ -175,7 +161,6 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
   const titles: Record<ClaudeTabKind, () => string> = {
     [CLAUDE_TAB_KINDS.diff]: () => t('diffTabTitle'),
     [CLAUDE_TAB_KINDS.plan]: () => t('planPanelTitle'),
-    [CLAUDE_TAB_KINDS.overview]: () => t('overviewTitle'),
     [CLAUDE_TAB_KINDS.teammate]: () => t('teammatePanelTitle'),
   }
   for (const kind of Object.values(CLAUDE_TAB_KINDS)) {
@@ -209,12 +194,6 @@ export function registerClaudeSidebarTabs(ctx: ClientContext, options: ClaudeSid
       { t, ...faceFor(CLAUDE_TAB_KINDS.teammate, sessionId) }
     ),
   }, ClaudeTeammateTab))
-  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-    name: 'sidebar.right.pane.tab',
-    key: CLAUDE_TAB_KINDS.overview,
-    locale: namespace,
-    inject: (sessionId: string) => ({ ...faceFor(CLAUDE_TAB_KINDS.overview, sessionId), face: options.overviewFace(sessionId) }),
-  }, ClaudeOverviewTab))
 
   const open = (kind: ClaudeTabKind, sessionId: string, params: ClaudeTabParams): void => {
     ctx.sidebarRight.openTabIn(sessionId as SessionId, kind, { params: params as never })

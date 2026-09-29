@@ -266,10 +266,10 @@ describe('Claude client slot registration', () => {
 
     // Host 0.1.5 has no details column: every panel is a tab type declared
     // once at apply time, with its body keyed the same way.
-    expect(definitions.map(definition => definition.kind).sort()).toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-teammate'])
+    expect(definitions.map(definition => definition.kind).sort()).toEqual(['claude-diff', 'claude-plan', 'claude-teammate'])
     for (const definition of definitions) expect(definition.id).toBe(definition.kind)
     expect(registrations.filter(entry => entry.name === 'sidebar.right.pane.tab').map(entry => entry.key).sort())
-      .toEqual(['claude-diff', 'claude-overview', 'claude-plan', 'claude-teammate'])
+      .toEqual(['claude-diff', 'claude-plan', 'claude-teammate'])
     expect(registrations.some(entry => entry.name === 'details')).toBe(false)
 
     const repositoryStatus = registrations.find(entry => entry.id === 'claude-repository-status')

@@ -19,15 +19,13 @@ import { claudeActivityStepDefinition, claudeTurnDefinition } from './conversati
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActivityNode, type ClaudeActivityNodeInjected } from './ClaudeActivityNode.tsx'
 import { backgroundToolCall } from './background-task-api.ts'
-import { ClaudeCodeSettings, alertModeOf, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
-import { setClaudeAlertsEnabled, startClaudeSessionAlerts, type ClaudeSessionAlertsDeps } from './session-alerts.ts'
+import { ClaudeCodeSettings, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import { pluginRead } from './plugin-transport.ts'
 import { CLAUDE_GLOBAL_SETTINGS_PATH } from '../constants.ts'
 import { ClaudePlanHeaderAction, type ClaudePlanHeaderActionInjected } from './ClaudePlanHeaderAction.tsx'
 import { ClaudeRepositoryStatus, type ClaudeRepositoryStatusInjected } from './ClaudeRepositoryStatus.tsx'
 import { ClaudeReviewComments, type ClaudeReviewCommentsInjected } from './ClaudeReviewComments.tsx'
-import type { ClaudePullRequestsPanelInjected } from './ClaudePullRequestsPanel.tsx'
 import { CLAUDE_TAB_KINDS, registerClaudeSidebarTabs } from './sidebar-tabs.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { ClaudeSelectionAsk } from './ClaudeSelectionAsk.tsx'
@@ -49,7 +47,7 @@ import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from 
 import { ClaudePromptSuggestion, type ClaudePromptSuggestionInjected } from './ClaudePromptSuggestion.tsx'
 import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
-import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
+import { bindRepositoryLease, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
 import { assignJiraTicket, ticketContext, ticketPrompt } from './jira-api.ts'
 import { en, zh, type ClaudeCodeSettingsKey } from './locales.ts'
 import { mainSessionId } from './main-session.ts'
@@ -142,7 +140,6 @@ export function apply(ctx: Context): void {
     .then(payload => {
       if (!isGlobalSettingsView(payload)) return
       applyClaudeMarkdownTheme(proseModeOf(payload.settings))
-      setClaudeAlertsEnabled(alertModeOf(payload.settings) === 'on')
     })
     .catch(() => {})
   // A carrier that loses a line leaves the projection quietly behind the
@@ -208,27 +205,6 @@ export function apply(ctx: Context): void {
     }), 'dsh-claude: sidecar projection provider')
   }
   ctx.effect(() => () => projections.dispose(), 'dsh-claude: sidecar projection lifecycle')
-  // Standing watcher, not a slot: the point is to reach a user who is looking
-  // at another session, which is exactly when no panel of this plugin is on
-  // screen to do it.
-  if (sessions !== undefined) {
-    ctx.effect(() => startClaudeSessionAlerts({
-      // Bound through closures for the same reason the session board does it:
-      // the Host hands the list over as a class instance whose readers touch
-      // `this`.
-      sessions: {
-        subscribe: (listener: () => void) => sessions.list.subscribe(listener),
-        getSnapshot: () => {
-          const snapshot = sessions.list.getSnapshot()
-          const current = mainSessionId(snapshot)
-          return current === undefined ? snapshot : { ...snapshot, current }
-        },
-      } as unknown as ClaudeSessionAlertsDeps['sessions'],
-      projectionFor: id => projections.source(id),
-      open: id => { openSession(id as SessionId) },
-      t,
-    }), 'dsh-claude: session alerts')
-  }
   // Desktop 2.0 publishes the target-neutral Conversation registry through
   // uiConversation. Registering against the removed conversationEvents service
   // never fires, leaving a live sidecar projection with no custom Chat nodes.
@@ -260,18 +236,7 @@ export function apply(ctx: Context): void {
       const submitPrompt = submitPromptFor(sessionId)
       return submitPrompt === undefined ? {} : { submitPrompt }
     },
-    overviewFace: () => sessions === undefined ? undefined : {
-      t,
-      openSession: id => { openSession(id as SessionId) },
-      loadStatus: loadRepositoryStatusFor,
-      sessions: sessions.list as unknown as ClaudePullRequestsPanelInjected['sessions'],
-      ...(workspaces === undefined ? {} : { workspaces: workspaces.list as unknown as NonNullable<ClaudePullRequestsPanelInjected['workspaces']> }),
-      projectionFor: id => projections.source(id),
-    },
   })
-  const openOverviewPanel = (sessionId: string): void => {
-    sidebarTabs.open(CLAUDE_TAB_KINDS.overview, sessionId, {})
-  }
   const openDiffPanel = (sessionId: string, initialRoot?: string): void => {
     sidebarTabs.open(CLAUDE_TAB_KINDS.diff, sessionId, initialRoot === undefined ? {} : { initialRoot })
   }
@@ -451,7 +416,6 @@ ${error.stack ?? ''}`
         t,
         openDiff: root => openDiffPanel(sessionId, root),
         ...(submitPrompt === undefined ? {} : { submitPrompt }),
-        ...(sessions === undefined ? {} : { openOverview: () => openOverviewPanel(sessionId) }),
         ...(workspaces === undefined ? {} : {
           deleteWorkspace: async () => {
             const workspace = workspaces.list.getSnapshot().items.find(item => item.sessionIds.includes(sessionId as SessionId))

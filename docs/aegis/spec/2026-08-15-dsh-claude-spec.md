@@ -136,9 +136,9 @@ The supervisor is keyed by DSH session id and owns at most one live query/proces
 
 Responsibilities:
 
-- lazy start on the first bridged turn or metadata request (command discovery/context usage)
+- lazy start on the first bridged turn or metadata request (command discovery, plan usage)
 - maintain a streaming-input Claude query while the DSH session is active
-- expose serialized, non-turn metadata reads for the current command catalog and context usage
+- expose serialized, non-turn metadata reads for the current command catalog and plan usage
 - serialize one active DSH request per session
 - record the Claude session id from initialization/result messages
 - route SDK messages to the active request
@@ -216,13 +216,13 @@ rewind, and side queries read it regardless of who paints the transcript.
 
 DSH session logs contain only DSH-supported event types. The plugin must not mutate `KNOWN_SESSION_EVENT_TYPES` or append `claude-code/*` events: Desktop validates persisted vocabulary before plugin activation, so runtime registration cannot make custom events cold-load compatible.
 
-The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude/sessions`. It stores the Claude resume binding, ordered activity records, latest aggregate context usage, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated. Streaming assistant prose is additionally held in an in-memory overlay that notifies live projection subscribers synchronously and coalesces its disk persistence within a short trailing window; segment close and turn settlement force a durable flush, so a hard Host crash can lose at most the trailing sub-second of visible prose and never a Claude outcome.
+The canonical plugin state is a schema-versioned JSON sidecar keyed by the DSH session id under `$DSH_HOME/plugins/dsh-claude/sessions`. It stores the Claude resume binding, ordered activity records, and latest task snapshot. Writes are serialized per session and published with same-directory atomic rename; the directory is mode `0700` and documents are mode `0600`. Revisions increase monotonically, activities are capped, and every read is strictly validated. Streaming assistant prose is additionally held in an in-memory overlay that notifies live projection subscribers synchronously and coalesces its disk persistence within a short trailing window; segment close and turn settlement force a durable flush, so a hard Host crash can lose at most the trailing sub-second of visible prose and never a Claude outcome.
 
 Each ordinary DSH turn maps to one user-initiated Claude turn. If that Claude result leaves background tasks running, the DSH turn remains open: its primary text is emitted as one completed text block, all task settlements are coalesced, and one plugin-authored hidden follow-up input asks the same Claude session to report final outcomes as a second text block before the single terminal DSH finish. The plugin never fabricates assistant text. Sidecar activities retain `turn`, `step`, and `ordinal` so the Client can place them immediately before the corresponding standard Claude assistant message in the chat flow. SDK `total_cost_usd` is cumulative across streaming-input turns and is retained as the latest cumulative value rather than summed.
 
-The SDK `getContextUsage()` response remains authoritative. Persist only aggregate category counts and model/window figures; memory-file paths, MCP tool names, system-prompt section text, configuration content, and grid rendering data are excluded. All sidecar payloads are bounded and secret-aware: environment maps, credential-shaped keys, and known token fields are redacted before persistence.
+Context usage samples are not collected or persisted; the SDK `getContextUsage()` response is read only for a model's context window (see 5.4). All sidecar payloads are bounded and secret-aware: environment maps, credential-shaped keys, and known token fields are redacted before persistence.
 
-For migration only, readable historical `claude-code/session-bound`, `claude-code/activity`, `claude-code/context-usage`, and `claude-code/tasks` events are imported idempotently into an absent or incomplete sidecar. They are decode-only legacy formats and are never appended by current runtime code.
+For migration only, readable historical `claude-code/session-bound`, `claude-code/activity`, and `claude-code/tasks` events are imported (historical `claude-code/context-usage` events are ignored) idempotently into an absent or incomplete sidecar. They are decode-only legacy formats and are never appended by current runtime code.
 
 ### 3.6 Claude command bridge
 
@@ -274,9 +274,9 @@ Full access never bypasses a user question. Missing active-turn ownership, malfo
 
 ### 5.1 Conversation projection
 
-Register one session-scoped projection source through the public Client session provider. The source opens the same-origin trusted Host NDJSON stream immediately when its first subscriber mounts and only while subscribed: the first line is a validated full snapshot and subsequent lines are validated incremental deltas (transcript text appends, activity upserts, context usage, tasks) plus slow-moving metadata and heartbeat lines. Publication to React is coalesced to at most one notification per animation frame, and per-step activity slices keep referential identity so only the streaming step re-renders. A dropped stream reconnects with a fresh snapshot after a bounded delay; the source aborts requests and timers when the session unmounts. Failures degrade to the last verified snapshot and never block the conversation.
+Register one session-scoped projection source through the public Client session provider. The source opens the same-origin trusted Host NDJSON stream immediately when its first subscriber mounts and only while subscribed: the first line is a validated full snapshot and subsequent lines are validated incremental deltas (transcript text appends, activity upserts, tasks) plus slow-moving metadata and heartbeat lines. Publication to React is coalesced to at most one notification per animation frame, and per-step activity slices keep referential identity so only the streaming step re-renders. A dropped stream reconnects with a fresh snapshot after a bounded delay; the source aborts requests and timers when the session unmounts. Failures degrade to the last verified snapshot and never block the conversation.
 
-The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, context usage, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
+The Host endpoint accepts trusted loopback/same-origin GET requests with a bounded encoded session id. It returns schema version, revision, activities, and tasks with non-cacheable headers. It never exposes the sidecar binding or Claude resume identity.
 
 A lightweight `ConversationNodeDefinition` starts exactly once at each standard `turn/start` and marks that turn through updates from standard `assistant/message` events whose provider is `claude`. This keeps multi-step turns replay-safe while publishing location data only for Claude-owned turns. A second step-scoped Definition materializes one keyed `chat` node for each Claude assistant step, anchored immediately before that assistant message; its public `conversation.chat.node` renderer folds only the matching sidecar `turn` and `step` into ordered DSH `DisclosureRow` activity rows. A third Definition mounts a plugin-owned active-turn task node from `turn/start`, keeps its anchor near the latest step or assistant event, and removes it at `turn/end`; its renderer stays null until the sidecar owns tasks for that origin turn and then updates the running, completed, or failed launcher without waiting for the turn to close. The completed-only `conversation.chat.turnTail` contribution uses the same launcher after `turn/end`, so active and historical launchers never overlap. Tasks without a known origin turn are not given a detached global UI entry.
 
@@ -321,13 +321,13 @@ Claude Code's native Agent Team is rendered by the plugin in the seat the Host g
 
 ### 5.4 Context meter
 
-The sidecar stores aggregate context usage from the SDK, and the session board
-(`ClaudePullRequestsPanel`) displays it. Current client registration does not
-include a standalone `conversation.input.right` context-meter slot. Refresh
-metadata after initialization and turns; unavailable samples must not block
-prompting. Do not expose memory paths, tool identities, or prompt contents.
+The plugin does not collect context usage samples and registers no
+`conversation.input.right` context-meter slot. After a process's first
+completed turn on a model, the supervisor probes `getContextUsage()` once to
+learn that model's context window, so the model route can publish a capacity
+for DSH's own meter. The probe is best-effort and must never block prompting.
 
-Diff, plan, and overview are registered through `sidebarRightTabs` and
+Diff, plan, and teammate tabs are registered through `sidebarRightTabs` and
 `sidebar.right.pane.tab`; `sidebarRight.openTabIn` opens them per session.
 The Host owns fullscreen and close. Composer bars use `conversation.input.dock`,
 and prompt save/refine actions use `conversation.input.left` with standard input
@@ -344,7 +344,7 @@ Add a settings section with:
 - redacted Doctor output and rerun action
 - npm release discovery and an in-place update action for uniquely identified registry installations
 
-Bundle configuration supplies the executable and default supervisor configuration. `src/global-settings.ts` stores plugin overrides under `$DSH_HOME/plugins/dsh-claude/settings.json`: renderer, prose style, alerts, worktree prefix, maximum processes, and idle timeout. Selected Claude settings such as output style are merged into Claude's own settings file. Do not invent a credentials file. The settings menu may expose selected Claude Code user settings through one extensible global-settings registry and a trusted same-origin API. Every field requires an explicit descriptor, validation, effect scope, and bounded public metadata; the browser must never receive or write arbitrary settings JSON.
+Bundle configuration supplies the executable and default supervisor configuration. `src/global-settings.ts` stores plugin overrides under `$DSH_HOME/plugins/dsh-claude/settings.json`: renderer, prose style, worktree prefix, maximum processes, and idle timeout. Selected Claude settings such as output style are merged into Claude's own settings file. Do not invent a credentials file. The settings menu may expose selected Claude Code user settings through one extensible global-settings registry and a trusted same-origin API. Every field requires an explicit descriptor, validation, effect scope, and bounded public metadata; the browser must never receive or write arbitrary settings JSON.
 
 The `renderer` field selects the AI output renderer (`plugin` or `native`, see
 3.4). It is stored in the plugin's own settings document, never in
@@ -398,7 +398,7 @@ Plugin updates must install the registry's validated latest version explicitly r
 - process supervisor serialization, cancellation, idle eviction, process cap, crash classification, and disposal
 - SDK message fixtures for init, partial text, tool use/result, permission, usage, success, failure, and malformed input
 - command catalog projection, aliases, DSH/Client-name collision prefixing, ordinary-message delivery, and absence of Host command lifecycle events
-- context-usage normalization, safe-field sidecar persistence, latest-sample projection, and meter rendering
+- context-window probe after a completed turn, cached per model, never blocking the turn
 - trusted projection route, Client initial stream/reconnect/cleanup/failure degradation, per-step chat-node ordering, active task-node lifecycle, and completed turn-tail handoff
 - Desktop cold-load of a newly produced session with no `claude-code/*` events
 - typecheck Host and Client builds
@@ -419,7 +419,6 @@ Plugin updates must install the registry's validated latest version explicitly r
 - idle-evict and resume
 - type `/` and verify Claude Skills/Commands are discoverable with DSH collisions prefixed
 - execute one Claude Skill and confirm it runs as an ordinary DSH turn with activity and approval behavior intact, with no command status row under the preceding response
-- verify session-board context usage updates after a turn and survives refresh
 - run Doctor with the actual resolved local executable; do not assume a macOS path
 
 ### 8.3 Completion evidence

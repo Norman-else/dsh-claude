@@ -444,14 +444,12 @@ describe('Claude client sidecar projection', () => {
       repository: { status: 'ready', cwd: '/repo', root: '/repo', branch: 'feature/x', detached: false, worktree: false, dirty: true },
       reviewComments: [],
     })
-    stream.push('session', { type: 'contextUsage', value: { model: 'default', totalTokens: 5, maxTokens: 10, percentage: 50, categories: [] } })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)
     const snapshot = source.getSnapshot()
     expect(snapshot.activities.map(activity => activity.ordinal)).toEqual([0, 1])
     expect(snapshot.commands[0]?.publicName).toBe('review')
     expect(snapshot.repository?.branch).toBe('feature/x')
-    expect(snapshot.contextUsage?.totalTokens).toBe(5)
     stream.push('session', { type: 'promptSuggestion', value: 'run the tests' })
     await flush()
     await vi.advanceTimersByTimeAsync(FRAME_MS)

@@ -100,7 +100,6 @@ const copy: Partial<Record<ClaudeCodeSettingsKey, string>> = {
   autoFixLabel: 'Auto fix',
   autoFixTitle: 'Watch and fix',
   cleanupButton: 'Clean up',
-  overviewOpen: 'Show pull requests',
 }
 
 const t = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>): string => {
@@ -656,14 +655,5 @@ describe('pull request feedback controls', () => {
     const failing = render({ pullRequest: { ...repository.pullRequest, checks: 'failing' as const } })
     expect(failing).toContain('aria-label="Show failing checks"')
     expect(render({})).not.toContain('aria-label="Show failing checks"')
-  })
-})
-
-describe('pull request overview entry', () => {
-  it('turns the PR icon into a button only when the overview is injected', () => {
-    const plain = renderToStaticMarkup(<ClaudeRepositoryStatus sessionId="session" useSessions={sessionsHook(false)} useClaudeProjection={hook(projection)} t={t} openDiff={vi.fn()} />)
-    expect(plain).not.toContain('aria-label="Show pull requests"')
-    const withOverview = renderToStaticMarkup(<ClaudeRepositoryStatus sessionId="session" useSessions={sessionsHook(false)} useClaudeProjection={hook(projection)} t={t} openDiff={vi.fn()} openOverview={vi.fn()} />)
-    expect(withOverview).toContain('aria-label="Show pull requests"')
   })
 })

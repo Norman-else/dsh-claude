@@ -7,7 +7,6 @@ export const CLAUDE_PRESET_DESCRIPTION = 'Use the local Claude Code as the compl
 export const CLAUDE_CODE_PROVIDER_IDS = [CLAUDE_CODE_PROVIDER] as const
 export const CLAUDE_SESSION_BOUND_EVENT = 'claude-code/session-bound'
 export const CLAUDE_ACTIVITY_EVENT = 'claude-code/activity'
-export const CLAUDE_CONTEXT_USAGE_EVENT = 'claude-code/context-usage'
 export const CLAUDE_TASKS_EVENT = 'claude-code/tasks'
 /** Claude's subagent dispatch tools; rendered as plugin-owned group cards
  *  gathering subagent activity instead of native tool cards. */
@@ -52,7 +51,6 @@ export const CLAUDE_REPOSITORY_SETUP_PATH = '/plugins/dsh-claude/repository/setu
 export const CLAUDE_REPOSITORY_ACTION_PATH = '/plugins/dsh-claude/repository/action'
 export const CLAUDE_REVIEW_COMMENT_PATH = '/plugins/dsh-claude/review-comments'
 export const CLAUDE_REPOSITORY_FEEDBACK_PATH = '/plugins/dsh-claude/repository/feedback'
-export const CLAUDE_REPOSITORY_STATUS_PATH = '/plugins/dsh-claude/repository/status'
 export const CLAUDE_REPOSITORY_FILE_PATH = '/plugins/dsh-claude/repository/file'
 export const CLAUDE_JIRA_PATH = '/plugins/dsh-claude/jira'
 export const CLAUDE_ASK_PATH = '/plugins/dsh-claude/ask'
@@ -101,17 +99,6 @@ export const DEFAULT_CLAUDE_PROSE_MODE: ClaudeProseMode = 'plain'
 
 export function isClaudeProseMode(value: unknown): value is ClaudeProseMode {
   return value === 'plain' || value === 'enhanced'
-}
-
-/** Whether a session that needs the user raises a desktop notification while
- *  the user is looking at another session. Client-side presentation, like
- *  {@link ClaudeProseMode}: nothing on the server reads it back. */
-export type ClaudeAlertMode = 'off' | 'on'
-export const CLAUDE_ALERT_MODES = ['off', 'on'] as const
-export const DEFAULT_CLAUDE_ALERT_MODE: ClaudeAlertMode = 'on'
-
-export function isClaudeAlertMode(value: unknown): value is ClaudeAlertMode {
-  return value === 'off' || value === 'on'
 }
 
 /** Title of the activity an SDK `api_retry` notice becomes. Shared because the
