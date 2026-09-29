@@ -283,6 +283,11 @@ describe('Claude SDK message normalization', () => {
     }])
   })
 
+  it('reads the next-prompt suggestion and drops an empty one', () => {
+    expect(normalizeSdkMessage({ type: 'prompt_suggestion', suggestion: ' run the tests ', uuid: 'u', session_id: 's' } as never)).toEqual([{ kind: 'prompt-suggestion', text: 'run the tests' }])
+    expect(normalizeSdkMessage({ type: 'prompt_suggestion', suggestion: '  ', uuid: 'u', session_id: 's' } as never)).toEqual([])
+  })
+
   it('keeps a progress status line out of the task description', () => {
     const [progress] = normalizeSdkMessage({ type: 'system', subtype: 'task_progress', task_id: 't1', description: 'Running Read seedableStatus' })
     expect(progress).toMatchObject({ kind: 'subagent', title: 'Running Read seedableStatus' })

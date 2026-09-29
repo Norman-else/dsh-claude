@@ -77,6 +77,8 @@ export type NormalizedSdkMessage =
   | { kind: 'permission-denied'; toolUseId: string; toolName: string; summary: string }
   | { kind: 'result'; success: boolean; text?: string; errors?: readonly string[]; usage: ClaudeUsage; sessionId: string; userMessageUuid?: string; queuedTurnCount?: number; terminalReason?: string; permissionDenials?: readonly { toolName: string; toolUseId: string }[] }
   | { kind: 'protocol-error'; title: string; detail: unknown }
+  /** Claude Code's guess at the user's next prompt; arrives after `result`. */
+  | { kind: 'prompt-suggestion'; text: string }
   | {
     /** A message type this package does not handle yet. `type` is what the
      *  supervisor dedupes on: the CLI repeats these in batches, and one piece of
@@ -489,6 +491,10 @@ export function normalizeSdkMessage(message: SDKMessage): NormalizedSdkMessage[]
       ...(userMessageUuid === undefined ? {} : { userMessageUuid }),
       ...(queuedTurnCount === undefined ? {} : { queuedTurnCount }),
     }]
+  }
+  if (value.type === 'prompt_suggestion') {
+    const text = string((value as { suggestion?: unknown }).suggestion)?.trim()
+    return text === undefined || text.length === 0 ? [] : [{ kind: 'prompt-suggestion', text }]
   }
   if (value.type === 'auth_status') {
     return [{

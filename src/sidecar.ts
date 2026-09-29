@@ -39,6 +39,8 @@ const MAX_ACTIVITIES = 10_000
 /** Trailing window that coalesces per-token transcript persistence into one
  *  atomic disk write; live subscribers are notified synchronously regardless. */
 const TEXT_FLUSH_MS = 150
+/** A suggestion is one short prompt; anything longer is not worth ghosting. */
+const MAX_PROMPT_SUGGESTION_CHARS = 1_000
 
 export interface ClaudeSidecarProjection {
   readonly schemaVersion: typeof SIDECAR_SCHEMA_VERSION
@@ -51,6 +53,9 @@ export interface ClaudeSidecarProjection {
   /** The Claude permission mode the user picked in this plugin's selector;
    *  see permission-mode.ts for how it folds with the Host's sandbox mode. */
   readonly permissionMode?: ClaudePermissionMode
+  /** Claude Code's guess at the user's next prompt, offered as ghost text in
+   *  the composer until the next turn starts. */
+  readonly promptSuggestion?: string
 }
 
 /** Change notification published to live subscribers after each accepted write.
@@ -62,6 +67,7 @@ export type ClaudeSidecarDelta =
   | { kind: 'activity'; activity: ClaudeActivityEvent }
   | { kind: 'contextUsage'; value: ClaudeContextUsageEvent }
   | { kind: 'tasks'; value: ClaudeTasksEvent }
+  | { kind: 'promptSuggestion'; value?: string }
   | { kind: 'sync' }
   | { kind: 'checkpoint' }
 
@@ -211,6 +217,9 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
   if (input.permissionMode !== undefined && !isClaudePermissionMode(input.permissionMode)) {
     throw new Error('dsh-claude: invalid sidecar permission mode')
   }
+  if (input.promptSuggestion !== undefined && typeof input.promptSuggestion !== 'string') {
+    throw new Error('dsh-claude: invalid sidecar prompt suggestion')
+  }
   if ((input.binding !== undefined && parsedBinding === undefined)
     || (input.contextUsage !== undefined && parsedUsage === undefined)
     || (input.tasks !== undefined && parsedTasks === undefined)
@@ -226,6 +235,7 @@ export function parseClaudeSidecar(value: unknown): ClaudeSidecarProjection {
     ...(parsedTasks === undefined ? {} : { tasks: parsedTasks }),
     ...(parsedRewind === undefined ? {} : { rewind: parsedRewind }),
     ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
+    ...(input.promptSuggestion === undefined ? {} : { promptSuggestion: input.promptSuggestion }),
   }
 }
 
@@ -494,6 +504,16 @@ export class ClaudeSidecarRepository {
    *  it as metadata, which the carrier refreshes on its own cadence. */
   writePermissionMode(sessionId: string, mode: ClaudePermissionMode): Promise<ClaudeSidecarProjection> {
     return this.#update(sessionId, current => ({ ...current, permissionMode: mode }), true)
+  }
+
+  /** Offer (or, with undefined, withdraw) the next-prompt suggestion. A write
+   *  that changes nothing is skipped, so clearing at every turn start is free. */
+  writePromptSuggestion(sessionId: string, value: string | undefined): Promise<ClaudeSidecarProjection> {
+    const text = value === undefined ? undefined : redactText(value, MAX_PROMPT_SUGGESTION_CHARS)
+    return this.#update(sessionId, ({ promptSuggestion: _previous, ...current }) => ({
+      ...current,
+      ...(text === undefined ? {} : { promptSuggestion: text }),
+    }), true, text === undefined ? { kind: 'promptSuggestion' } : { kind: 'promptSuggestion', value: text })
   }
 
   writeTasks(sessionId: string, value: readonly ClaudeTaskInfo[]): Promise<ClaudeSidecarProjection> {

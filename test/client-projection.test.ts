@@ -452,6 +452,14 @@ describe('Claude client sidecar projection', () => {
     expect(snapshot.commands[0]?.publicName).toBe('review')
     expect(snapshot.repository?.branch).toBe('feature/x')
     expect(snapshot.contextUsage?.totalTokens).toBe(5)
+    stream.push('session', { type: 'promptSuggestion', value: 'run the tests' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().promptSuggestion).toBe('run the tests')
+    stream.push('session', { type: 'promptSuggestion' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(FRAME_MS)
+    expect(source.getSnapshot().promptSuggestion).toBeUndefined()
     // Other checkouts the session wrote into ride the same meta line, and a
     // later one without them clears them.
     stream.push('session', {

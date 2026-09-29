@@ -275,6 +275,19 @@ describe('Claude sidecar repository', () => {
     unsubscribe()
   })
 
+  it('offers and withdraws a prompt suggestion, and skips a clear that changes nothing', async () => {
+    const store = await repository()
+    const deltas: ClaudeSidecarDelta[] = []
+    const unsubscribe = store.subscribe('session', delta => deltas.push(delta))
+    await store.writePromptSuggestion('session', undefined)
+    await store.writePromptSuggestion('session', 'run the tests')
+    await expect(store.read('session')).resolves.toMatchObject({ promptSuggestion: 'run the tests' })
+    await store.writePromptSuggestion('session', undefined)
+    await expect(store.read('session')).resolves.not.toHaveProperty('promptSuggestion')
+    expect(deltas.map(delta => delta.kind === 'promptSuggestion' ? delta.value ?? null : delta.kind)).toEqual(['run the tests', null])
+    unsubscribe()
+  })
+
   it('numbers every delta per session so a subscriber can tell one was lost', async () => {
     const store = await repository()
     const seen: { session: string; kind: string; seq: number }[] = []

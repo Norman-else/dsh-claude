@@ -70,6 +70,7 @@ function envelope(projection: ClaudeSidecarProjection, meta: ProjectionMeta): Re
     activities: projection.activities,
     ...(projection.contextUsage === undefined ? {} : { contextUsage: projection.contextUsage }),
     ...(projection.tasks === undefined ? {} : { tasks: projection.tasks }),
+    ...(projection.promptSuggestion === undefined ? {} : { promptSuggestion: projection.promptSuggestion }),
     ...(meta.repository === undefined ? {} : { repository: meta.repository }),
     ...(meta.repositories === undefined ? {} : { repositories: meta.repositories }),
     reviewComments: meta.reviewComments,
@@ -222,6 +223,9 @@ export function registerClaudeProjectionRoute(
           return
         case 'tasks':
           writeLine({ type: 'tasks', session: sessionId, value: delta.value, seq: delta.seq })
+          return
+        case 'promptSuggestion':
+          writeLine({ type: 'promptSuggestion', session: sessionId, ...(delta.value === undefined ? {} : { value: delta.value }), seq: delta.seq })
           return
         case 'checkpoint':
           writeLine({ type: 'checkpoint', session: sessionId, seq: delta.seq })

@@ -244,6 +244,7 @@ The plugin may provide a plugin-owned context refresh command, but must not shad
 - Repository status, action and review routes: Git/PR state, commit/push/merge, base updates, review comments, and auto-fix handoff. These use the managed subprocess runtime and trusted bounded routes.
 - Jira routes: ticket lookup, assignment, and ticket-based worktree/session preparation.
 - Prompt routes: Markdown snippets under `~/.claude/prompts`, naming and draft refinement. Selection questions use a separate read-only query. These are auxiliary helpers, not another main conversation loop.
+- Prompt suggestion: the spawn sets `promptSuggestions: true`; the CLI's `prompt_suggestion` (after `result`, never mid-turn) is stored as sidecar `promptSuggestion` and published as a `promptSuggestion` carrier line, and cleared when the next turn starts. The client draws the part the draft has not typed yet as ghost text through its own attribute and custom property on the Host editor's wrapper (trailing the last paragraph, or in the placeholder seat for an empty draft); Tab, or → with the caret at the end, replaces the draft with it via `setDraft`. A `/` draft is left to the command menu.
 - Rewind: transcript anchoring and optional checkout restoration while retaining append-only DSH history. Stop cleanup is serialized with the next same-session turn; do not remove resume state to handle cancellation.
 
 ## 4. Permission Contract

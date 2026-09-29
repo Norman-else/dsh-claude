@@ -3453,3 +3453,24 @@ export const permissionSelectRowCss = `
 .${permissionSelectRowNameClass} { white-space: nowrap; }
 .${permissionSelectRowHintClass} { font-size: 12px; line-height: 16px; font-weight: 400; color: var(--dsw-alias-label-tertiary); white-space: normal; max-width: 260px; }
 `
+
+export const promptSuggestionAttribute = 'data-dsh-claude-suggestion'
+export const promptSuggestionProperty = '--dsh-claude-suggestion'
+
+/** Ghost text for the next-prompt suggestion, in the Host's own hint grey.
+ *  Mid-draft it trails the last paragraph the way the Host's command hints
+ *  do; on an empty draft it takes the placeholder's seat, since the editor's
+ *  empty paragraph holds a <br> that would push an `::after` to a second
+ *  line. Both give way while an IME is composing. */
+export const promptSuggestionCss = `
+[${promptSuggestionAttribute}="inline"] > [data-composer-input]:not([data-composer-composing]) p:last-child::after {
+  content: var(${promptSuggestionProperty});
+  color: var(--dsw-alias-label-caption);
+}
+[${promptSuggestionAttribute}="empty"] > [data-composer-placeholder] { visibility: hidden; }
+[${promptSuggestionAttribute}="empty"] > [data-composer-input]:not([data-composer-composing]) + [data-composer-placeholder]::before {
+  content: var(${promptSuggestionProperty});
+  visibility: visible;
+  color: var(--dsw-alias-label-caption);
+}
+`

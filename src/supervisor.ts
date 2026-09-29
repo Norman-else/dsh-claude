@@ -881,6 +881,8 @@ export class ClaudeSupervisor {
     entry.active = active
     entry.state = 'running'
     entry.lastUsedAt = Date.now()
+    // The guess was at this prompt; it has been answered.
+    await this.#sidecar.writePromptSuggestion(sessionId, undefined).catch(() => undefined)
     await this.#captureWorktree(entry, cursor.turn)
     try {
       await this.#appendActivity(active, {
@@ -1265,6 +1267,8 @@ export class ClaudeSupervisor {
       // Subagent prose reaches the sidecar under its parent call, so a teammate
       // tab can draw the conversation, not just the tool cards.
       forwardSubagentText: true,
+      // The composer offers the CLI's guess at the next prompt as ghost text.
+      promptSuggestions: true,
       permissionMode,
       allowDangerouslySkipPermissions: true,
       canUseTool,
@@ -1373,6 +1377,13 @@ export class ClaudeSupervisor {
       await this.#trackTask(entry, message, taskId, entry.active?.cursor.turn)
     } else if (message.kind === 'background-tasks') {
       await this.#trackBackgroundLevel(entry, message.tasks, entry.active?.cursor.turn)
+    }
+
+    // Arrives after `result`, once the turn has closed. One that lands after
+    // the next turn already started guessed at a prompt the user has sent.
+    if (message.kind === 'prompt-suggestion') {
+      if (entry.active === undefined) await this.#sidecar.writePromptSuggestion(entry.sessionId, message.text).catch(() => undefined)
+      return
     }
 
     const active = entry.active

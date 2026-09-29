@@ -46,6 +46,7 @@ import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './C
 import { ClaudePermissionSelect, type ClaudePermissionSelectInjected } from './ClaudePermissionSelect.tsx'
 import { setClaudePermissionMode } from './permission-mode-api.ts'
 import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from './ClaudePromptRefineAction.tsx'
+import { ClaudePromptSuggestion, type ClaudePromptSuggestionInjected } from './ClaudePromptSuggestion.tsx'
 import { createClaudePromptSource } from './claude-prompt-source.ts'
 import { restyleHostChrome } from './host-chrome.ts'
 import { bindRepositoryLease, loadRepositoryStatusFor, prepareRepository, sweepWorktrees, type RepositoryPreparationStage } from './repository-setup-api.ts'
@@ -377,6 +378,21 @@ ${error.stack ?? ''}`
       }
     },
   }, ClaudePermissionSelect))
+  // Draws nothing in the row: it only needs a seat inside the composer card
+  // to find the editor it ghosts the next-prompt suggestion into.
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'claude-prompt-suggestion',
+    order: 90,
+    locale: namespace,
+    inject: (sessionId: string): ClaudePromptSuggestionInjected => {
+      const report = (detail: string): void => { diagnostics.report('prompt-suggestion', detail) }
+      const scope = sessions?.scope(sessionId as SessionId)
+      if (scope === undefined || conversation === undefined) return { report }
+      const facade = sessionInput(conversation, scope)
+      return { report, acceptDraft: text => { facade.setDraft(text) } }
+    },
+  }, ClaudePromptSuggestion))
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',
     id: 'claude-prompt-save',

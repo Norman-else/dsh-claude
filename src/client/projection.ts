@@ -17,6 +17,8 @@ export interface ClaudeClientProjection {
   readonly activities: readonly ClaudeActivityEvent[]
   readonly contextUsage?: ClaudeContextUsageEvent
   readonly tasks?: ClaudeTasksEvent
+  /** Claude Code's guess at the next prompt, shown as composer ghost text. */
+  readonly promptSuggestion?: string
   readonly repository?: RepositoryStatus
   /** Other checkouts the session wrote into, each with its own diff and PR. */
   readonly repositories?: readonly RepositoryStatus[]
@@ -197,6 +199,9 @@ export function parseClaudeClientProjection(value: unknown): ClaudeClientProject
       }
     }
   }
+  if (input.promptSuggestion !== undefined && typeof input.promptSuggestion !== 'string') {
+    throw new Error('invalid Claude prompt suggestion projection')
+  }
   if (input.permissionSelector !== undefined && !isClaudePermissionSelector(input.permissionSelector)) {
     throw new Error('invalid Claude permission selector projection')
   }
@@ -282,6 +287,7 @@ export function createClaudeProjectionSource(
   let commands: readonly ClaudeCommandView[] = []
   let contextUsage: ClaudeContextUsageEvent | undefined
   let tasks: ClaudeTasksEvent | undefined
+  let promptSuggestion: string | undefined
   let repository: RepositoryStatus | undefined
   let repositories: readonly RepositoryStatus[] | undefined
   let reviewComments: readonly ReviewComment[] | undefined
@@ -367,6 +373,7 @@ export function createClaudeProjectionSource(
       activities,
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(tasks === undefined ? {} : { tasks }),
+      ...(promptSuggestion === undefined ? {} : { promptSuggestion }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositories === undefined ? {} : { repositories }),
       ...(reviewComments === undefined ? {} : { reviewComments }),
@@ -488,6 +495,7 @@ export function createClaudeProjectionSource(
           commands = next.commands
           contextUsage = next.contextUsage
           tasks = next.tasks
+          promptSuggestion = next.promptSuggestion
           repository = next.repository
           repositories = next.repositories
           reviewComments = next.reviewComments
@@ -521,6 +529,11 @@ export function createClaudeProjectionSource(
         case 'tasks':
           validateEnvelopeFragment({ tasks: event.value })
           tasks = event.value as ClaudeTasksEvent
+          revision += 1
+          break
+        case 'promptSuggestion':
+          validateEnvelopeFragment(event.value === undefined ? {} : { promptSuggestion: event.value })
+          promptSuggestion = event.value as string | undefined
           revision += 1
           break
         case 'meta':
