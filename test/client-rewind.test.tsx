@@ -16,6 +16,7 @@ describe('rewind client', () => {
     expect(rewindHiddenCss(['input-message:a', 'claude-activity-step:b']))
       .toBe('[data-chat-flow-key="input-message:a"],[data-chat-flow-key="claude-activity-step:b"]{display:none}')
     expect(rewindHiddenCss(['bad"key'])).toBe('')
+    expect(rewindHiddenCss([], [14])).toBe('[data-chat-group-key][data-chat-turn="14"]{display:none}')
   })
 
   it('counts a turn\'s process row with the turn/start it sits a tenth before', () => {

@@ -125,8 +125,9 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
   const unavailable = snapshot.running
   const armed = sessionId !== undefined && owned
 
-  const { hiddenKeys, targets } = useMemo(() => {
+  const { hiddenKeys, hiddenTurns, targets } = useMemo(() => {
     const hidden: string[] = []
+    const turns: number[] = []
     const visible = new Map<string, RewindTarget>()
     const users: { key: string; seq: number; text: string; index: number }[] = []
     let position = 0
@@ -135,6 +136,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
       if (node === undefined) continue
       if (isRewound(ranges, rewindNodeSeq(node.kind, node.anchorSeq))) {
         hidden.push(key)
+        if (node.kind === 'turn-process') turns.push((node.data as { turn: number }).turn)
         continue
       }
       position += 1
@@ -142,7 +144,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
     }
     const total = position
     for (const user of users) visible.set(user.key, { seq: user.seq, text: user.text, rows: total - user.index })
-    return { hiddenKeys: hidden, targets: visible }
+    return { hiddenKeys: hidden, hiddenTurns: turns, targets: visible }
   }, [snapshot, ranges])
 
   useEffect(() => {
@@ -209,7 +211,7 @@ export function ClaudeRewind({ t, currentSessionId, subscribeSessions, chatOf, p
   return (
     <>
       {toast}
-      <style data-dsh-claude-rewind-styles>{`${styles.rewindActionCss}${rewindHiddenCss(hiddenKeys)}`}</style>
+      <style data-dsh-claude-rewind-styles>{`${styles.rewindActionCss}${rewindHiddenCss(hiddenKeys, hiddenTurns)}`}</style>
       {seats.map(seat => {
         const entry = targets.get(seat.key)
         if (entry === undefined) return null

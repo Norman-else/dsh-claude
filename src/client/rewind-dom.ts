@@ -60,11 +60,16 @@ export function sameClaudeRewindSeats(left: readonly ClaudeRewindSeat[], right: 
 }
 
 /** Hide every rewound row: the DSH session log is append-only, so the rows the
- *  rewind dropped stay in the transcript and are suppressed here. */
-export function rewindHiddenCss(keys: readonly string[]): string {
-  const selectors = keys
-    .filter(key => !key.includes('"') && !key.includes('\\'))
-    .map(key => `[data-chat-flow-key="${key}"]`)
+ *  rewind dropped stay in the transcript and are suppressed here. A turn's
+ *  steps also sit in a process group seat whose key is synthetic, not any
+ *  node's; a rewind drops whole turns, so those seats are hidden by turn. */
+export function rewindHiddenCss(keys: readonly string[], turns: readonly number[] = []): string {
+  const selectors = [
+    ...keys
+      .filter(key => !key.includes('"') && !key.includes('\\'))
+      .map(key => `[data-chat-flow-key="${key}"]`),
+    ...turns.filter(Number.isSafeInteger).map(turn => `[data-chat-group-key][data-chat-turn="${turn}"]`),
+  ]
   return selectors.length === 0 ? '' : `${selectors.join(',')}{display:none}`
 }
 
