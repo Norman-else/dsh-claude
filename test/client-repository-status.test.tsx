@@ -177,13 +177,12 @@ describe('Claude repository status UI', () => {
     expect(statusMarkup).not.toContain('⑂')
     expect(statusMarkup).toContain('+2')
     expect(statusMarkup).toContain('−1')
-    // Matches the composer wrapper's side clearance. The Host queue dock's
-    // wider `100% - 64px` inset leaves the bar 16px short per side once the
-    // column is too narrow for the max-width to bind.
-    expect(statusMarkup).toContain('width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))')
+    // Lines up with the Host's todo dock: the composer's side clearance plus
+    // four dock insets, read from the live properties.
+    expect(statusMarkup).toContain('width:calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 4 * var(--dsh-composer-dock-inset, 8px))')
     // Desktop 2.0 renamed this and made the composer card resizable; the bar
     // has to read the live property or it freezes at the fallback width.
-    expect(statusMarkup).toContain('max-width:var(--dsh-composer-card-max-width, 782px)')
+    expect(statusMarkup).toContain('max-width:calc(var(--dsh-composer-card-max-width, 782px) - 4 * var(--dsh-composer-dock-inset, 8px))')
     expect(statusMarkup).toContain('premier-store-os')
     expect(statusMarkup).not.toContain('Mercaso/premier-store-os</span>')
     expect(statusMarkup).toContain('margin:0 auto')
@@ -459,7 +458,7 @@ describe('Claude repository status UI', () => {
     // The bars float over the end of the conversation; a transparent linked
     // bar let the last line of prose show through it.
     expect(styles.repositoryBarLinked).not.toHaveProperty('background')
-    expect(styles.repositoryBar).toMatchObject({ background: 'var(--dsw-alias-bg-layer-1)' })
+    expect(styles.repositoryBar).toMatchObject({ background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1))' })
   })
 
   it('lets the repository name take its natural width and only ellipsizes when the bar runs out of room', () => {

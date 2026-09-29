@@ -63,7 +63,7 @@ describe('Claude review comments', () => {
     expect(markup).toContain('index.ts:5')
     expect(markup.match(/aria-label="reviewCommentRemove"/gu)).toHaveLength(2)
     expect(markup).toContain('<svg')
-    expect(markup).toContain('border-radius:11px')
+    expect(markup).toContain('border-radius:var(--dsw-radius-lg, 12px)')
     expect(markup).toMatch(/aria-label="reviewCommentsClear"[^>]*><svg\b/u)
     expect(markup).not.toContain('aria-label="reviewCommentsSend"')
   })

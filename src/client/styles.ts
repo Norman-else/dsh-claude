@@ -1050,9 +1050,23 @@ export const heroRepositoryError: CSSProperties = {
  * dock's `100% - 64px`: that dock is deliberately inset to peek out from behind
  * the card, so borrowing its width left these bars 16px short per side once the
  * column narrowed enough that the max-width stopped binding. */
+/** Sized like the Host's own dock panels (the todo dock): inset from the
+ *  composer card by four dock insets, so the bars line up with it. */
+const DOCK_WIDTH = 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 4 * var(--dsh-composer-dock-inset, 8px))'
+const DOCK_MAX_WIDTH = 'calc(var(--dsh-composer-card-max-width, 782px) - 4 * var(--dsh-composer-dock-inset, 8px))'
+
+/** The Host dock panel's surface: menu fill, elevation shadow, no border. */
+const dockSurface: CSSProperties = {
+  border: 0,
+  borderRadius: 'var(--dsw-radius-lg, 12px)',
+  background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1))',
+  backdropFilter: 'var(--dsw-menu-backdrop-filter)',
+  boxShadow: 'var(--dsw-elevation-panel)',
+}
+
 export const repositoryBarFrame: CSSProperties = {
-  width: 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))',
-  maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
+  width: DOCK_WIDTH,
+  maxWidth: DOCK_MAX_WIDTH,
   minWidth: 0,
   margin: '0 auto',
   boxSizing: 'border-box',
@@ -1061,17 +1075,14 @@ export const repositoryBarFrame: CSSProperties = {
 export const repositoryBar: CSSProperties = {
   width: '100%',
   minWidth: 0,
-  minHeight: 42,
+  minHeight: 36,
   boxSizing: 'border-box',
   display: 'flex',
   alignItems: 'center',
-  gap: 9,
-  padding: '7px 11px',
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 11,
-  background: 'var(--dsw-alias-bg-layer-1)',
+  gap: 10,
+  padding: '6px 12px',
+  ...dockSurface,
   color: 'var(--dsw-alias-label-primary)',
-  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
   font: 'inherit',
   fontSize: 14,
   lineHeight: '22px',
@@ -1081,19 +1092,19 @@ export const repositoryBar: CSSProperties = {
 export const repositoryBarMerged: CSSProperties = {
   // Pure purple tint: mixing with the theme border token (white-alpha in dark
   // themes) produced a bright, near-white line.
-  borderColor: 'color-mix(in srgb, #a78bfa 35%, transparent)',
-  background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-alias-bg-layer-1))',
+  boxShadow: '0 0 0 1px color-mix(in srgb, #a78bfa 35%, transparent), var(--dsw-elevation-panel)',
+  background: 'color-mix(in srgb, #a78bfa 5%, var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1)))',
 }
 
 /** A checkout the session wrote into besides its own: lighter, dashed, and
  *  stacked above the session bar so it reads as attached rather than primary.
- *  It keeps the bar's opaque fill: the dock floats over the end of the
+ *  It keeps the bar's fill: the dock floats over the end of the
  *  transcript, and a transparent bar let the prose show through. */
 export const repositoryBarLinked: CSSProperties = {
   marginBottom: 6,
-  minHeight: 34,
-  padding: '5px 11px',
-  borderStyle: 'dashed',
+  minHeight: 32,
+  padding: '4px 12px',
+  border: '1px dashed var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent))',
   boxShadow: 'none',
   color: 'var(--dsw-alias-label-secondary)',
 }
@@ -2333,8 +2344,8 @@ export const diffCommentError: CSSProperties = {
 }
 
 export const reviewCommentBarFrame: CSSProperties = {
-  width: 'calc(100% - 2 * var(--dsh-composer-side-clearance, 16px))',
-  maxWidth: 'var(--dsh-composer-card-max-width, 782px)',
+  width: DOCK_WIDTH,
+  maxWidth: DOCK_MAX_WIDTH,
   margin: '0 auto',
   boxSizing: 'border-box',
 }
@@ -2342,17 +2353,14 @@ export const reviewCommentBarFrame: CSSProperties = {
 export const reviewCommentBar: CSSProperties = {
   width: '100%',
   minWidth: 0,
-  minHeight: 42,
+  minHeight: 36,
   boxSizing: 'border-box',
   display: 'flex',
   flexWrap: 'wrap',
   alignItems: 'center',
   gap: 8,
-  padding: '7px 11px',
-  border: '1px solid var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 16%, transparent))',
-  borderRadius: 11,
-  background: 'var(--dsw-alias-bg-layer-1)',
-  boxShadow: '0 1px 2px color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent)',
+  padding: '6px 12px',
+  ...dockSurface,
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 12,
   lineHeight: '20px',
