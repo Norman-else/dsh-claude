@@ -207,8 +207,36 @@ export function redactValue(value: unknown, depth = 0, seen = new WeakSet<object
 export function safeDetail(value: unknown): string | undefined {
   if (value === undefined) return undefined
   const redacted = redactValue(value)
-  const text = typeof redacted === 'string' ? redacted : JSON.stringify(redacted)
-  return boundText(text, MAX_DETAIL_CHARS)
+  if (typeof redacted === 'string') return boundText(redacted, MAX_DETAIL_CHARS)
+  return boundJson(redacted, MAX_DETAIL_CHARS)
+}
+
+/**
+ * Serialize within `maxChars` and still parse. Cutting the serialized text
+ * mid-way left readers nothing: an `Agent` call's long `prompt` swallowed the
+ * `name` behind it, so the roster lost the teammate's name. Instead the
+ * longest top-level string gives way, repeatedly, and every other field
+ * survives whole. Only a value with no such string to trim falls back to a cut.
+ */
+function boundJson(value: unknown, maxChars: number): string {
+  let text = JSON.stringify(value)
+  if (text.length <= maxChars || typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return boundText(text, maxChars)
+  }
+  const fields: Record<string, unknown> = { ...(value as Record<string, unknown>) }
+  while (text.length > maxChars) {
+    let longest: string | undefined
+    for (const [key, item] of Object.entries(fields)) {
+      if (typeof item === 'string' && item.length > TRUNCATED.length && (longest === undefined || item.length > (fields[longest] as string).length)) longest = key
+    }
+    if (longest === undefined) return boundText(text, maxChars)
+    const item = fields[longest] as string
+    // One raw character is at least one serialized one, so cutting the excess
+    // always makes progress; escapes can only make it overshoot, never stall.
+    fields[longest] = boundText(item, Math.max(TRUNCATED.length, item.length - (text.length - maxChars)))
+    text = JSON.stringify(fields)
+  }
+  return text
 }
 
 export function normalizeActivity(

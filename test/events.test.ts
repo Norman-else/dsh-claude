@@ -88,6 +88,20 @@ describe('event normalization', () => {
     expect(normalized.summary).toContain('[truncated]')
   })
 
+  it('trims the longest field of an oversized detail so it still parses', () => {
+    const normalized = normalizeActivity({
+      turn: 1,
+      step: 1,
+      ordinal: 0,
+      kind: 'tool-call',
+      detail: { description: 'Find WMS delivery triggers', prompt: 'p\n'.repeat(3_000), subagent_type: 'Explore', name: 'scout' },
+    })
+    expect(normalized.detail?.length).toBeLessThanOrEqual(4_000)
+    const parsed = JSON.parse(normalized.detail ?? '') as Record<string, string>
+    expect(parsed).toMatchObject({ description: 'Find WMS delivery triggers', subagent_type: 'Explore', name: 'scout' })
+    expect(parsed.prompt).toMatch(/\[truncated\]$/u)
+  })
+
   it('keeps a reasoning block whole up to its own, wider bound', () => {
     // The generic summary budget cut most thinking mid-sentence; a row a reader
     // reads as prose keeps more of itself, and still stops somewhere.
