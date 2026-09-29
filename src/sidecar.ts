@@ -14,6 +14,7 @@ import {
   redactText,
   type ClaudeActivityEvent,
   type ClaudeActivityInput,
+  type ClaudeActivityKind,
   type ClaudeContextUsageEvent,
   type ClaudeContextUsageInput,
   type ClaudeSessionBoundEvent,
@@ -118,7 +119,13 @@ function binding(value: unknown): ClaudeSessionBoundEvent | undefined {
   }
 }
 
-const ACTIVITY_KINDS = new Set(['text', 'status', 'compaction', 'thinking', 'tool-call', 'tool-result', 'permission', 'question', 'subagent', 'usage', 'warning', 'error'])
+// Keyed by the type so a new kind cannot be written without being readable:
+// a hand-kept list missed `steering`, and one such row failed the whole document.
+const ACTIVITY_KIND_RECORD: Readonly<Record<ClaudeActivityKind, true>> = {
+  'text': true, 'steering': true, 'status': true, 'compaction': true, 'thinking': true, 'tool-call': true,
+  'tool-result': true, 'permission': true, 'question': true, 'subagent': true, 'usage': true, 'warning': true, 'error': true,
+}
+const ACTIVITY_KINDS: ReadonlySet<string> = new Set(Object.keys(ACTIVITY_KIND_RECORD))
 const ACTIVITY_PHASES = new Set(['started', 'updated', 'completed', 'denied', 'failed'])
 
 function activity(value: unknown): ClaudeActivityEvent | undefined {

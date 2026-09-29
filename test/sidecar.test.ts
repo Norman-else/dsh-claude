@@ -18,6 +18,12 @@ afterEach(async () => {
 })
 
 describe('Claude sidecar repository', () => {
+  it('reads back a steered message it wrote', () => {
+    const steered = { turn: 6, step: 1, ordinal: 2, kind: 'steering', phase: 'completed', title: 'Steered into the running turn', summary: 'stop the hourly job' }
+    const parsed = parseClaudeSidecar({ schemaVersion: 1, revision: 1, activities: [steered] })
+    expect(parsed.activities).toEqual([expect.objectContaining({ kind: 'steering', summary: 'stop the hourly job' })])
+  })
+
   it('returns an empty projection for an unknown session', async () => {
     const store = await repository()
     await expect(store.read('unknown')).resolves.toEqual({
