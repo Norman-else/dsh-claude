@@ -275,7 +275,9 @@ function normalizeSystem(message: Record<string, unknown>): NormalizedSdkMessage
       ...(taskId === undefined ? {} : { taskId }),
       ...(taskToolUseId === undefined ? {} : { toolUseId: taskToolUseId }),
       taskStatus: 'running' as const,
-      ...(description === undefined ? {} : { description }),
+      // No `description`: here it is the live status line ("Running Read x"),
+      // and folding it into the task board renamed the task on every step.
+      // The board keeps what task_started named it; the status rides the title.
       ...(subagentType === undefined ? {} : { subagentType }),
       ...(lastToolName === undefined ? {} : { lastToolName }),
       ...(summary === undefined ? {} : { summary }),

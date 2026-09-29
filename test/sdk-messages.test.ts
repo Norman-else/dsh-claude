@@ -283,6 +283,12 @@ describe('Claude SDK message normalization', () => {
     }])
   })
 
+  it('keeps a progress status line out of the task description', () => {
+    const [progress] = normalizeSdkMessage({ type: 'system', subtype: 'task_progress', task_id: 't1', description: 'Running Read seedableStatus' })
+    expect(progress).toMatchObject({ kind: 'subagent', title: 'Running Read seedableStatus' })
+    expect(progress).not.toHaveProperty('description')
+  })
+
   it('preserves unknown message types as bounded-normalization inputs', () => {
     expect(normalizeSdkMessage(sdk({ type: 'future_message', value: 1 }))).toEqual([{
       kind: 'unknown',
