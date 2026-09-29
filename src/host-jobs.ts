@@ -160,13 +160,14 @@ export class ClaudeHostJobs {
 
   /** Lift `<taskId>.output` paths out of a tool result. */
   noteOutput(sessionId: string, output: unknown): void {
-    const text = typeof output === 'string' ? output : safeJson(output)
-    if (text === undefined || !text.includes('.output')) return
-    for (const match of text.matchAll(OUTPUT_PATH)) {
-      const key = keyOf(sessionId, match[2]!)
-      const job = this.#jobs.get(key)
-      if (job === undefined) this.#paths.set(key, match[1]!)
-      else job.path ??= match[1]!
+    for (const text of strings(output)) {
+      if (!text.includes('.output')) continue
+      for (const match of text.matchAll(OUTPUT_PATH)) {
+        const key = keyOf(sessionId, match[2]!)
+        const job = this.#jobs.get(key)
+        if (job === undefined) this.#paths.set(key, match[1]!)
+        else job.path ??= match[1]!
+      }
     }
   }
 
@@ -206,10 +207,10 @@ export class ClaudeHostJobs {
   }
 }
 
-function safeJson(value: unknown): string | undefined {
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return undefined
-  }
+/** Every string inside a tool result. Scanned one by one rather than as JSON
+ *  text, where a Windows path's backslashes come out doubled. */
+function strings(value: unknown, depth = 0): string[] {
+  if (typeof value === 'string') return [value]
+  if (depth > 8 || typeof value !== 'object' || value === null) return []
+  return Object.values(value).flatMap(item => strings(item, depth + 1))
 }
