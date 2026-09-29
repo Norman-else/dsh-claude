@@ -246,7 +246,7 @@ describe('Managing saved prompts when there is no draft', () => {
 
   it('lists the saved prompts and deletes one only after it is confirmed', async () => {
     const deletePrompt = vi.fn(async () => {})
-    mount({ draft: '   \n ', loadPrompts: async () => [saved('keep', 'a'), saved('drop', 'b')], deletePrompt })
+    mount({ draft: '   \n ', loadPrompts: async () => [saved('keep', 'Review the open diff'), saved('drop', 'b')], deletePrompt })
 
     click(manageTrigger())
     await act(async () => {})
@@ -256,6 +256,8 @@ describe('Managing saved prompts when there is no draft', () => {
     await act(async () => {})
 
     expect(deletePrompt).toHaveBeenCalledWith('drop')
+    // Each row shows the snippet's opening line, not just its file name.
+    expect(card()?.textContent).toContain('Review the open diff')
     expect(card()?.textContent).toContain('keep')
     expect(card()?.textContent).not.toContain('drop')
   })

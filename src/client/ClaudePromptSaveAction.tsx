@@ -78,10 +78,15 @@ function useAnchoredCard(
       })
     }
     place()
+    // The card grows after opening (a list that loads, an error line), and a
+    // position taken at the first frame would leave it hanging off-screen.
+    const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place)
+    if (card.current !== null) resize?.observe(card.current)
     window.addEventListener('resize', place)
     // Capture, so scrollers nested inside the page are caught too.
     window.addEventListener('scroll', place, true)
     return () => {
+      resize?.disconnect()
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
@@ -229,7 +234,7 @@ export function ClaudePromptSaveAction({
         ><IconListPenOutlineRegular size={14} /></button>
       </Tooltip>
       {panel === undefined || typeof document === 'undefined' ? null : createPortal(
-        <div ref={panelRef} style={{ ...styles.promptSaveCard, ...position }} role="dialog" aria-label={label}>
+        <div ref={panelRef} style={{ ...styles.promptSaveCard, ...(panel.kind === 'manage' ? styles.promptManageCard : {}), ...position }} role="dialog" aria-label={label}>
           {panel.kind === 'manage' ? (
             <>
               <span style={styles.promptSaveHeading}>{label}</span>
@@ -249,7 +254,10 @@ export function ClaudePromptSaveAction({
                             </>
                           ) : (
                             <>
-                              <span style={styles.promptManageName} title={prompt.location}>{prompt.name}</span>
+                              <span style={styles.promptManageText} title={prompt.body}>
+                                <span style={styles.promptManageName}>{prompt.name}</span>
+                                <span style={styles.promptManageDescription}>{prompt.description}</span>
+                              </span>
                               <button
                                 type="button"
                                 className={styles.promptSaveTriggerClass}

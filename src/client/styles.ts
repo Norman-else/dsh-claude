@@ -2552,6 +2552,9 @@ export const promptSaveLocation: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-2)',
 }
 
+/** Wider than the naming card: each row carries a name and its opening line. */
+export const promptManageCard: CSSProperties = { width: 480 }
+
 export const promptManageList: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -2565,7 +2568,14 @@ export const promptManageRow: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
-  minHeight: 28,
+  minHeight: 36,
+}
+
+export const promptManageText: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
 }
 
 export const promptManageName: CSSProperties = {
@@ -2575,6 +2585,15 @@ export const promptManageName: CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
   fontSize: 13,
+}
+
+export const promptManageDescription: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  color: 'var(--dsw-alias-label-tertiary)',
+  fontSize: 11,
+  lineHeight: '16px',
 }
 
 export const promptSaveError: CSSProperties = {
