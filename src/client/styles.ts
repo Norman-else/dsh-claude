@@ -2518,7 +2518,9 @@ export const promptSaveCard: CSSProperties = {
   // hairline rather than an edge.
   border: '1px solid var(--dsw-alias-border-inverted)',
   borderRadius: 14,
-  background: 'var(--dsw-specific-menu)',
+  // Not --dsw-specific-menu: the Host defines it at 94% alpha for its blurred
+  // menus, and without the blur the transcript reads straight through this card.
+  background: 'var(--dsw-alias-bg-layer-3, var(--dsw-specific-menu))',
   boxShadow: 'var(--dsw-shadow-lv3)',
   color: 'var(--dsw-alias-label-primary)',
   fontSize: 12,
