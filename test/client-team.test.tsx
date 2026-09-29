@@ -63,11 +63,13 @@ function activities(): ClaudeActivityEvent[] {
 }
 
 describe('deriveTeam', () => {
-  it('counts in-process teammates and named subagents, not anonymous agents or background commands', () => {
+  it('counts teammates and every subagent, named or not, but not background commands', () => {
     const team = deriveTeam(activities(), teammates)
     expect(team.members).toEqual([
       expect.objectContaining({ taskId: 'tm-1', name: 'reviewer', role: 'teammate', status: 'running', toolUseId: 'spawn-1', lastToolName: 'Read' }),
       expect.objectContaining({ taskId: 'tm-2', name: 'tester', status: 'completed' }),
+      // An anonymous agent goes by its description.
+      expect.objectContaining({ taskId: 'sa-1', name: 'Anonymous helper', status: 'running' }),
     ])
   })
 
@@ -128,13 +130,13 @@ function hook(owned: boolean, tasks: readonly ClaudeTaskInfo[], events: readonly
 
 describe('ClaudeTeamHeaderAction', () => {
   it('renders nothing without a team and a counted trigger with one', () => {
-    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!, teammates[3]!], [call('spawn-3', 'Agent', { description: 'Anonymous helper' })])} />)).toBe('')
+    expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, [teammates[2]!], [])} />)).toBe('')
     expect(renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(false, teammates, activities())} />)).toBe('')
     const markup = renderToStaticMarkup(<ClaudeTeamHeaderAction t={t} sessionId="s" openTeammate={vi.fn()} useClaudeProjection={hook(true, teammates, activities())} />)
     expect(markup).toContain('aria-label="Agent Team"')
     expect(markup).toContain('aria-expanded="false"')
-    // Lead plus two teammates; the background command is not a member.
-    expect(markup).toContain('<span class="dsh-claude-team-count">3</span>')
+    // Lead plus three subagents; the background command is not a member.
+    expect(markup).toContain('<span class="dsh-claude-team-count">4</span>')
     expect(markup).toContain('dsh-claude-team-trigger-label')
   })
 })

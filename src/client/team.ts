@@ -1,11 +1,10 @@
 /**
  * Claude Code's native Agent Team, read off what the sidecar already holds.
  *
- * A teammate is an `Agent` call that carries a `name` (the CLI's own team
- * model: the session is one implicit team and a named agent is addressable
- * through SendMessage). Over the SDK the CLI never initializes a session
- * team, so such an agent runs as a `local_agent` task rather than an
- * `in_process_teammate`; both count. The shared task list comes through the
+ * Every subagent is a member: an `in_process_teammate`, or any `Agent` call
+ * running as a `local_agent` task, named or not. Only a named one is
+ * addressable through SendMessage, but an anonymous search agent is still work
+ * the user wants to see and open; it goes by its description. The shared task list comes through the
  * TaskCreate / TaskUpdate tools and mail through SendMessage. The task board
  * carries the spawning call id and the activity log every call's input, so
  * roster, board, and mailbox are derived here without a server-side projection.
@@ -95,10 +94,7 @@ export function deriveTeam(activities: readonly ClaudeActivityEvent[], tasks: re
       if (input !== undefined) spawnInputs.set(activity.toolUseId, input)
     }
   }
-  const spawnName = (task: ClaudeTaskInfo): string | undefined =>
-    task.toolUseId === undefined ? undefined : text(spawnInputs.get(task.toolUseId)?.name)
-  const teammates = tasks.filter(task =>
-    task.taskType === TEAMMATE_TASK_TYPE || (task.taskType === SUBAGENT_TASK_TYPE && spawnName(task) !== undefined))
+  const teammates = tasks.filter(task => task.taskType === TEAMMATE_TASK_TYPE || task.taskType === SUBAGENT_TASK_TYPE)
   if (teammates.length === 0 && !ordered.some(activity => activity.toolName === 'TaskCreate' || activity.toolName === 'SendMessage')) {
     return EMPTY_TEAM
   }
