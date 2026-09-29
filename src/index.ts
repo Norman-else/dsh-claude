@@ -653,6 +653,22 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (agent === undefined || webCtx.agentPresets.composedPreset(agent.ctx) !== CLAUDE_CODE_PRESET_ID) return undefined
       const cwd = agent.session.header.cwd
       return cwd === undefined ? undefined : repositoryStatus.inspect(cwd)
-    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession, permissionModeForClaudeSession, () => permissionSelector)
+    }, sessionId => reviewComments.list(sessionId), extraRepositoriesForClaudeSession, permissionModeForClaudeSession, () => permissionSelector, (listener) => {
+      // The selection event lands before the preset mount does (see the
+      // metadata bridges), so wait for ownership to match the pick.
+      const onPresetSelected = webCtx.on as (event: 'agent-preset/selected', handler: (sessionId: string, preset: string) => void) => () => void
+      return onPresetSelected('agent-preset/selected', (sessionId, preset) => {
+        let attempts = 0
+        const check = (): void => {
+          attempts += 1
+          if (ownsClaudeSession(sessionId) === (preset === CLAUDE_CODE_PRESET_ID) || attempts >= 25) {
+            listener(sessionId)
+            return
+          }
+          setTimeout(check, 200).unref?.()
+        }
+        check()
+      })
+    })
   })
 }

@@ -269,6 +269,34 @@ describe('Claude sidecar projection route', () => {
     expect(unsubscribed).toEqual(['session/a', 'session-b'])
   })
 
+  it('pushes ownership the moment a preset switch settles, without waiting for the sweep', async () => {
+    const ctx = context()
+    const sidecar = {
+      read: async () => ({ schemaVersion: 1 as const, revision: 0, activities: [] }),
+      sequence: () => 0,
+      subscribe: () => () => undefined,
+    } as unknown as ClaudeSidecarRepository
+    let owned = false
+    let settle: ((sessionId: string) => void) | undefined
+    let released = false
+    registerClaudeProjectionRoute(ctx, sidecar, () => owned, undefined, undefined, undefined, undefined, undefined, undefined, (listener) => {
+      settle = listener
+      return () => { released = true }
+    })
+    const res = response()
+    const pending = ctx.handler(request(multi('session')), res)
+    await settled()
+    expect(lines(res)).toEqual([expect.objectContaining({ type: 'snapshot', owned: false })])
+    owned = true
+    settle!('elsewhere')
+    settle!('session')
+    await settled()
+    expect(lines(res).slice(1)).toEqual([expect.objectContaining({ type: 'meta', session: 'session', owned: true, permissionSelector: 'plugin' })])
+    for (const callback of res.closeHandlers) callback()
+    await pending
+    expect(released).toBe(true)
+  })
+
   it('numbers the stream so the client can detect a line it never received', async () => {
     const ctx = context()
     const listeners = new Map<string, (delta: unknown) => void>()

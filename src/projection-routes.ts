@@ -104,6 +104,9 @@ export function registerClaudeProjectionRoute(
   permissionModeForSession: (sessionId: string) => Promise<ClaudePermissionModeView | undefined> = async () => undefined,
   /** Read from memory: it is on the first snapshot line, so the composer never draws the wrong selector. */
   permissionSelector: () => ClaudePermissionSelector = () => 'plugin',
+  /** Calls back once a session's preset switch has settled, so ownership
+   *  reaches the composer now rather than on the next sweep. */
+  presetSettled: (listener: (sessionId: string) => void) => () => void = () => () => undefined,
 ): void {
   const info = (message: string): void => {
     ctx.logger?.info?.(message)
@@ -234,6 +237,16 @@ export function registerClaudeProjectionRoute(
           void writeSnapshot(sessionId).catch(() => undefined)
       }
     }))
+    const refreshMeta = async (sessionId: string): Promise<void> => {
+      const next = await assembleMeta(sessionId)
+      if (closed || JSON.stringify(next) === JSON.stringify(metas.get(sessionId))) return
+      writeMeta(sessionId, next)
+    }
+    // A preset picked on the hero flips `owned`, which decides whose controls
+    // the composer draws; waiting for the sweep left the Host's up for seconds.
+    unsubscribes.push(presetSettled((sessionId) => {
+      if (sessionIds.includes(sessionId)) void refreshMeta(sessionId).catch(() => undefined)
+    }))
     // Per-session, in parallel: a wedged repository probe costs its own lane
     // its first paint, not everyone else's.
     for (const sessionId of sessionIds) {
@@ -257,10 +270,7 @@ export function registerClaudeProjectionRoute(
       void (async () => {
         for (const sessionId of sessionIds) {
           if (closed) return
-          const next = await assembleMeta(sessionId)
-          if (closed) return
-          if (JSON.stringify(next) === JSON.stringify(metas.get(sessionId))) continue
-          writeMeta(sessionId, next)
+          await refreshMeta(sessionId)
         }
       })().catch(() => undefined).finally(() => { sweeping = false })
     }, META_REFRESH_MS)
