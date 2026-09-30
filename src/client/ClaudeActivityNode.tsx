@@ -1,5 +1,5 @@
 import type { ClaudeTranscriptItem } from './conversation-sidecar.ts'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   DiffBlock,
   type DiffBlockLabels,
@@ -13,7 +13,8 @@ import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
 import { PLAN_FEEDBACK_TITLE } from '../constants.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
 import { transcriptItemsForStep } from './conversation-sidecar.ts'
-import { ClaudeMarkdown, useClaudeMarkdownLabels } from './markdown-labels.tsx'
+import { ClaudeMarkdown, useClaudeMarkdownLabels, type ClaudeMarkdownLabels } from './markdown-labels.tsx'
+import { useFileMentions, type FileMentionSource } from './file-mentions.ts'
 import { selectStepActivities } from './projection.ts'
 import { formatTokenCount } from './token-format.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
@@ -23,6 +24,8 @@ type Translate = (key: ClaudeCodeSettingsKey, params?: Record<string, unknown>) 
 export interface ClaudeActivityNodeInjected {
   /** Move one running root Bash call to the background; resolves with the Host's answer code. */
   backgroundCall?: (toolUseId: string) => Promise<string>
+  /** Turns inline-code paths of existing files into Sidebar links. */
+  files?: FileMentionSource
 }
 export type ClaudeActivityNodeProps = Omit<ChatNodeViewProps<'claude-activity-step'>, 't'> & ClaudeActivityNodeInjected & { t: Translate }
 
@@ -501,7 +504,7 @@ export function ClaudeTurnUsage({ usage, t }: { usage: ClaudeUsage; t: Translate
   )
 }
 
-export function ClaudeActivityNode({ node, useClaudeProjection, t, backgroundCall }: ClaudeActivityNodeProps) {
+export function ClaudeActivityNode({ node, useClaudeProjection, t, backgroundCall, files }: ClaudeActivityNodeProps) {
   ensureActivityCss()
   const marker = node.data
   const activities = useClaudeProjection(value => selectStepActivities(value, marker.turn, marker.step))
@@ -511,17 +514,23 @@ export function ClaudeActivityNode({ node, useClaudeProjection, t, backgroundCal
     [activities, marker.step, marker.turn, tasks],
   )
   if (items.length === 0) return null
-  return <ClaudeTranscriptFlow items={items} t={t} {...(backgroundCall === undefined ? {} : { onBackground: backgroundCall })} />
+  return <ClaudeTranscriptFlow items={items} t={t} {...(backgroundCall === undefined ? {} : { onBackground: backgroundCall })} {...(files === undefined ? {} : { files })} />
+}
+
+function ClaudeTranscriptText({ text, labels, files, t }: { text: string; labels: ClaudeMarkdownLabels; files: FileMentionSource | undefined; t: Translate }) {
+  const label = useCallback((path: string) => t('fileMentionOpen', { name: path }), [t])
+  const fileMentions = useFileMentions(text, files, label)
+  return <div className="dsh-claude-transcript-text"><ClaudeMarkdown text={text} labels={labels} {...(fileMentions === undefined ? {} : { fileMentions })} /></div>
 }
 
 /** The transcript items of one step or one teammate, drawn as the chat draws them. */
-export function ClaudeTranscriptFlow({ items, t, onBackground }: { items: readonly ClaudeTranscriptItem[]; t: Translate; onBackground?: (toolUseId: string) => Promise<string> }) {
+export function ClaudeTranscriptFlow({ items, t, onBackground, files }: { items: readonly ClaudeTranscriptItem[]; t: Translate; onBackground?: (toolUseId: string) => Promise<string>; files?: FileMentionSource }) {
   const markdownLabels = useClaudeMarkdownLabels(t)
   ensureActivityCss()
   return (
     <div className="dsh-claude-flow">
       {items.map(item => item.kind === 'text'
-        ? <div className="dsh-claude-transcript-text" key={`text:${item.ordinal}`}><ClaudeMarkdown text={item.text} labels={markdownLabels} /></div>
+        ? <ClaudeTranscriptText key={`text:${item.ordinal}`} text={item.text} labels={markdownLabels} files={files} t={t} />
         : item.kind === 'compaction'
         ? <ClaudeCompactionDivider key={`compaction:${item.ordinal}`} compaction={item.compaction} t={t} />
         : item.kind === 'tools'

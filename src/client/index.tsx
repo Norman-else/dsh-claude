@@ -19,6 +19,7 @@ import { claudeActivityStepDefinition, claudeTurnDefinition } from './conversati
 import { ClaudeActivityTail, type ClaudeActivityTailInjected } from './ClaudeActivityTail.tsx'
 import { ClaudeActivityNode, type ClaudeActivityNodeInjected } from './ClaudeActivityNode.tsx'
 import { backgroundToolCall } from './background-task-api.ts'
+import { cachedExists, sessionFileAddress, type FileMentionSource } from './file-mentions.ts'
 import { ClaudeCodeSettings, isGlobalSettingsView, proseModeOf, type ClaudeCodeSettingsInjected } from './ClaudeCodeSettings.tsx'
 import { applyClaudeMarkdownTheme } from './markdown-theme.ts'
 import { pluginRead } from './plugin-transport.ts'
@@ -88,6 +89,8 @@ interface AgentPresetRemote {
 
 interface RemoteFace {
   agentPresets: AgentPresetRemote
+  /** Host `dsh-api-workspace-files`; absent when the bundle leaves it out. */
+  workspaceFiles?: { stat(sessionId: string, path: string, signal?: AbortSignal): Promise<{ ok: boolean }> }
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -218,14 +221,38 @@ export function apply(ctx: Context): void {
   // of the setting: the Host switches on the next turn while a running Client
   // would keep a boot-time decision, and disagreeing draws everything twice.
   // A step the Host drew natively folds to no items and the node renders null.
+  // One source per Session: its identity keys every message's lookups, and
+  // its cache spares re-asking the Host about a path each render.
+  const fileSources = new Map<string, FileMentionSource>()
+  const filesFor = (sessionId: string): FileMentionSource | undefined => {
+    const workspaceFiles = remote?.workspaceFiles
+    if (workspaceFiles === undefined) return undefined
+    let source = fileSources.get(sessionId)
+    if (source === undefined) {
+      source = {
+        exists: cachedExists(async path => (await workspaceFiles.stat(sessionId, path)).ok),
+        open: (path, line) => ctx.sidebarRight.openResourceIn(
+          sessionId as SessionId,
+          sessionFileAddress(sessionId, path),
+          line === undefined ? undefined : { params: { line } as never },
+        ),
+      }
+      fileSources.set(sessionId, source)
+    }
+    return source
+  }
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',
     key: 'claude-activity-step',
     locale: namespace,
     // A running root Bash card offers the terminal's Ctrl+B.
-    inject: (sessionId: string): ClaudeActivityNodeInjected => ({
-      backgroundCall: toolUseId => backgroundToolCall(sessionId, toolUseId),
-    }),
+    inject: (sessionId: string): ClaudeActivityNodeInjected => {
+      const files = filesFor(sessionId)
+      return {
+        backgroundCall: toolUseId => backgroundToolCall(sessionId, toolUseId),
+        ...(files === undefined ? {} : { files }),
+      }
+    },
   }, ClaudeActivityNode))
   // Host 0.1.5 has no details column: the panels are tab types of the
   // right sidebar, declared once here and opened per session below.

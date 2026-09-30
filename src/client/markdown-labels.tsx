@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CLAUDE_MARKDOWN_SCOPE, ensureClaudeMarkdownTheme } from './markdown-theme.ts'
 import type { ClaudeCodeSettingsKey } from './locales.ts'
+import type { FileMentions } from './file-mentions.ts'
 
 /** Localized Markdown chrome the Host's renderer requires.
  *
@@ -40,12 +41,13 @@ export function useClaudeMarkdownLabels(
  *  the new shape cannot typecheck against it — the cast is confined here rather
  *  than repeated at every call site. Drop it once the installed
  *  @deepseek-ai/dsh-client-ui-primitives matches the Desktop build. */
-export function ClaudeMarkdown({ text, labels, streaming }: {
+export function ClaudeMarkdown({ text, labels, streaming, fileMentions }: {
   text: string
   labels: ClaudeMarkdownLabels
   streaming?: boolean
+  fileMentions?: FileMentions
 }) {
-  const props = { text, labels, ...(streaming === undefined ? {} : { streaming }) }
+  const props = { text, labels, ...(streaming === undefined ? {} : { streaming }), ...(fileMentions === undefined ? {} : { fileMentions }) }
   const Renderer = MarkdownText as unknown as (input: typeof props) => JSX.Element
   // The wrapper is the palette's scope and nothing else: `display:contents`
   // keeps it out of layout while custom properties still inherit through it.

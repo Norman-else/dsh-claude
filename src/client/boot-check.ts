@@ -43,7 +43,7 @@ export const CLAUDE_REQUIRED_SERVICE_METHODS: Readonly<Record<string, readonly s
   uiConversation: ['binding'],
   uiSession: ['provide'],
   inputTriggers: ['registerSource'],
-  sidebarRight: ['openTabIn', 'closeIn', 'toggleExpanded'],
+  sidebarRight: ['openTabIn', 'closeIn', 'toggleExpanded', 'openResourceIn'],
   sidebarRightTabs: ['register'],
 }
 
