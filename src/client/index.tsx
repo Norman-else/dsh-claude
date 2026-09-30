@@ -101,7 +101,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 export const name = 'dsh-claude-client'
 
-export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection', 'sidebarRight', 'sidebarRightTabs']
+export const inject = ['slots', 'locale', 'remote', 'remote.agentPresets', 'remote.workspaceFiles', 'sessions', 'uiSession', 'uiConversation', 'workspaces', 'inputTriggers', 'conversation', 'connection', 'sidebarRight', 'sidebarRightTabs']
 
 /** Resolve one session's composer facade.
  *

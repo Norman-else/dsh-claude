@@ -114,6 +114,17 @@ describe('published package contract', () => {
     expect(packageJson.dsh.client.inject).toContain('@deepseek-ai/dsh-client-ui-renderer')
   })
 
+  // cordis throws on reading an undeclared `remote.*` service. The throw lands
+  // in a Slot entry's inject, the Host drops the entry, and the whole live
+  // Claude transcript silently never renders.
+  it('injects every remote service the client reads', async () => {
+    const client = await readFile(join(root, 'src/client/index.tsx'), 'utf8')
+    const declared = /export const inject = \[([^\]]*)\]/u.exec(client)?.[1] ?? ''
+    const reads = new Set([...client.matchAll(/\bremote\??\.(\w+)/gu)].map(match => `remote.${match[1]}`))
+    expect(reads.size).toBeGreaterThan(0)
+    for (const service of reads) expect(declared).toContain(`'${service}'`)
+  })
+
   // Renderer failures reach nobody on their own: the Host catches a crashed
   // Slot entry, drops it, and still reports a healthy boot. Losing this wiring
   // would return the plugin to failing invisibly, which is what made every
