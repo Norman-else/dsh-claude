@@ -132,6 +132,22 @@ export const PLAN_MODE_HANDOFF_PROMPT =
   + 'Do not end a plan-mode turn by asking the user for confirmation in prose: '
   + 'the user reads and approves the plan through ExitPlanMode, and a turn that stops short of that call shows them nothing.'
 
+/** Appended alongside the plan-mode rule.
+ *
+ *  The Host's chat opens a Markdown file link in the right Sidebar preview,
+ *  but an inline-code path stays inert unless a first-party DSH write tool or
+ *  `present` produced it — Claude's tools are neither. The native agent is
+ *  told to link files by the Host's `ui:deliverable-file-references` prompt
+ *  section, which never reaches Claude; this is its equivalent, minus the
+ *  `present` tool Claude does not have. */
+export const FILE_LINK_PROMPT =
+  'Outside commands, configuration expressions, and code blocks, write every mention of an existing file as a Markdown link, '
+  + 'including repeats and tables, so the user can open it: [name](<path>), where path is relative to the working directory or absolute, '
+  + 'enclosed in angle brackets. Append #L24 or #L24-L30 to the path for known lines. Use the filename as the label, '
+  + 'adding only enough parent directories to distinguish files; keep full paths out of labels. Never write a file path as bare inline code.'
+
+export const SYSTEM_PROMPT_APPEND = `${PLAN_MODE_HANDOFF_PROMPT}\n\n${FILE_LINK_PROMPT}`
+
 /** The live equivalent of a thinking mode, or undefined when the mode is a
  *  start-time shape the CLI will not take later: `off` disables thinking through
  *  a query option, `ultracode` is a settings bundle, and "no explicit mode" is
@@ -1251,7 +1267,7 @@ export class ClaudeSupervisor {
       pathToClaudeCodeExecutable: this.#config.executablePath,
       cwd,
       settingSources: ['user', 'project', 'local'],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: PLAN_MODE_HANDOFF_PROMPT },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: SYSTEM_PROMPT_APPEND },
       tools: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
       // The Host job list renders a per-task stop control (see host-jobs.ts).

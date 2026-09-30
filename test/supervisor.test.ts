@@ -26,6 +26,7 @@ import {
   ClaudeSupervisor,
   ClaudeTurnBusyError,
   PLAN_MODE_HANDOFF_PROMPT,
+  SYSTEM_PROMPT_APPEND,
   claudePermissionMode,
   type ClaudeQueryFactory,
   type ClaudeTurnStreamEvent,
@@ -369,7 +370,7 @@ describe('Claude supervisor', () => {
     await runtime.dispose()
   })
 
-  it('appends the plan-mode handoff rule to the Claude Code system prompt', async () => {
+  it('appends the plan-mode handoff and file-link rules to the Claude Code system prompt', async () => {
     const transport = factory()
     const owner = fakeAgent()
     const runtime = supervisor(transport.create)
@@ -378,9 +379,10 @@ describe('Claude supervisor', () => {
     expect(transport.queries[0]?.options.systemPrompt).toEqual({
       type: 'preset',
       preset: 'claude_code',
-      append: PLAN_MODE_HANDOFF_PROMPT,
+      append: SYSTEM_PROMPT_APPEND,
     })
-    expect(PLAN_MODE_HANDOFF_PROMPT).toContain('ExitPlanMode')
+    expect(SYSTEM_PROMPT_APPEND).toContain(PLAN_MODE_HANDOFF_PROMPT)
+    expect(SYSTEM_PROMPT_APPEND).toContain('[name](<path>)')
     transport.queries[0]!.push(init())
     await catalog
     await runtime.dispose()
