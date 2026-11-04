@@ -12,7 +12,7 @@ import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeUsage } from '../events.ts'
 import { PLAN_FEEDBACK_TITLE } from '../constants.ts'
 import type { ClaudeActivityChatData, ClaudeCompaction, ClaudeSubcall, ClaudeTranscriptTool } from './conversation-sidecar.ts'
-import { transcriptItemsForStep } from './conversation-sidecar.ts'
+import { transcriptItemsForStep, usageTokensPerSecond } from './conversation-sidecar.ts'
 import { ClaudeMarkdown, useClaudeMarkdownLabels, type ClaudeMarkdownLabels } from './markdown-labels.tsx'
 import { useFileMentions, type FileMentionSource } from './file-mentions.ts'
 import { selectStepActivities } from './projection.ts'
@@ -484,6 +484,8 @@ export function turnUsageParts(usage: ClaudeUsage, t: Translate): readonly strin
   if (cached !== undefined) parts.push(t('turnUsageCache', { percent: (cached * 100).toFixed(1) }))
   if (usage.durationMs !== undefined) parts.push(formatTurnDuration(usage.durationMs))
   if (usage.ttftMs !== undefined) parts.push(t('turnUsageTtft', { duration: formatTurnDuration(usage.ttftMs) }))
+  const rate = usageTokensPerSecond([usage])
+  if (rate !== undefined) parts.push(t('turnUsageSpeed', { rate: Math.round(rate) }))
   if (usage.cumulativeCostUsd !== undefined) parts.push(t('turnUsageCost', { cost: usage.cumulativeCostUsd.toFixed(2) }))
   return parts
 }

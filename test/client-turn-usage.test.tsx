@@ -43,6 +43,10 @@ describe('turnUsageParts', () => {
     expect(turnUsageParts(USAGE, t)).toEqual(['80.5K tok', 'Cache hit 98.0%', '2m 08s', 'TTFT 1.2s', '$5.94 total'])
   })
 
+  it('adds the measured model speed after TTFT', () => {
+    expect(turnUsageParts({ outputTokens: 12, ttftMs: 900, decodeOutputTokens: 124, decodeMs: 2_000 }, t)).toEqual(['12 tok', 'TTFT 900ms', '62 tok/s'])
+  })
+
   it('leaves out what the turn never reported', () => {
     expect(turnUsageParts({ outputTokens: 12 }, t)).toEqual(['12 tok'])
   })

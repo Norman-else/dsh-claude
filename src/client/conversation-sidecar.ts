@@ -4,6 +4,7 @@ import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ClaudeActivityEvent, ClaudeActivityPhase, ClaudeTaskInfo, ClaudeTaskStatus, ClaudeUsage } from '../events.ts'
 import { API_RETRY_TITLE, CLAUDE_CODE_PROVIDER, TASK_TOOL_NAMES } from '../constants.ts'
 import { isProjectedTaskActivity } from './task-projection.ts'
+import { tokensPerSecond } from '../output-speed.ts'
 
 export interface ClaudeSubcall {
   toolUseId: string
@@ -533,6 +534,23 @@ export function latestTurnUsage(
     if (activity.usage !== undefined) latest = activity.usage
   }
   return latest
+}
+
+/** Time-weighted model output speed over turn usage reports. */
+export function usageTokensPerSecond(usages: readonly (ClaudeUsage | undefined)[]): number | undefined {
+  return tokensPerSecond(usages.map(usage => usage?.decodeOutputTokens === undefined || usage.decodeMs === undefined
+    ? undefined
+    : { outputTokens: usage.decodeOutputTokens, decodeMs: usage.decodeMs }))
+}
+
+/** The session's reading: every turn's newest report, weighted by decode time. */
+export function sessionTokensPerSecond(activities: readonly ClaudeActivityEvent[]): number | undefined {
+  const latest = new Map<number, ClaudeUsage>()
+  for (const activity of activities) {
+    if (activity.kind !== 'usage' || activity.renderer === 'native' || activity.usage === undefined) continue
+    latest.set(activity.turn, activity.usage)
+  }
+  return usageTokensPerSecond([...latest.values()])
 }
 
 /** Fold one step's shared ordinal stream into Claude Code-style prose and tool groups. */
