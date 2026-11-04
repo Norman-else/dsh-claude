@@ -43,6 +43,11 @@ export interface ClaudeUsage {
   durationMs?: number
   /** Wall time to the first visible token of the turn. */
   ttftMs?: number
+  /** Output tokens of the requests that streamed long enough to time, and the
+   *  summed time from each one's first delta to its end (see output-speed.ts).
+   *  Kept raw, not as a rate, so turns add up time-weighted. */
+  decodeOutputTokens?: number
+  decodeMs?: number
 }
 
 export interface ClaudeSessionBoundEvent {

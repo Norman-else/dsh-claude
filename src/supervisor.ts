@@ -31,6 +31,7 @@ import { createUserQuestionBridge } from './user-question.ts'
 import { ClaudeSidecarRepository } from './sidecar.ts'
 import { claudePermissionMode, type ClaudePermissionMode, type ClaudePermissionSelector } from './permission-mode.ts'
 import { normalizeSdkMessage, type NormalizedSdkMessage } from './sdk-messages.ts'
+import { OutputSpeedMeter } from './output-speed.ts'
 import { claudeModelRow, claudeModelValue, recordClaudeModels } from './model-catalog.ts'
 import { readPlanUsageFrom } from './plan-usage.ts'
 import { createManagedClaudeSpawner, type ManagedClaudeProcess } from './spawn.ts'
@@ -250,6 +251,8 @@ interface ActiveTurn {
    *  The transcript has no other clock: activities carry no timestamps. */
   startedAt: number
   firstOutputAt: number | undefined
+  /** Model decode time per API request; DSH's step clock cannot see it. */
+  outputSpeed: OutputSpeedMeter
   aborted: boolean
   deniedToolUseIds: Set<string>
   /** Root tool calls still waiting for their result, by toolUseId, with the
@@ -885,6 +888,7 @@ export class ClaudeSupervisor {
       requestUsage: undefined,
       startedAt: Date.now(),
       firstOutputAt: undefined,
+      outputSpeed: new OutputSpeedMeter(),
       aborted: false,
       deniedToolUseIds: new Set(),
       openCalls: new Map(),
@@ -1330,6 +1334,7 @@ export class ClaudeSupervisor {
       for await (const sdkMessage of entry.query) {
         const chainUuid = chainEntryUuid(sdkMessage as SDKMessage)
         if (chainUuid !== undefined) entry.lastChainUuid = chainUuid
+        entry.active?.outputSpeed.observe(sdkMessage, Date.now())
         for (const message of normalizeSdkMessage(sdkMessage as SDKMessage)) {
           await this.#handleMessage(entry, message)
         }
@@ -1626,10 +1631,12 @@ export class ClaudeSupervisor {
    *  timestamps, so a duration it did not measure is a duration nobody has. */
   #timedUsage(active: ActiveTurn, usage: ClaudeUsage): ClaudeUsage {
     const now = Date.now()
+    const speed = active.outputSpeed.sample()
     return {
       ...usage,
       durationMs: Math.max(0, now - active.startedAt),
       ...(active.firstOutputAt === undefined ? {} : { ttftMs: Math.max(0, active.firstOutputAt - active.startedAt) }),
+      ...(speed === undefined ? {} : { decodeOutputTokens: speed.outputTokens, decodeMs: speed.decodeMs }),
     }
   }
 

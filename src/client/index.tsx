@@ -42,6 +42,7 @@ import { AgentPresetRoster, type AgentPresetRosterApi } from './agent-preset-ros
 import { ClaudeProjectionStore, type ClaudeProjectionSource } from './projection.ts'
 import { createClaudeCommandSource } from './claude-command-source.ts'
 import { ClaudePromptSaveAction, type ClaudePromptSaveActionInjected } from './ClaudePromptSaveAction.tsx'
+import { ClaudeSessionSpeed, type ClaudeSessionSpeedInjected } from './ClaudeSessionSpeed.tsx'
 import { ClaudePermissionSelect, type ClaudePermissionSelectInjected } from './ClaudePermissionSelect.tsx'
 import { setClaudePermissionMode } from './permission-mode-api.ts'
 import { ClaudePromptRefineAction, type ClaudePromptRefineActionInjected } from './ClaudePromptRefineAction.tsx'
@@ -385,6 +386,14 @@ ${error.stack ?? ''}`
       return { report, acceptDraft: text => { facade.setDraft(text) } }
     },
   }, ClaudePromptSuggestion))
+  // Session-wide model output speed, last in the composer's tool row.
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left',
+    id: 'claude-session-speed',
+    order: 95,
+    locale: namespace,
+    inject: (): ClaudeSessionSpeedInjected => ({ t }),
+  }, ClaudeSessionSpeed))
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',
     id: 'claude-prompt-save',
